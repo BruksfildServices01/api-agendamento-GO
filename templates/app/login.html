@@ -1,0 +1,44 @@
+{{ define "login" }}
+<main class="login">
+
+  <div class="login__card">
+
+    <h1 class="login__title">Entrar</h1>
+    <p class="login__subtitle">
+      Acesse o painel da sua barbearia
+    </p>
+
+    <form id="loginForm" class="login__form">
+
+      <label class="label">Email</label>
+      <input
+        type="email"
+        name="email"
+        class="input"
+        placeholder="seu@email.com"
+        required
+      />
+
+      <label class="label mt">Senha</label>
+      <input
+        type="password"
+        name="password"
+        class="input"
+        placeholder="••••••••"
+        required
+      />
+
+      <button class="btn btn-primary mt-lg" type="submit">
+        Entrar
+      </button>
+
+      <div id="loginError" class="login__error hidden"></div>
+
+    </form>
+
+  </div>
+
+</main>
+
+<script type="module" src="/static/js/pages/login.page.js"></script>
+{{ end }}

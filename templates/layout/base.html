@@ -1,0 +1,24 @@
+{{ define "base" }}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Barber Scheduler</title>
+
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="app">
+
+  {{ if eq .Page "login" }}
+    {{ template "login" . }}
+  {{ else if eq .Page "dashboard" }}
+    {{ template "dashboard" . }}
+  {{ else if eq .Page "services" }}
+    {{ template "services" . }}
+  {{ end }}
+
+</body>
+</html>
+{{ end }}

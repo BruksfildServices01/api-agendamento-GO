@@ -1,0 +1,16 @@
+# Configuração / segredos locais
+.env
+
+# Build artefacts
+bin/
+*.exe
+*.out
+
+# Módulos Go
+vendor/
+
+# Arquivos do sistema/IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp

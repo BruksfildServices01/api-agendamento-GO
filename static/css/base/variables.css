@@ -1,0 +1,29 @@
+:root {
+  
+  --color-bg: #0f172a;            
+  --color-surface: #111827;       
+  --color-surface-soft: #1f2937;  
+
+ 
+  --color-accent: #38bdf8;        
+  --color-accent-soft: #0ea5e9;
+
+ 
+  --text-primary: #f9fafb;        
+  --text-secondary: #cbd5f5;      
+  --text-muted: #94a3b8;
+
+ 
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+
+ 
+  --border-color: #1e293b;
+  --border-radius: 14px;
+
+  
+  --space-xs: 6px;
+  --space-sm: 10px;
+  --space-md: 16px;
+  --space-lg: 24px;
+}

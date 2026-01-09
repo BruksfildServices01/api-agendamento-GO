@@ -27,7 +27,6 @@ func Location(tz string) *time.Location {
 		}
 	}
 
-	// fallback absoluto (nunca falha)
 	loc, _ := time.LoadLocation(DefaultTimezone)
 	return loc
 }

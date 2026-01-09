@@ -1,6 +1,0 @@
-body.app {
-  margin: 0;
-  background: var(--color-bg);
-  color: var(--text-primary);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-}

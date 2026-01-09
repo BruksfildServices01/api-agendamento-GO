@@ -11,6 +11,8 @@ import (
 
 func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 
+	r.Use(middleware.CORSMiddleware())
+
 	authHandler := handlers.NewAuthHandler(db, cfg)
 	meHandler := handlers.NewMeHandler(db)
 	barberProductHandler := handlers.NewBarberProductHandler(db)
@@ -19,11 +21,13 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	publicHandler := handlers.NewPublicHandler(db)
 	barbershopHandler := handlers.NewBarbershopHandler(db)
 
+	auditLogsHandler := handlers.NewAuditLogsHandler(db)
+
 	publicWebHandler := handlers.NewPublicWebHandler(db)
 	appWebHandler := handlers.NewAppWebHandler(db)
 
 	// ======================================================
-	// 🌍 ROTAS WEB (HTML) — NUNCA USAM AUTH MIDDLEWARE
+	// 🌍 ROTAS WEB (HTML) — SEM AUTH
 	// ======================================================
 
 	r.GET("/web/public/:slug", publicWebHandler.ShowBookingPage)
@@ -44,7 +48,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	publicAPI := r.Group("/public")
 	{
 		publicAPI.GET("/:slug/products", publicHandler.ListProducts)
-		publicAPI.GET("/:slug/availability", publicHandler.Availability)
+		publicAPI.GET("/:slug/availability", publicHandler.AvailabilityForClient)
 		publicAPI.POST("/:slug/appointments", publicHandler.CreateAppointment)
 	}
 
@@ -54,30 +58,51 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 
 	api := r.Group("/api")
 	{
-
 		api.POST("/auth/register", authHandler.Register)
 		api.POST("/auth/login", authHandler.Login)
 
 		secured := api.Group("/")
 		secured.Use(middleware.AuthMiddleware(cfg))
 		{
+			// ------------------------------
+			// ME
+			// ------------------------------
 
 			secured.GET("/me", meHandler.GetMe)
 
 			secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)
 			secured.PATCH("/me/barbershop", barbershopHandler.UpdateMeBarbershop)
 
+			// ------------------------------
+			// PRODUCTS
+			// ------------------------------
+
 			secured.GET("/me/products", barberProductHandler.List)
 			secured.POST("/me/products", barberProductHandler.Create)
 			secured.PATCH("/me/products/:id", barberProductHandler.Update)
 
+			// ------------------------------
+			// WORKING HOURS
+			// ------------------------------
+
 			secured.GET("/me/working-hours", workingHoursHandler.Get)
 			secured.PUT("/me/working-hours", workingHoursHandler.Update)
 
+			// ------------------------------
+			// APPOINTMENTS
+			// ------------------------------
+
 			secured.POST("/me/appointments", appointmentHandler.Create)
 			secured.GET("/me/appointments", appointmentHandler.ListByDate)
+			secured.GET("/me/appointments/month", appointmentHandler.ListByMonth)
 			secured.PATCH("/me/appointments/:id/cancel", appointmentHandler.Cancel)
 			secured.PATCH("/me/appointments/:id/complete", appointmentHandler.Complete)
+
+			// ------------------------------
+			// AUDIT LOGS ✅ (NOVO)
+			// ------------------------------
+
+			secured.GET("/me/audit-logs", auditLogsHandler.List)
 		}
 	}
 }

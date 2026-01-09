@@ -12,7 +12,7 @@ type BarberProduct struct {
 	Price       float64 `json:"price"`
 	Active      bool    `gorm:"default:true" json:"active"`
 
-	Category string `gorm:"size:50" json:"category"` // "corte", "barba", "combo", etc.
+	Category string `gorm:"size:50" json:"category"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

@@ -1,25 +1,39 @@
 package handlers
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
+// ======================================================
+// HANDLER
+// ======================================================
+
 type AppointmentHandler struct {
-	db *gorm.DB
+	db    *gorm.DB
+	audit *audit.Logger
 }
 
 func NewAppointmentHandler(db *gorm.DB) *AppointmentHandler {
-	return &AppointmentHandler{db: db}
+	return &AppointmentHandler{
+		db:    db,
+		audit: audit.New(db),
+	}
 }
 
-// ---------- Requests ----------
+// ======================================================
+// REQUESTS
+// ======================================================
 
 type CreateAppointmentRequest struct {
 	ClientName  string `json:"client_name" binding:"required"`
@@ -31,120 +45,43 @@ type CreateAppointmentRequest struct {
 	Notes       string `json:"notes"`
 }
 
-// ---------- Helpers ----------
+// ======================================================
+// HELPERS
+// ======================================================
 
-func parseDateTime(dateStr, timeStr string) (time.Time, error) {
-	layout := "2006-01-02 15:04"
-	return time.Parse(layout, dateStr+" "+timeStr)
-}
-
-func isInThePastOrTooSoon(start time.Time, minAdvanceMinutes int) bool {
-	now := time.Now()
-	if start.Before(now) {
-		return true
-	}
+func isInThePastOrTooSoon(
+	shop *models.Barbershop,
+	start time.Time,
+	minAdvanceMinutes int,
+) bool {
+	now := timezone.NowIn(shop.Timezone)
 	minAllowed := now.Add(time.Duration(minAdvanceMinutes) * time.Minute)
 	return start.Before(minAllowed)
 }
 
-func (h *AppointmentHandler) isWithinWorkingHours(barberID uint, start, end time.Time) (bool, error) {
-	weekday := int(start.Weekday())
-
-	var wh models.WorkingHours
-	if err := h.db.
-		Where("barber_id = ? AND weekday = ?", barberID, weekday).
-		First(&wh).Error; err != nil {
-
-		if err == gorm.ErrRecordNotFound {
-			return false, nil
-		}
-		return false, err
-	}
-
-	if !wh.Active {
-		return false, nil
-	}
-
-	parseHM := func(s string) (time.Time, error) {
-		if s == "" {
-			return time.Time{}, nil
-		}
-		t, err := time.Parse("15:04", s)
-		if err != nil {
-			return time.Time{}, err
-		}
-		return time.Date(start.Year(), start.Month(), start.Day(),
-			t.Hour(), t.Minute(), 0, 0, start.Location()), nil
-	}
-
-	workStart, err := parseHM(wh.StartTime)
-	if err != nil {
-		return false, err
-	}
-	workEnd, err := parseHM(wh.EndTime)
-	if err != nil {
-		return false, err
-	}
-
-	if (!workStart.IsZero() && start.Before(workStart)) ||
-		(!workEnd.IsZero() && end.After(workEnd)) {
-		return false, nil
-	}
-
-	if wh.LunchStart != "" && wh.LunchEnd != "" {
-		lunchStart, err := parseHM(wh.LunchStart)
-		if err != nil {
-			return false, err
-		}
-		lunchEnd, err := parseHM(wh.LunchEnd)
-		if err != nil {
-			return false, err
-		}
-		if start.Before(lunchEnd) && end.After(lunchStart) {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// Verifica conflito com outros appointments do barbeiro
-func (h *AppointmentHandler) hasConflict(barberID uint, start, end time.Time) (bool, error) {
-	var count int64
-	err := h.db.Model(&models.Appointment{}).
-		Where("barber_id = ? AND status = ?", barberID, "scheduled").
-		Where("start_time < ? AND ? < end_time", end, start).
-		Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-// ---------- Handlers ----------
+// ======================================================
+// CREATE (FASE 6 + 7 + 9)
+// ======================================================
 
 func (h *AppointmentHandler) Create(c *gin.Context) {
-	userIDVal, _ := c.Get(middleware.ContextUserID)
-	barberID := userIDVal.(uint)
-
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
-	barbershopID := barbershopIDVal.(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
 
 	var shop models.Barbershop
 	if err := h.db.First(&shop, barbershopID).Error; err != nil {
-		httperr.Internal(c, "failed_to_get_barbershop", "Erro ao buscar configurações da barbearia.")
+		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
 	var req CreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httperr.BadRequest(c, "invalid_request", "Dados inválidos na requisição.")
+		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
 	}
 
-	start, err := parseDateTime(req.Date, req.Time)
+	start, err := parseDateTimeInShop(&shop, req.Date, req.Time)
 	if err != nil {
-		httperr.BadRequest(c, "invalid_date_or_time", "Data ou horário em formato inválido.")
+		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
 		return
 	}
 
@@ -152,46 +89,28 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 	if minAdvance <= 0 {
 		minAdvance = 120
 	}
-	if isInThePastOrTooSoon(start, minAdvance) {
-		httperr.BadRequest(
-			c,
-			"too_soon_or_in_past",
-			"Não é possível agendar para o passado ou com menos antecedência do que a configurada pela barbearia.",
-		)
+	if isInThePastOrTooSoon(&shop, start, minAdvance) {
+		httperr.BadRequest(c, "too_soon", "Horário inválido.")
 		return
 	}
 
 	var product models.BarberProduct
-	if err := h.db.Where("id = ? AND barbershop_id = ?", req.ProductID, barbershopID).
+	if err := h.db.
+		Where("id = ? AND barbershop_id = ?", req.ProductID, barbershopID).
 		First(&product).Error; err != nil {
-
-		if err == gorm.ErrRecordNotFound {
-			httperr.BadRequest(c, "product_not_found", "Serviço não encontrado para esta barbearia.")
-			return
-		}
-		httperr.Internal(c, "failed_to_get_product", "Erro ao buscar o serviço. Tente novamente mais tarde.")
+		httperr.BadRequest(c, "product_not_found", "Serviço não encontrado.")
 		return
 	}
 
 	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
 
-	ok, err := h.isWithinWorkingHours(barberID, start, end)
+	ok, err := h.isWithinWorkingHours(&shop, barberID, start, end)
 	if err != nil {
-		httperr.Internal(c, "failed_to_check_working_hours", "Erro ao validar horário de trabalho.")
+		httperr.Internal(c, "working_hours_error", "Erro ao validar horário.")
 		return
 	}
 	if !ok {
-		httperr.BadRequest(c, "outside_working_hours", "O horário selecionado está fora do horário de atendimento.")
-		return
-	}
-
-	conflict, err := h.hasConflict(barberID, start, end)
-	if err != nil {
-		httperr.Internal(c, "failed_to_check_conflicts", "Erro ao verificar conflitos de horário.")
-		return
-	}
-	if conflict {
-		httperr.BadRequest(c, "time_conflict", "Já existe um agendamento nesse horário.")
+		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
 		return
 	}
 
@@ -200,162 +119,319 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 		Where("barbershop_id = ? AND phone = ?", barbershopID, req.ClientPhone).
 		First(&client).Error; err != nil {
 
-		if err == gorm.ErrRecordNotFound {
-			client = models.Client{
-				BarbershopID: barbershopID,
-				Name:         req.ClientName,
-				Phone:        req.ClientPhone,
-				Email:        req.ClientEmail,
-			}
-			if err := h.db.Create(&client).Error; err != nil {
-				httperr.Internal(c, "failed_to_create_client", "Erro ao salvar o cliente. Tente novamente.")
-				return
-			}
-		} else {
-			httperr.Internal(c, "failed_to_get_client", "Erro ao buscar o cliente. Tente novamente.")
+		client = models.Client{
+			BarbershopID: barbershopID,
+			Name:         req.ClientName,
+			Phone:        req.ClientPhone,
+			Email:        req.ClientEmail,
+		}
+		h.db.Create(&client)
+	}
+
+	var created models.Appointment
+
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+
+		var conflicts []models.Appointment
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"barber_id = ? AND status = ? AND start_time < ? AND end_time > ?",
+				barberID, "scheduled", end, start,
+			).
+			Find(&conflicts).Error; err != nil {
+			return err
+		}
+
+		if len(conflicts) > 0 {
+			return httperr.ErrBusiness("time_conflict")
+		}
+
+		ap := models.Appointment{
+			BarbershopID:    barbershopID,
+			BarberID:        barberID,
+			ClientID:        client.ID,
+			BarberProductID: product.ID,
+			StartTime:       start,
+			EndTime:         end,
+			Status:          "scheduled",
+			Notes:           req.Notes,
+		}
+
+		if err := tx.Create(&ap).Error; err != nil {
+			return err
+		}
+
+		created = ap
+		return nil
+	})
+
+	if err != nil {
+		if httperr.IsBusiness(err, "time_conflict") || httperr.IsExclusionConflict(err) {
+
+			h.audit.Log(
+				barbershopID,
+				&barberID,
+				"appointment_conflict",
+				"appointment",
+				nil,
+				map[string]any{
+					"start": start,
+					"end":   end,
+				},
+			)
+
+			httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
 			return
 		}
-	}
 
-	appointment := models.Appointment{
-		BarbershopID:    barbershopID,
-		BarberID:        barberID,
-		ClientID:        client.ID,
-		BarberProductID: product.ID,
-		StartTime:       start,
-		EndTime:         end,
-		Status:          "scheduled",
-		Notes:           req.Notes,
-	}
-
-	if err := h.db.Create(&appointment).Error; err != nil {
-		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar o agendamento. Tente novamente.")
+		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
 		return
 	}
 
-	if err := h.db.Preload("Client").
-		Preload("BarberProduct").
-		Preload("Barber").
-		Preload("Barbershop").
-		First(&appointment, appointment.ID).Error; err != nil {
+	h.audit.Log(
+		barbershopID,
+		&barberID,
+		"appointment_created",
+		"appointment",
+		&created.ID,
+		nil,
+	)
 
-		c.JSON(201, appointment)
-		return
-	}
-
-	c.JSON(201, appointment)
+	c.JSON(201, created)
 }
 
+// ======================================================
+// LIST
+// ======================================================
+
 func (h *AppointmentHandler) ListByDate(c *gin.Context) {
-	userIDVal, _ := c.Get(middleware.ContextUserID)
-	barberID := userIDVal.(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
 
 	dateStr := c.Query("date")
 	if dateStr == "" {
-		httperr.BadRequest(c, "missing_date", "Parâmetro 'date' é obrigatório (YYYY-MM-DD).")
+		httperr.BadRequest(c, "missing_date", "Data obrigatória.")
 		return
 	}
 
-	date, err := time.Parse("2006-01-02", dateStr)
+	var shop models.Barbershop
+	if err := h.db.First(&shop, barbershopID).Error; err != nil {
+		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
+		return
+	}
+
+	date, err := parseDateInShop(&shop, dateStr)
 	if err != nil {
-		httperr.BadRequest(c, "invalid_date", "Data em formato inválido. Use YYYY-MM-DD.")
+		httperr.BadRequest(c, "invalid_date", "Data inválida.")
 		return
 	}
 
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.Local)
-	endOfDay := startOfDay.Add(24 * time.Hour)
+	start := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
+	end := start.Add(24 * time.Hour)
 
-	var appointments []models.Appointment
-	if err := h.db.
-		Where("barber_id = ? AND start_time >= ? AND start_time < ?", barberID, startOfDay, endOfDay).
+	var aps []models.Appointment
+	h.db.
 		Preload("Client").
 		Preload("BarberProduct").
-		Preload("Barber").
-		Preload("Barbershop").
+		Where(
+			"barber_id = ? AND start_time >= ? AND start_time < ?",
+			barberID, start, end,
+		).
 		Order("start_time ASC").
-		Find(&appointments).Error; err != nil {
+		Find(&aps)
 
-		httperr.Internal(c, "failed_to_list_appointments", "Erro ao listar os agendamentos.")
-		return
-	}
-
-	c.JSON(200, appointments)
+	c.JSON(200, aps)
 }
 
-func (h *AppointmentHandler) Cancel(c *gin.Context) {
-	userIDVal, _ := c.Get(middleware.ContextUserID)
-	barberID := userIDVal.(uint)
+// ======================================================
+// COMPLETE
+// ======================================================
 
+func (h *AppointmentHandler) Complete(c *gin.Context) {
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
 	id := c.Param("id")
 
+	var shop models.Barbershop
+	if err := h.db.First(&shop, barbershopID).Error; err != nil {
+		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
+		return
+	}
+
 	var ap models.Appointment
-	if err := h.db.
-		Where("id = ? AND barber_id = ?", id, barberID).
-		First(&ap).Error; err != nil {
-
-		if err == gorm.ErrRecordNotFound {
-			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
-			return
-		}
-		httperr.Internal(c, "failed_to_get_appointment", "Erro ao buscar o agendamento.")
+	if err := h.db.Where("id = ? AND barber_id = ?", id, barberID).First(&ap).Error; err != nil {
+		httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
 		return
 	}
 
-	if ap.Status == "cancelled" {
-		httperr.BadRequest(c, "already_cancelled", "Este agendamento já foi cancelado.")
-		return
-	}
-	if ap.Status == "completed" {
-		httperr.BadRequest(c, "already_completed", "Este agendamento já foi concluído.")
+	if ap.Status != "scheduled" {
+		httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser concluído.")
 		return
 	}
 
-	now := time.Now()
+	now := timezone.NowIn(shop.Timezone)
+	ap.Status = "completed"
+	ap.CompletedAt = &now
+
+	h.db.Save(&ap)
+
+	h.audit.Log(
+		barbershopID,
+		&barberID,
+		"appointment_completed",
+		"appointment",
+		&ap.ID,
+		nil,
+	)
+
+	c.JSON(200, ap)
+}
+
+// ======================================================
+// CANCEL
+// ======================================================
+
+func (h *AppointmentHandler) Cancel(c *gin.Context) {
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	id := c.Param("id")
+
+	var shop models.Barbershop
+	if err := h.db.First(&shop, barbershopID).Error; err != nil {
+		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
+		return
+	}
+
+	var ap models.Appointment
+	if err := h.db.Where("id = ? AND barber_id = ?", id, barberID).First(&ap).Error; err != nil {
+		httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
+		return
+	}
+
+	if ap.Status != "scheduled" {
+		httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser cancelado.")
+		return
+	}
+
+	now := timezone.NowIn(shop.Timezone)
 	ap.Status = "cancelled"
 	ap.CancelledAt = &now
 
-	if err := h.db.Save(&ap).Error; err != nil {
-		httperr.Internal(c, "failed_to_cancel_appointment", "Erro ao cancelar o agendamento. Tente novamente.")
-		return
-	}
+	h.db.Save(&ap)
+
+	h.audit.Log(
+		barbershopID,
+		&barberID,
+		"appointment_cancelled",
+		"appointment",
+		&ap.ID,
+		nil,
+	)
 
 	c.JSON(200, ap)
 }
 
-func (h *AppointmentHandler) Complete(c *gin.Context) {
-	userIDVal, _ := c.Get(middleware.ContextUserID)
-	barberID := userIDVal.(uint)
+// ======================================================
+// WORKING HOURS + ALMOÇO
+// ======================================================
 
-	id := c.Param("id")
+func (h *AppointmentHandler) isWithinWorkingHours(
+	shop *models.Barbershop,
+	barberID uint,
+	start time.Time,
+	end time.Time,
+) (bool, error) {
 
-	var ap models.Appointment
+	weekday := int(start.Weekday())
+	loc := start.Location()
+
+	var wh models.WorkingHours
 	if err := h.db.
-		Where("id = ? AND barber_id = ?", id, barberID).
-		First(&ap).Error; err != nil {
+		Where("barber_id = ? AND weekday = ?", barberID, weekday).
+		First(&wh).Error; err != nil {
+		return false, nil
+	}
 
-		if err == gorm.ErrRecordNotFound {
-			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
-			return
+	if !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
+		return false, nil
+	}
+
+	parseHM := func(hm string) time.Time {
+		t, _ := time.Parse("15:04", hm)
+		return time.Date(start.Year(), start.Month(), start.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+	}
+
+	workStart := parseHM(wh.StartTime)
+	workEnd := parseHM(wh.EndTime)
+
+	if start.Before(workStart) || end.After(workEnd) {
+		return false, nil
+	}
+
+	if wh.LunchStart != "" && wh.LunchEnd != "" {
+		lunchStart := parseHM(wh.LunchStart)
+		lunchEnd := parseHM(wh.LunchEnd)
+		if start.Before(lunchEnd) && end.After(lunchStart) {
+			return false, nil
 		}
-		httperr.Internal(c, "failed_to_get_appointment", "Erro ao buscar o agendamento.")
+	}
+
+	return true, nil
+}
+
+// ======================================================
+// LIST BY MONTH
+// ======================================================
+
+func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	yearStr := c.Query("year")
+	monthStr := c.Query("month")
+
+	if yearStr == "" || monthStr == "" {
+		httperr.BadRequest(c, "missing_year_or_month", "Ano e mês são obrigatórios.")
 		return
 	}
 
-	if ap.Status == "cancelled" {
-		httperr.BadRequest(c, "already_cancelled", "Este agendamento já foi cancelado.")
-		return
-	}
-	if ap.Status == "completed" {
-		httperr.BadRequest(c, "already_completed", "Este agendamento já foi concluído.")
+	year, err := strconv.Atoi(yearStr)
+	if err != nil || year < 2000 || year > 2100 {
+		httperr.BadRequest(c, "invalid_year", "Ano inválido.")
 		return
 	}
 
-	ap.Status = "completed"
-
-	if err := h.db.Save(&ap).Error; err != nil {
-		httperr.Internal(c, "failed_to_complete_appointment", "Erro ao concluir o agendamento. Tente novamente.")
+	month, err := strconv.Atoi(monthStr)
+	if err != nil || month < 1 || month > 12 {
+		httperr.BadRequest(c, "invalid_month", "Mês inválido.")
 		return
 	}
 
-	c.JSON(200, ap)
+	var shop models.Barbershop
+	if err := h.db.First(&shop, barbershopID).Error; err != nil {
+		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
+		return
+	}
+
+	loc := timezone.Location(shop.Timezone)
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 1, 0)
+
+	var appointments []models.Appointment
+	h.db.
+		Preload("Client").
+		Preload("BarberProduct").
+		Where(
+			"barber_id = ? AND start_time >= ? AND start_time < ?",
+			barberID, start, end,
+		).
+		Order("start_time ASC").
+		Find(&appointments)
+
+	c.JSON(200, gin.H{
+		"year":         year,
+		"month":        month,
+		"appointments": appointments,
+	})
 }

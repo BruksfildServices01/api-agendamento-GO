@@ -22,9 +22,16 @@ func NewDB(cfg *config.Config) *gorm.DB {
 		&models.WorkingHours{},
 		&models.Client{},
 		&models.Appointment{},
+		&models.AuditLog{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
+
+	db.Exec(`
+		UPDATE barbershops
+		SET timezone = 'America/Sao_Paulo'
+		WHERE timezone IS NULL OR timezone = ''
+	`)
 
 	return db
 }

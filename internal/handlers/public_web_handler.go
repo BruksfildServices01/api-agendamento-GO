@@ -19,13 +19,6 @@ func NewPublicWebHandler(db *gorm.DB) *PublicWebHandler {
 	return &PublicWebHandler{db: db}
 }
 
-// GET /web/public/:slug
-// Suporta os mesmos filtros básicos da API pública:
-//   - category
-//   - min_price
-//   - max_price
-//   - query
-//   - sort: price_asc | price_desc | duration_asc | duration_desc
 func (h *PublicWebHandler) ShowBookingPage(c *gin.Context) {
 	slug := c.Param("slug")
 
@@ -35,7 +28,6 @@ func (h *PublicWebHandler) ShowBookingPage(c *gin.Context) {
 		return
 	}
 
-	// Filtros via query string
 	category := strings.ToLower(strings.TrimSpace(c.Query("category")))
 	minPriceStr := c.Query("min_price")
 	maxPriceStr := c.Query("max_price")
@@ -70,8 +62,6 @@ func (h *PublicWebHandler) ShowBookingPage(c *gin.Context) {
 		like := "%" + query + "%"
 		q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
 	}
-
-	// Ordenação (mesmo padrão da API pública)
 	orderClause := "id ASC"
 	switch sort {
 	case "price_asc":
@@ -96,7 +86,6 @@ func (h *PublicWebHandler) ShowBookingPage(c *gin.Context) {
 	c.HTML(http.StatusOK, "base.html", gin.H{
 		"Barbershop": shop,
 		"Products":   products,
-		// opcional: passar os filtros atuais pro template, se quiser usar lá
 		"CurrentFilters": gin.H{
 			"category":  category,
 			"min_price": minPriceStr,

@@ -24,6 +24,7 @@ type Appointment struct {
 
 	Notes       string     `gorm:"size:255" json:"notes"`
 	CancelledAt *time.Time `json:"cancelled_at"`
+	CompletedAt *time.Time `json:"completed_at"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

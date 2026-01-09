@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -43,8 +44,12 @@ func (h *BarberProductHandler) List(c *gin.Context) {
 	barbershopID := barbershopIDVal.(uint)
 
 	category := strings.ToLower(strings.TrimSpace(c.Query("category")))
-	activeStr := strings.TrimSpace(c.Query("active")) // "true", "false" ou vazio
+	activeStr := strings.TrimSpace(c.Query("active"))
 	query := strings.ToLower(strings.TrimSpace(c.Query("query")))
+	minPriceStr := c.Query("min_price")
+	maxPriceStr := c.Query("max_price")
+	minDurationStr := c.Query("min_duration")
+	maxDurationStr := c.Query("max_duration")
 
 	q := h.db.Where("barbershop_id = ?", barbershopID)
 
@@ -52,12 +57,11 @@ func (h *BarberProductHandler) List(c *gin.Context) {
 		q = q.Where("LOWER(category) = ?", category)
 	}
 
-	if activeStr != "" {
-		if activeStr == "true" {
-			q = q.Where("active = ?", true)
-		} else if activeStr == "false" {
-			q = q.Where("active = ?", false)
-		}
+	switch activeStr {
+	case "true":
+		q = q.Where("active = ?", true)
+	case "false":
+		q = q.Where("active = ?", false)
 	}
 
 	if query != "" {
@@ -65,11 +69,32 @@ func (h *BarberProductHandler) List(c *gin.Context) {
 		q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
 	}
 
-	var products []models.BarberProduct
-	if err := q.
-		Order("id ASC").
-		Find(&products).Error; err != nil {
+	if minPriceStr != "" {
+		if minPrice, err := strconv.ParseFloat(minPriceStr, 64); err == nil {
+			q = q.Where("price >= ?", minPrice)
+		}
+	}
 
+	if maxPriceStr != "" {
+		if maxPrice, err := strconv.ParseFloat(maxPriceStr, 64); err == nil {
+			q = q.Where("price <= ?", maxPrice)
+		}
+	}
+
+	if minDurationStr != "" {
+		if minDuration, err := strconv.Atoi(minDurationStr); err == nil {
+			q = q.Where("duration_min >= ?", minDuration)
+		}
+	}
+
+	if maxDurationStr != "" {
+		if maxDuration, err := strconv.Atoi(maxDurationStr); err == nil {
+			q = q.Where("duration_min <= ?", maxDuration)
+		}
+	}
+
+	var products []models.BarberProduct
+	if err := q.Order("id ASC").Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_list_products"})
 		return
 	}

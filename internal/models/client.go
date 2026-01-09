@@ -2,7 +2,6 @@ package models
 
 import "time"
 
-// Cliente simples, sem login, vinculado à barbearia
 type Client struct {
 	ID           uint `gorm:"primaryKey" json:"id"`
 	BarbershopID uint `json:"barbershop_id"`

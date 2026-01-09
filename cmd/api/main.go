@@ -2,36 +2,28 @@ package main
 
 import (
 	"log"
-
-	"github.com/gin-gonic/gin"
+	"net/http"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	dbpkg "github.com/BruksfildServices01/barber-scheduler/internal/db"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/routes"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
+
 	cfg := config.Load()
 	db := dbpkg.NewDB(cfg)
 
 	r := gin.Default()
 
-	// 🔹 Carrega templates HTML (Gin)
-	r.LoadHTMLGlob("templates/**/*.html")
-
-	// 🔹 Arquivos estáticos (CSS, JS, imagens)
-	r.Static("/static", "./static")
-
-	// 🔹 CORS (para chamadas JS)
 	r.Use(middleware.CORSMiddleware())
 
-	// 🔹 Healthcheck
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// 🔹 Rotas do sistema
 	routes.RegisterRoutes(r, db, cfg)
 
 	log.Printf("Server running on %s", cfg.Addr())

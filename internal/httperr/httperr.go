@@ -1,9 +1,11 @@
 package httperr
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type HTTPError struct {
@@ -32,4 +34,17 @@ func Internal(c *gin.Context, code, message string) {
 
 func Unauthorized(c *gin.Context, code, message string) {
 	Write(c, http.StatusUnauthorized, code, message)
+}
+
+func IsExclusionConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23P01"
+	}
+
+	return false
 }

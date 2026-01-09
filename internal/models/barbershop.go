@@ -11,4 +11,5 @@ type Barbershop struct {
 	MinAdvanceMinutes int       `gorm:"default:120" json:"min_advance_minutes"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	Timezone          string    `gorm:"size:64"`
 }

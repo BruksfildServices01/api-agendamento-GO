@@ -7,10 +7,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
 type PublicHandler struct {
@@ -147,42 +149,73 @@ func (h *PublicHandler) Availability(c *gin.Context) {
 func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 	slug := c.Param("slug")
 
+	// 1️⃣ Barbershop
 	var shop models.Barbershop
 	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
+	// 2️⃣ Request
 	var req PublicCreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
 	}
 
+	// 3️⃣ Data + hora no timezone da barbearia
 	start, err := parseDateTimeInShop(&shop, req.Date, req.Time)
 	if err != nil {
 		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
 		return
 	}
 
+	// 4️⃣ Antecedência mínima
+	minAdvance := shop.MinAdvanceMinutes
+	if minAdvance <= 0 {
+		minAdvance = 120
+	}
+
+	now := timezone.NowIn(shop.Timezone)
+	if start.Before(now.Add(time.Duration(minAdvance) * time.Minute)) {
+		httperr.BadRequest(c, "too_soon", "Horário inválido.")
+		return
+	}
+
+	// 5️⃣ Serviço
 	var product models.BarberProduct
 	if err := h.db.
 		Where("id = ? AND barbershop_id = ? AND active = true", req.ProductID, shop.ID).
 		First(&product).Error; err != nil {
-		httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
-		return
-	}
 
-	var barber models.User
-	if err := h.db.
-		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
-		First(&barber).Error; err != nil {
-		httperr.BadRequest(c, "barber_not_found", "Barbeiro não encontrado.")
+		httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
 		return
 	}
 
 	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
 
+	// 6️⃣ Barbeiro (owner)
+	var barber models.User
+	if err := h.db.
+		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
+		First(&barber).Error; err != nil {
+
+		httperr.BadRequest(c, "barber_not_found", "Barbeiro não encontrado.")
+		return
+	}
+
+	// 7️⃣ Horário de trabalho + almoço
+	ok, err := IsWithinWorkingHours(h.db, &shop, barber.ID, start, end)
+	if err != nil {
+		httperr.Internal(c, "working_hours_error", "Erro ao validar horário.")
+		return
+	}
+	if !ok {
+		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
+		return
+	}
+
+	// 8️⃣ Cliente (cria se não existir)
 	var client models.Client
 	if err := h.db.
 		Where("barbershop_id = ? AND phone = ?", shop.ID, req.ClientPhone).
@@ -197,23 +230,66 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 		h.db.Create(&client)
 	}
 
-	ap := models.Appointment{
-		BarbershopID:    shop.ID,
-		BarberID:        barber.ID,
-		ClientID:        client.ID,
-		BarberProductID: product.ID,
-		StartTime:       start,
-		EndTime:         end,
-		Status:          "scheduled",
-		Notes:           req.Notes,
-	}
+	// 9️⃣ Transação + lock (EVITA conflito)
+	var created models.Appointment
 
-	if err := h.db.Create(&ap).Error; err != nil {
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+
+		var conflicts []models.Appointment
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"barber_id = ? AND status = ? AND start_time < ? AND end_time > ?",
+				barber.ID, "scheduled", end, start,
+			).
+			Find(&conflicts).Error; err != nil {
+			return err
+		}
+
+		if len(conflicts) > 0 {
+			return httperr.ErrBusiness("time_conflict")
+		}
+
+		ap := models.Appointment{
+			BarbershopID:    shop.ID,
+			BarberID:        barber.ID,
+			ClientID:        client.ID,
+			BarberProductID: product.ID,
+			StartTime:       start,
+			EndTime:         end,
+			Status:          "scheduled",
+			Notes:           req.Notes,
+		}
+
+		if err := tx.Create(&ap).Error; err != nil {
+			return err
+		}
+
+		created = ap
+		return nil
+	})
+
+	if err != nil {
+		if httperr.IsBusiness(err, "time_conflict") {
+			httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
+			return
+		}
+
 		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
 		return
 	}
 
-	c.JSON(http.StatusCreated, ap)
+	// 🔟 Auditoria
+	h.audit.Log(
+		shop.ID,
+		nil,
+		"public_appointment_created",
+		"appointment",
+		&created.ID,
+		nil,
+	)
+
+	c.JSON(http.StatusCreated, created)
 }
 
 // ======================================================

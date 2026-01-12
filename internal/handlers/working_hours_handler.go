@@ -18,6 +18,7 @@ func NewWorkingHoursHandler(db *gorm.DB) *WorkingHoursHandler {
 	return &WorkingHoursHandler{db: db}
 }
 
+// Estrutura para configurar os horários de trabalho
 type WorkingDayConfig struct {
 	Weekday    int    `json:"weekday" binding:"required,min=0,max=6"`
 	Active     bool   `json:"active"`
@@ -27,10 +28,12 @@ type WorkingDayConfig struct {
 	LunchEnd   string `json:"lunch_end"`
 }
 
+// Estrutura para a atualização dos horários
 type WorkingHoursUpdateRequest struct {
 	Days []WorkingDayConfig `json:"days" binding:"required"`
 }
 
+// Método para pegar os horários de trabalho
 func (h *WorkingHoursHandler) Get(c *gin.Context) {
 	userIDVal, _ := c.Get(middleware.ContextUserID)
 	barberID := userIDVal.(uint)
@@ -40,7 +43,6 @@ func (h *WorkingHoursHandler) Get(c *gin.Context) {
 		Where("barber_id = ?", barberID).
 		Order("weekday ASC").
 		Find(&hours).Error; err != nil {
-
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_get_working_hours"})
 		return
 	}
@@ -48,10 +50,12 @@ func (h *WorkingHoursHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, hours)
 }
 
+// Método para atualizar os horários de trabalho
 func (h *WorkingHoursHandler) Update(c *gin.Context) {
 	userIDVal, _ := c.Get(middleware.ContextUserID)
 	barberID := userIDVal.(uint)
 
+	// Recebe os dados da requisição para atualização
 	var req WorkingHoursUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -61,11 +65,13 @@ func (h *WorkingHoursHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// Deleta os horários antigos antes de adicionar os novos
 	if err := h.db.Where("barber_id = ?", barberID).Delete(&models.WorkingHours{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_clear_existing_hours"})
 		return
 	}
 
+	// Prepara os novos horários a serem criados
 	var toCreate []models.WorkingHours
 	for _, d := range req.Days {
 		wh := models.WorkingHours{
@@ -80,6 +86,7 @@ func (h *WorkingHoursHandler) Update(c *gin.Context) {
 		toCreate = append(toCreate, wh)
 	}
 
+	// Salva os novos horários no banco de dados
 	if len(toCreate) > 0 {
 		if err := h.db.Create(&toCreate).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_save_working_hours"})
@@ -87,5 +94,6 @@ func (h *WorkingHoursHandler) Update(c *gin.Context) {
 		}
 	}
 
+	// Responde com status ok se tudo foi bem-sucedido
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

@@ -108,7 +108,7 @@ func (h *PublicHandler) Availability(c *gin.Context) {
 		return
 	}
 
-	date, err := parseDateInShop(&shop, dateStr)
+	date, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
 		httperr.BadRequest(c, "invalid_date", "Data inválida.")
 		return

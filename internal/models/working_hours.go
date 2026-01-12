@@ -3,10 +3,10 @@ package models
 import "time"
 
 type WorkingHours struct {
-	ID       uint `gorm:"primaryKey" json:"id"`
-	BarberID uint `json:"barber_id"`
-
-	Weekday int `json:"weekday"`
+	ID           uint `gorm:"primaryKey" json:"id"`
+	BarberID     uint `json:"barber_id"`
+	BarbershopID uint `json:"barbershop_id"`
+	Weekday      int  `json:"weekday"`
 
 	StartTime  string `json:"start_time"`
 	EndTime    string `json:"end_time"`

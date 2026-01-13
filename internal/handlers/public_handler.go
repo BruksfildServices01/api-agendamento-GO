@@ -89,7 +89,80 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 // ======================================================
 
 func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
-	h.Availability(c)
+	slug := c.Param("slug")
+	dateStr := c.Query("date")
+	productID := c.Query("product_id")
+
+	if dateStr == "" || productID == "" {
+		httperr.BadRequest(c, "missing_params", "Data e serviço obrigatórios.")
+		return
+	}
+
+	var shop models.Barbershop
+	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
+		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
+		return
+	}
+
+	date, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		httperr.BadRequest(c, "invalid_date", "Data inválida.")
+		return
+	}
+
+	var product models.BarberProduct
+	if err := h.db.Where("id = ? AND barbershop_id = ? AND active = true", productID, shop.ID).First(&product).Error; err != nil {
+		httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
+		return
+	}
+
+	// Carregar o fuso horário da barbearia
+	loc, err := time.LoadLocation(shop.Timezone)
+	if err != nil {
+		httperr.BadRequest(c, "invalid_timezone", "Fuso horário inválido.")
+		return
+	}
+
+	// Calcular o horário de início e fim do dia com base no fuso horário da barbearia
+	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	// Buscar todos os agendamentos para este dia e produto
+	var appointments []models.Appointment
+	h.db.Where("barbershop_id = ? AND start_time >= ? AND start_time < ? AND barber_product_id = ? AND status = 'scheduled'",
+		shop.ID, startOfDay, endOfDay, product.ID).
+		Find(&appointments)
+
+	// Gerar slots disponíveis
+	var availableSlots []TimeSlot
+	slotDuration := time.Duration(product.DurationMin) * time.Minute
+	for currentTime := startOfDay; currentTime.Add(slotDuration).Before(endOfDay); currentTime = currentTime.Add(slotDuration) {
+		slotStart := currentTime
+		slotEnd := slotStart.Add(slotDuration)
+
+		// Verificar se o slot está ocupado por algum agendamento existente
+		conflict := false
+		for _, ap := range appointments {
+			if slotStart.Before(ap.EndTime) && slotEnd.After(ap.StartTime) {
+				conflict = true
+				break
+			}
+		}
+
+		// Se não houver conflito, adicionar o slot à lista de disponíveis
+		if !conflict {
+			availableSlots = append(availableSlots, TimeSlot{
+				Start: slotStart.Format("15:04"),
+				End:   slotEnd.Format("15:04"),
+			})
+		}
+	}
+
+	// Retornar os slots disponíveis
+	c.JSON(http.StatusOK, gin.H{
+		"date":  dateStr,
+		"slots": availableSlots,
+	})
 }
 
 func (h *PublicHandler) Availability(c *gin.Context) {

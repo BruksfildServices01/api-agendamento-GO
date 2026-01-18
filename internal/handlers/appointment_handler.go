@@ -9,7 +9,9 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
+	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
@@ -21,13 +23,16 @@ import (
 
 type AppointmentHandler struct {
 	db    *gorm.DB
-	audit *audit.Logger
+	audit *audit.Dispatcher
 }
 
 func NewAppointmentHandler(db *gorm.DB) *AppointmentHandler {
+	logger := audit.New(db)
+	dispatcher := audit.NewDispatcher(logger)
+
 	return &AppointmentHandler{
 		db:    db,
-		audit: audit.New(db),
+		audit: dispatcher,
 	}
 }
 
@@ -169,17 +174,17 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 	if err != nil {
 		if httperr.IsBusiness(err, "time_conflict") || httperr.IsExclusionConflict(err) {
 
-			h.audit.Log(
-				barbershopID,
-				&barberID,
-				"appointment_conflict",
-				"appointment",
-				nil,
-				map[string]any{
+			h.audit.Dispatch(audit.Event{
+				BarbershopID: barbershopID,
+				UserID:       &barberID,
+				Action:       "appointment_conflict",
+				Entity:       "appointment",
+				EntityID:     nil,
+				Metadata: map[string]any{
 					"start": start,
 					"end":   end,
 				},
-			)
+			})
 
 			httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
 			return
@@ -189,14 +194,14 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 		return
 	}
 
-	h.audit.Log(
-		barbershopID,
-		&barberID,
-		"appointment_created",
-		"appointment",
-		&created.ID,
-		nil,
-	)
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		UserID:       &barberID,
+		Action:       "appointment_created",
+		Entity:       "appointment",
+		EntityID:     &created.ID,
+		Metadata:     nil,
+	})
 
 	c.JSON(201, created)
 }
@@ -230,18 +235,34 @@ func (h *AppointmentHandler) ListByDate(c *gin.Context) {
 	start := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
 	end := start.Add(24 * time.Hour)
 
-	var aps []models.Appointment
-	h.db.
-		Preload("Client").
-		Preload("BarberProduct").
+	var result []dto.AppointmentListDTO
+
+	err = h.db.
+		Table("appointments a").
+		Select(`
+        a.id,
+        a.start_time,
+        a.end_time,
+        a.status,
+        c.name AS client_name,
+        p.name AS product_name
+    `).
+		Joins("JOIN clients c ON c.id = a.client_id").
+		Joins("JOIN barber_products p ON p.id = a.barber_product_id").
 		Where(
-			"barber_id = ? AND start_time >= ? AND start_time < ?",
+			"a.barber_id = ? AND a.start_time >= ? AND a.start_time < ?",
 			barberID, start, end,
 		).
-		Order("start_time ASC").
-		Find(&aps)
+		Order("a.start_time ASC").
+		Scan(&result).Error
 
-	c.JSON(200, aps)
+	if err != nil {
+		httperr.Internal(c, "failed_to_list_appointments", "Erro ao listar agendamentos.")
+		return
+	}
+
+	httpresp.List(c, result)
+
 }
 
 // ======================================================
@@ -276,14 +297,13 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 
 	h.db.Save(&ap)
 
-	h.audit.Log(
-		barbershopID,
-		&barberID,
-		"appointment_completed",
-		"appointment",
-		&ap.ID,
-		nil,
-	)
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		UserID:       &barberID,
+		Action:       "appointment_completed",
+		Entity:       "appointment",
+		EntityID:     &ap.ID,
+		Metadata:     nil})
 
 	c.JSON(200, ap)
 }
@@ -320,14 +340,14 @@ func (h *AppointmentHandler) Cancel(c *gin.Context) {
 
 	h.db.Save(&ap)
 
-	h.audit.Log(
-		barbershopID,
-		&barberID,
-		"appointment_cancelled",
-		"appointment",
-		&ap.ID,
-		nil,
-	)
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		UserID:       &barberID,
+		Action:       "appointment_cancelled",
+		Entity:       "appointment",
+		EntityID:     &ap.ID,
+		Metadata:     nil,
+	})
 
 	c.JSON(200, ap)
 }
@@ -418,20 +438,36 @@ func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
 	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
 	end := start.AddDate(0, 1, 0)
 
-	var appointments []models.Appointment
-	h.db.
-		Preload("Client").
-		Preload("BarberProduct").
+	var result []dto.AppointmentListDTO
+
+	err = h.db.
+		Table("appointments a").
+		Select(`
+        a.id,
+        a.start_time,
+        a.end_time,
+        a.status,
+        c.name AS client_name,
+        p.name AS product_name
+    `).
+		Joins("JOIN clients c ON c.id = a.client_id").
+		Joins("JOIN barber_products p ON p.id = a.barber_product_id").
 		Where(
-			"barber_id = ? AND start_time >= ? AND start_time < ?",
+			"a.barber_id = ? AND a.start_time >= ? AND a.start_time < ?",
 			barberID, start, end,
 		).
-		Order("start_time ASC").
-		Find(&appointments)
+		Order("a.start_time ASC").
+		Scan(&result).Error
 
-	c.JSON(200, gin.H{
-		"year":         year,
-		"month":        month,
-		"appointments": appointments,
+	if err != nil {
+		httperr.Internal(c, "failed_to_list_appointments", "Erro ao listar agendamentos.")
+		return
+	}
+
+	httpresp.OK(c, gin.H{
+		"year":  year,
+		"month": month,
+		"data":  result,
 	})
+
 }

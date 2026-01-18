@@ -17,13 +17,16 @@ import (
 
 type PublicHandler struct {
 	db    *gorm.DB
-	audit *audit.Logger
+	audit *audit.Dispatcher
 }
 
 func NewPublicHandler(db *gorm.DB) *PublicHandler {
+	logger := audit.New(db)
+	dispatcher := audit.NewDispatcher(logger)
+
 	return &PublicHandler{
 		db:    db,
-		audit: audit.New(db),
+		audit: dispatcher,
 	}
 }
 
@@ -353,14 +356,14 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 	}
 
 	// 🔟 Auditoria
-	h.audit.Log(
-		shop.ID,
-		nil,
-		"public_appointment_created",
-		"appointment",
-		&created.ID,
-		nil,
-	)
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: shop.ID,
+		UserID:       nil,
+		Action:       "public_appointment_created",
+		Entity:       "appointment",
+		EntityID:     &created.ID,
+		Metadata:     nil,
+	})
 
 	c.JSON(http.StatusCreated, created)
 }
@@ -410,51 +413,54 @@ func (h *PublicHandler) generateAvailabilitySlots(
 		lunchEnd = parseHM(wh.LunchEnd)
 	}
 
-	startOfDay := time.Date(
-		date.Year(), date.Month(), date.Day(),
-		0, 0, 0, 0,
-		loc,
-	)
-	endOfDay := startOfDay.Add(24 * time.Hour)
-
+	// 🔥 Buscar agendamentos ORDENADOS
 	var appointments []models.Appointment
 	h.db.
+		Select("start_time", "end_time").
 		Where(
-			"barber_id = ? AND status = ? AND start_time >= ? AND start_time < ?",
-			barberID, "scheduled", startOfDay, endOfDay,
+			"barber_id = ? AND status = 'scheduled' AND start_time >= ? AND start_time < ?",
+			barberID,
+			time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc),
+			time.Date(date.Year(), date.Month(), date.Day(), 23, 59, 59, 0, loc),
 		).
+		Order("start_time ASC").
 		Find(&appointments)
 
 	slotDuration := time.Duration(product.DurationMin) * time.Minute
 	var slots []TimeSlot
+
+	apIdx := 0
+	apLen := len(appointments)
 
 	for cur := dayStart; cur.Add(slotDuration).Before(dayEnd) || cur.Add(slotDuration).Equal(dayEnd); cur = cur.Add(slotDuration) {
 
 		slotStart := cur
 		slotEnd := cur.Add(slotDuration)
 
-		if hasLunch {
-			if slotStart.Before(lunchEnd) && slotEnd.After(lunchStart) {
-				continue
-			}
-		}
-
-		conflict := false
-		for _, ap := range appointments {
-			if slotStart.Before(ap.EndTime) && slotEnd.After(ap.StartTime) {
-				conflict = true
-				break
-			}
-		}
-
-		if conflict {
+		// almoço
+		if hasLunch && slotStart.Before(lunchEnd) && slotEnd.After(lunchStart) {
 			continue
 		}
 
-		slots = append(slots, TimeSlot{
-			Start: slotStart.Format("15:04"),
-			End:   slotEnd.Format("15:04"),
-		})
+		// avança agendamentos que já terminaram
+		for apIdx < apLen && appointments[apIdx].EndTime.Before(slotStart) {
+			apIdx++
+		}
+
+		conflict := false
+		if apIdx < apLen {
+			ap := appointments[apIdx]
+			if slotStart.Before(ap.EndTime) && slotEnd.After(ap.StartTime) {
+				conflict = true
+			}
+		}
+
+		if !conflict {
+			slots = append(slots, TimeSlot{
+				Start: slotStart.Format("15:04"),
+				End:   slotEnd.Format("15:04"),
+			})
+		}
 	}
 
 	return slots, nil

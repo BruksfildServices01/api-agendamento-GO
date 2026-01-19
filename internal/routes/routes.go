@@ -11,22 +11,25 @@ import (
 
 func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 
-	// =========================
+	// ======================================================
 	// 🌍 MIDDLEWARE GLOBAL
-	// =========================
+	// ======================================================
 	r.Use(middleware.CORSMiddleware())
 
-	// =========================
+	// ======================================================
 	// 🧩 HANDLERS
-	// =========================
+	// ======================================================
 	authHandler := handlers.NewAuthHandler(db, cfg)
 	meHandler := handlers.NewMeHandler(db)
+	barbershopHandler := handlers.NewBarbershopHandler(db)
+
 	barberProductHandler := handlers.NewBarberProductHandler(db)
+	clientHandler := handlers.NewClientHandler(db)
 	workingHoursHandler := handlers.NewWorkingHoursHandler(db)
 	appointmentHandler := handlers.NewAppointmentHandler(db)
-	publicHandler := handlers.NewPublicHandler(db)
-	barbershopHandler := handlers.NewBarbershopHandler(db)
 	auditLogsHandler := handlers.NewAuditLogsHandler(db)
+
+	publicHandler := handlers.NewPublicHandler(db)
 
 	publicWebHandler := handlers.NewPublicWebHandler(db)
 	appWebHandler := handlers.NewAppWebHandler(db)
@@ -34,7 +37,6 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	// ======================================================
 	// 🌍 ROTAS WEB (HTML) — SEM AUTH
 	// ======================================================
-
 	r.GET("/web/public/:slug", publicWebHandler.ShowBookingPage)
 
 	webApp := r.Group("/web/app")
@@ -44,13 +46,12 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 		webApp.GET("/services", appWebHandler.Services)
 	}
 
-	// DEV
+	// DEV (opcional)
 	r.GET("/web/dev/services", appWebHandler.Services)
 
 	// ======================================================
 	// 🌐 API (JSON)
 	// ======================================================
-
 	api := r.Group("/api")
 	{
 		// ==================================================
@@ -82,6 +83,11 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 
 			secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)
 			secured.PATCH("/me/barbershop", barbershopHandler.UpdateMeBarbershop)
+
+			// ------------------------------
+			// CLIENTS
+			// ------------------------------
+			secured.GET("/me/clients", clientHandler.List)
 
 			// ------------------------------
 			// PRODUCTS

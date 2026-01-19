@@ -4,9 +4,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	"github.com/BruksfildServices01/barber-scheduler/internal/handlers"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
+	ucAppointment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
 )
 
 func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
@@ -15,6 +18,40 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	// 🌍 MIDDLEWARE GLOBAL
 	// ======================================================
 	r.Use(middleware.CORSMiddleware())
+
+	// ======================================================
+	// 🔧 INFRA (SINGLETONS)
+	// ======================================================
+	appointmentRepo := infraRepo.NewAppointmentGormRepository(db)
+
+	auditLogger := audit.New(db)
+	auditDispatcher := audit.NewDispatcher(auditLogger)
+
+	// ======================================================
+	// 🧠 USE CASES — APPOINTMENTS
+	// ======================================================
+	createAppointmentUC := ucAppointment.NewCreatePrivateAppointment(
+		appointmentRepo,
+		auditDispatcher,
+	)
+
+	completeAppointmentUC := ucAppointment.NewCompleteAppointment(
+		appointmentRepo,
+		auditDispatcher,
+	)
+
+	cancelAppointmentUC := ucAppointment.NewCancelAppointment(
+		appointmentRepo,
+		auditDispatcher,
+	)
+
+	listAppointmentsByDateUC := ucAppointment.NewListAppointmentsByDate(
+		appointmentRepo,
+	)
+
+	listAppointmentsByMonthUC := ucAppointment.NewListAppointmentsByMonth(
+		appointmentRepo,
+	)
 
 	// ======================================================
 	// 🧩 HANDLERS
@@ -26,16 +63,23 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	barberProductHandler := handlers.NewBarberProductHandler(db)
 	clientHandler := handlers.NewClientHandler(db)
 	workingHoursHandler := handlers.NewWorkingHoursHandler(db)
-	appointmentHandler := handlers.NewAppointmentHandler(db)
+
+	appointmentHandler := handlers.NewAppointmentHandler(
+		createAppointmentUC,
+		completeAppointmentUC,
+		cancelAppointmentUC,
+		listAppointmentsByDateUC,
+		listAppointmentsByMonthUC, // ✅ FALTAVA ISSO
+	)
+
 	auditLogsHandler := handlers.NewAuditLogsHandler(db)
 
 	publicHandler := handlers.NewPublicHandler(db)
-
 	publicWebHandler := handlers.NewPublicWebHandler(db)
 	appWebHandler := handlers.NewAppWebHandler(db)
 
 	// ======================================================
-	// 🌍 ROTAS WEB (HTML) — SEM AUTH
+	// 🌍 ROTAS WEB (HTML)
 	// ======================================================
 	r.GET("/web/public/:slug", publicWebHandler.ShowBookingPage)
 
@@ -46,17 +90,14 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 		webApp.GET("/services", appWebHandler.Services)
 	}
 
-	// DEV (opcional)
-	r.GET("/web/dev/services", appWebHandler.Services)
-
 	// ======================================================
 	// 🌐 API (JSON)
 	// ======================================================
 	api := r.Group("/api")
 	{
-		// ==================================================
-		// 🌐 API PÚBLICA — SEM AUTH
-		// ==================================================
+		// ------------------------------
+		// 🌐 API PÚBLICA
+		// ------------------------------
 		publicAPI := api.Group("/public")
 		{
 			publicAPI.GET("/:slug/products", publicHandler.ListProducts)
@@ -64,41 +105,29 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			publicAPI.POST("/:slug/appointments", publicHandler.CreateAppointment)
 		}
 
-		// ==================================================
+		// ------------------------------
 		// 🔐 AUTH
-		// ==================================================
+		// ------------------------------
 		api.POST("/auth/register", authHandler.Register)
 		api.POST("/auth/login", authHandler.Login)
 
-		// ==================================================
-		// 🔐 API PRIVADA — COM JWT
-		// ==================================================
+		// ------------------------------
+		// 🔐 API PRIVADA
+		// ------------------------------
 		secured := api.Group("/")
 		secured.Use(middleware.AuthMiddleware(cfg))
 		{
-			// ------------------------------
-			// ME
-			// ------------------------------
 			secured.GET("/me", meHandler.GetMe)
 
 			secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)
 			secured.PATCH("/me/barbershop", barbershopHandler.UpdateMeBarbershop)
 
-			// ------------------------------
-			// CLIENTS
-			// ------------------------------
 			secured.GET("/me/clients", clientHandler.List)
 
-			// ------------------------------
-			// PRODUCTS
-			// ------------------------------
 			secured.GET("/me/products", barberProductHandler.List)
 			secured.POST("/me/products", barberProductHandler.Create)
 			secured.PATCH("/me/products/:id", barberProductHandler.Update)
 
-			// ------------------------------
-			// WORKING HOURS
-			// ------------------------------
 			secured.GET("/me/working-hours", workingHoursHandler.Get)
 			secured.PUT("/me/working-hours", workingHoursHandler.Update)
 
@@ -111,9 +140,6 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			secured.PATCH("/me/appointments/:id/cancel", appointmentHandler.Cancel)
 			secured.PATCH("/me/appointments/:id/complete", appointmentHandler.Complete)
 
-			// ------------------------------
-			// AUDIT LOGS
-			// ------------------------------
 			secured.GET("/me/audit-logs", auditLogsHandler.List)
 		}
 	}

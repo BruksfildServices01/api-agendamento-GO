@@ -2,18 +2,25 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
+	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
 )
+
+////////////////////////////////////////////////////////
+// HANDLER
+////////////////////////////////////////////////////////
 
 type PublicHandler struct {
 	db    *gorm.DB
@@ -30,28 +37,23 @@ func NewPublicHandler(db *gorm.DB) *PublicHandler {
 	}
 }
 
-// ======================================================
-// STRUCTS
-// ======================================================
-
-type TimeSlot struct {
-	Start string `json:"start"`
-	End   string `json:"end"`
-}
+////////////////////////////////////////////////////////
+// DTOs
+////////////////////////////////////////////////////////
 
 type PublicCreateAppointmentRequest struct {
 	ClientName  string `json:"client_name" binding:"required"`
 	ClientPhone string `json:"client_phone" binding:"required"`
 	ClientEmail string `json:"client_email"`
 	ProductID   uint   `json:"product_id" binding:"required"`
-	Date        string `json:"date" binding:"required"`
-	Time        string `json:"time" binding:"required"`
+	Date        string `json:"date" binding:"required"` // YYYY-MM-DD
+	Time        string `json:"time" binding:"required"` // HH:mm
 	Notes       string `json:"notes"`
 }
 
-// ======================================================
+////////////////////////////////////////////////////////
 // PRODUCTS
-// ======================================================
+////////////////////////////////////////////////////////
 
 func (h *PublicHandler) ListProducts(c *gin.Context) {
 	slug := c.Param("slug")
@@ -62,14 +64,16 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
-	category := strings.ToLower(strings.TrimSpace(c.Query("category")))
-	query := strings.ToLower(strings.TrimSpace(c.Query("query")))
+	category := strings.TrimSpace(strings.ToLower(c.Query("category")))
+	query := strings.TrimSpace(strings.ToLower(c.Query("query")))
 
-	q := h.db.Where("barbershop_id = ? AND active = true", shop.ID)
+	q := h.db.
+		Where("barbershop_id = ? AND active = true", shop.ID)
 
 	if category != "" {
 		q = q.Where("LOWER(category) = ?", category)
 	}
+
 	if query != "" {
 		like := "%" + query + "%"
 		q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
@@ -87,114 +91,29 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 	})
 }
 
-// ======================================================
-// AVAILABILITY
-// ======================================================
+////////////////////////////////////////////////////////
+// AVAILABILITY (REUSO TOTAL DO USE CASE)
+////////////////////////////////////////////////////////
 
 func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 	slug := c.Param("slug")
 	dateStr := c.Query("date")
-	productID := c.Query("product_id")
+	productIDStr := c.Query("product_id")
 
-	if dateStr == "" || productID == "" {
+	if dateStr == "" || productIDStr == "" {
 		httperr.BadRequest(c, "missing_params", "Data e serviço obrigatórios.")
+		return
+	}
+
+	productID, err := strconv.ParseUint(productIDStr, 10, 64)
+	if err != nil {
+		httperr.BadRequest(c, "invalid_product_id", "Serviço inválido.")
 		return
 	}
 
 	var shop models.Barbershop
 	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
-
-	date, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		httperr.BadRequest(c, "invalid_date", "Data inválida.")
-		return
-	}
-
-	var product models.BarberProduct
-	if err := h.db.Where("id = ? AND barbershop_id = ? AND active = true", productID, shop.ID).First(&product).Error; err != nil {
-		httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
-		return
-	}
-
-	// Carregar o fuso horário da barbearia
-	loc, err := time.LoadLocation(shop.Timezone)
-	if err != nil {
-		httperr.BadRequest(c, "invalid_timezone", "Fuso horário inválido.")
-		return
-	}
-
-	// Calcular o horário de início e fim do dia com base no fuso horário da barbearia
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
-	endOfDay := startOfDay.Add(24 * time.Hour)
-
-	// Buscar todos os agendamentos para este dia e produto
-	var appointments []models.Appointment
-	h.db.Where("barbershop_id = ? AND start_time >= ? AND start_time < ? AND barber_product_id = ? AND status = 'scheduled'",
-		shop.ID, startOfDay, endOfDay, product.ID).
-		Find(&appointments)
-
-	// Gerar slots disponíveis
-	var availableSlots []TimeSlot
-	slotDuration := time.Duration(product.DurationMin) * time.Minute
-	for currentTime := startOfDay; currentTime.Add(slotDuration).Before(endOfDay); currentTime = currentTime.Add(slotDuration) {
-		slotStart := currentTime
-		slotEnd := slotStart.Add(slotDuration)
-
-		// Verificar se o slot está ocupado por algum agendamento existente
-		conflict := false
-		for _, ap := range appointments {
-			if slotStart.Before(ap.EndTime) && slotEnd.After(ap.StartTime) {
-				conflict = true
-				break
-			}
-		}
-
-		// Se não houver conflito, adicionar o slot à lista de disponíveis
-		if !conflict {
-			availableSlots = append(availableSlots, TimeSlot{
-				Start: slotStart.Format("15:04"),
-				End:   slotEnd.Format("15:04"),
-			})
-		}
-	}
-
-	// Retornar os slots disponíveis
-	c.JSON(http.StatusOK, gin.H{
-		"date":  dateStr,
-		"slots": availableSlots,
-	})
-}
-
-func (h *PublicHandler) Availability(c *gin.Context) {
-	slug := c.Param("slug")
-	dateStr := c.Query("date")
-	productID := c.Query("product_id")
-
-	if dateStr == "" || productID == "" {
-		httperr.BadRequest(c, "missing_params", "Data e serviço obrigatórios.")
-		return
-	}
-
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
-		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
-
-	date, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		httperr.BadRequest(c, "invalid_date", "Data inválida.")
-		return
-	}
-
-	var product models.BarberProduct
-	if err := h.db.
-		Where("id = ? AND barbershop_id = ? AND active = true", productID, shop.ID).
-		First(&product).Error; err != nil {
-		httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
 		return
 	}
 
@@ -202,13 +121,41 @@ func (h *PublicHandler) Availability(c *gin.Context) {
 	if err := h.db.
 		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
 		First(&barber).Error; err != nil {
+
 		httperr.BadRequest(c, "barber_not_found", "Barbeiro não encontrado.")
 		return
 	}
 
-	slots, err := h.generateAvailabilitySlots(&shop, barber.ID, date, &product)
+	date, err := time.ParseInLocation(
+		"2006-01-02",
+		dateStr,
+		timezone.Location(shop.Timezone),
+	)
 	if err != nil {
-		httperr.Internal(c, "failed_to_generate_slots", "Erro ao gerar horários.")
+		httperr.BadRequest(c, "invalid_date", "Data inválida.")
+		return
+	}
+
+	repo := infraRepo.NewAppointmentGormRepository(h.db)
+	uc := appointment.NewGetAvailability(repo)
+
+	slots, err := uc.Execute(
+		c.Request.Context(),
+		domain.AvailabilityInput{
+			BarbershopID: shop.ID,
+			BarberID:     barber.ID,
+			ProductID:    uint(productID),
+			Date:         date,
+		},
+	)
+
+	if err != nil {
+		if httperr.IsBusiness(err, "product_not_found") {
+			httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
+			return
+		}
+
+		httperr.Internal(c, "availability_failed", "Erro ao calcular horários.")
 		return
 	}
 
@@ -218,59 +165,25 @@ func (h *PublicHandler) Availability(c *gin.Context) {
 	})
 }
 
-// ======================================================
-// CREATE APPOINTMENT (PUBLIC)
-// ======================================================
+////////////////////////////////////////////////////////
+// CREATE APPOINTMENT (PUBLIC → REUSA PRIVATE)
+////////////////////////////////////////////////////////
 
 func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 	slug := c.Param("slug")
 
-	// 1️⃣ Barbershop
 	var shop models.Barbershop
 	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
-	// 2️⃣ Request
 	var req PublicCreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
 	}
 
-	// 3️⃣ Data + hora no timezone da barbearia
-	start, err := parseDateTimeInShop(&shop, req.Date, req.Time)
-	if err != nil {
-		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
-		return
-	}
-
-	// 4️⃣ Antecedência mínima
-	minAdvance := shop.MinAdvanceMinutes
-	if minAdvance <= 0 {
-		minAdvance = 120
-	}
-
-	now := timezone.NowIn(shop.Timezone)
-	if start.Before(now.Add(time.Duration(minAdvance) * time.Minute)) {
-		httperr.BadRequest(c, "too_soon", "Horário inválido.")
-		return
-	}
-
-	// 5️⃣ Serviço
-	var product models.BarberProduct
-	if err := h.db.
-		Where("id = ? AND barbershop_id = ? AND active = true", req.ProductID, shop.ID).
-		First(&product).Error; err != nil {
-
-		httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
-		return
-	}
-
-	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
-
-	// 6️⃣ Barbeiro (owner)
 	var barber models.User
 	if err := h.db.
 		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
@@ -280,188 +193,28 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 		return
 	}
 
-	// 7️⃣ Horário de trabalho + almoço
-	ok, err := IsWithinWorkingHours(h.db, &shop, barber.ID, start, end)
-	if err != nil {
-		httperr.Internal(c, "working_hours_error", "Erro ao validar horário.")
-		return
-	}
-	if !ok {
-		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
-		return
-	}
+	repo := infraRepo.NewAppointmentGormRepository(h.db)
+	uc := appointment.NewCreatePrivateAppointment(repo, h.audit)
 
-	// 8️⃣ Cliente (cria se não existir)
-	var client models.Client
-	if err := h.db.
-		Where("barbershop_id = ? AND phone = ?", shop.ID, req.ClientPhone).
-		First(&client).Error; err != nil {
-
-		client = models.Client{
+	ap, err := uc.Execute(
+		c.Request.Context(),
+		appointment.CreatePrivateAppointmentInput{
 			BarbershopID: shop.ID,
-			Name:         req.ClientName,
-			Phone:        req.ClientPhone,
-			Email:        req.ClientEmail,
-		}
-		h.db.Create(&client)
-	}
-
-	// 9️⃣ Transação + lock (EVITA conflito)
-	var created models.Appointment
-
-	err = h.db.Transaction(func(tx *gorm.DB) error {
-
-		var conflicts []models.Appointment
-		if err := tx.
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(
-				"barber_id = ? AND status = ? AND start_time < ? AND end_time > ?",
-				barber.ID, "scheduled", end, start,
-			).
-			Find(&conflicts).Error; err != nil {
-			return err
-		}
-
-		if len(conflicts) > 0 {
-			return httperr.ErrBusiness("time_conflict")
-		}
-
-		ap := models.Appointment{
-			BarbershopID:    shop.ID,
-			BarberID:        barber.ID,
-			ClientID:        client.ID,
-			BarberProductID: product.ID,
-			StartTime:       start,
-			EndTime:         end,
-			Status:          "scheduled",
-			Notes:           req.Notes,
-		}
-
-		if err := tx.Create(&ap).Error; err != nil {
-			return err
-		}
-
-		created = ap
-		return nil
-	})
+			BarberID:     barber.ID,
+			ClientName:   req.ClientName,
+			ClientPhone:  req.ClientPhone,
+			ClientEmail:  req.ClientEmail,
+			ProductID:    req.ProductID,
+			Date:         req.Date,
+			Time:         req.Time,
+			Notes:        req.Notes,
+		},
+	)
 
 	if err != nil {
-		if httperr.IsBusiness(err, "time_conflict") {
-			httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
-			return
-		}
-
-		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
+		mapCreateErrors(c, err)
 		return
 	}
 
-	// 🔟 Auditoria
-	h.audit.Dispatch(audit.Event{
-		BarbershopID: shop.ID,
-		UserID:       nil,
-		Action:       "public_appointment_created",
-		Entity:       "appointment",
-		EntityID:     &created.ID,
-		Metadata:     nil,
-	})
-
-	c.JSON(http.StatusCreated, created)
-}
-
-// ======================================================
-// SLOTS
-// ======================================================
-
-func (h *PublicHandler) generateAvailabilitySlots(
-	shop *models.Barbershop,
-	barberID uint,
-	date time.Time,
-	product *models.BarberProduct,
-) ([]TimeSlot, error) {
-
-	weekday := int(date.Weekday())
-
-	var wh models.WorkingHours
-	if err := h.db.
-		Where("barber_id = ? AND weekday = ?", barberID, weekday).
-		First(&wh).Error; err != nil {
-		return []TimeSlot{}, nil
-	}
-
-	if !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
-		return []TimeSlot{}, nil
-	}
-
-	loc := date.Location()
-
-	parseHM := func(hm string) time.Time {
-		t, _ := time.Parse("15:04", hm)
-		return time.Date(
-			date.Year(), date.Month(), date.Day(),
-			t.Hour(), t.Minute(), 0, 0,
-			loc,
-		)
-	}
-
-	dayStart := parseHM(wh.StartTime)
-	dayEnd := parseHM(wh.EndTime)
-
-	hasLunch := wh.LunchStart != "" && wh.LunchEnd != ""
-	var lunchStart, lunchEnd time.Time
-	if hasLunch {
-		lunchStart = parseHM(wh.LunchStart)
-		lunchEnd = parseHM(wh.LunchEnd)
-	}
-
-	// 🔥 Buscar agendamentos ORDENADOS
-	var appointments []models.Appointment
-	h.db.
-		Select("start_time", "end_time").
-		Where(
-			"barber_id = ? AND status = 'scheduled' AND start_time >= ? AND start_time < ?",
-			barberID,
-			time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc),
-			time.Date(date.Year(), date.Month(), date.Day(), 23, 59, 59, 0, loc),
-		).
-		Order("start_time ASC").
-		Find(&appointments)
-
-	slotDuration := time.Duration(product.DurationMin) * time.Minute
-	var slots []TimeSlot
-
-	apIdx := 0
-	apLen := len(appointments)
-
-	for cur := dayStart; cur.Add(slotDuration).Before(dayEnd) || cur.Add(slotDuration).Equal(dayEnd); cur = cur.Add(slotDuration) {
-
-		slotStart := cur
-		slotEnd := cur.Add(slotDuration)
-
-		// almoço
-		if hasLunch && slotStart.Before(lunchEnd) && slotEnd.After(lunchStart) {
-			continue
-		}
-
-		// avança agendamentos que já terminaram
-		for apIdx < apLen && appointments[apIdx].EndTime.Before(slotStart) {
-			apIdx++
-		}
-
-		conflict := false
-		if apIdx < apLen {
-			ap := appointments[apIdx]
-			if slotStart.Before(ap.EndTime) && slotEnd.After(ap.StartTime) {
-				conflict = true
-			}
-		}
-
-		if !conflict {
-			slots = append(slots, TimeSlot{
-				Start: slotStart.Format("15:04"),
-				End:   slotEnd.Format("15:04"),
-			})
-		}
-	}
-
-	return slots, nil
+	c.JSON(http.StatusCreated, ap)
 }

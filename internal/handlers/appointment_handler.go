@@ -1,82 +1,67 @@
 package handlers
 
 import (
+	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
-	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
-	"github.com/BruksfildServices01/barber-scheduler/internal/models"
-	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
+	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
 )
 
-// ======================================================
+////////////////////////////////////////////////////////
 // HANDLER
-// ======================================================
+////////////////////////////////////////////////////////
 
 type AppointmentHandler struct {
-	db    *gorm.DB
-	audit *audit.Dispatcher
+	createUC    *appointment.CreatePrivateAppointment
+	completeUC  *appointment.CompleteAppointment
+	cancelUC    *appointment.CancelAppointment
+	listByDate  *appointment.ListAppointmentsByDate
+	listByMonth *appointment.ListAppointmentsByMonth
 }
 
-func NewAppointmentHandler(db *gorm.DB) *AppointmentHandler {
-	logger := audit.New(db)
-	dispatcher := audit.NewDispatcher(logger)
-
+func NewAppointmentHandler(
+	createUC *appointment.CreatePrivateAppointment,
+	completeUC *appointment.CompleteAppointment,
+	cancelUC *appointment.CancelAppointment,
+	listByDate *appointment.ListAppointmentsByDate,
+	listByMonth *appointment.ListAppointmentsByMonth,
+) *AppointmentHandler {
 	return &AppointmentHandler{
-		db:    db,
-		audit: dispatcher,
+		createUC:    createUC,
+		completeUC:  completeUC,
+		cancelUC:    cancelUC,
+		listByDate:  listByDate,
+		listByMonth: listByMonth,
 	}
 }
 
-// ======================================================
+////////////////////////////////////////////////////////
 // REQUESTS
-// ======================================================
+////////////////////////////////////////////////////////
 
 type CreateAppointmentRequest struct {
 	ClientName  string `json:"client_name" binding:"required"`
 	ClientPhone string `json:"client_phone" binding:"required"`
 	ClientEmail string `json:"client_email"`
 	ProductID   uint   `json:"product_id" binding:"required"`
-	Date        string `json:"date" binding:"required"`
-	Time        string `json:"time" binding:"required"`
+	Date        string `json:"date" binding:"required"` // YYYY-MM-DD
+	Time        string `json:"time" binding:"required"` // HH:mm
 	Notes       string `json:"notes"`
 }
 
-// ======================================================
-// HELPERS
-// ======================================================
-
-func isInThePastOrTooSoon(
-	shop *models.Barbershop,
-	start time.Time,
-	minAdvanceMinutes int,
-) bool {
-	now := timezone.NowIn(shop.Timezone)
-	minAllowed := now.Add(time.Duration(minAdvanceMinutes) * time.Minute)
-	return start.Before(minAllowed)
-}
-
-// ======================================================
-// CREATE (FASE 6 + 7 + 9)
-// ======================================================
+////////////////////////////////////////////////////////
+// CREATE
+////////////////////////////////////////////////////////
 
 func (h *AppointmentHandler) Create(c *gin.Context) {
 	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
-
-	var shop models.Barbershop
-	if err := h.db.First(&shop, barbershopID).Error; err != nil {
-		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
 
 	var req CreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -84,131 +69,104 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 		return
 	}
 
-	start, err := parseDateTimeInShop(&shop, req.Date, req.Time)
-	if err != nil {
-		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
-		return
-	}
-
-	minAdvance := shop.MinAdvanceMinutes
-	if minAdvance <= 0 {
-		minAdvance = 120
-	}
-	if isInThePastOrTooSoon(&shop, start, minAdvance) {
-		httperr.BadRequest(c, "too_soon", "Horário inválido.")
-		return
-	}
-
-	var product models.BarberProduct
-	if err := h.db.
-		Where("id = ? AND barbershop_id = ?", req.ProductID, barbershopID).
-		First(&product).Error; err != nil {
-		httperr.BadRequest(c, "product_not_found", "Serviço não encontrado.")
-		return
-	}
-
-	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
-
-	ok, err := h.isWithinWorkingHours(&shop, barberID, start, end)
-	if err != nil {
-		httperr.Internal(c, "working_hours_error", "Erro ao validar horário.")
-		return
-	}
-	if !ok {
-		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
-		return
-	}
-
-	var client models.Client
-	if err := h.db.
-		Where("barbershop_id = ? AND phone = ?", barbershopID, req.ClientPhone).
-		First(&client).Error; err != nil {
-
-		client = models.Client{
+	ap, err := h.createUC.Execute(
+		c.Request.Context(),
+		appointment.CreatePrivateAppointmentInput{
 			BarbershopID: barbershopID,
-			Name:         req.ClientName,
-			Phone:        req.ClientPhone,
-			Email:        req.ClientEmail,
-		}
-		h.db.Create(&client)
-	}
-
-	var created models.Appointment
-
-	err = h.db.Transaction(func(tx *gorm.DB) error {
-
-		var conflicts []models.Appointment
-		if err := tx.
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(
-				"barber_id = ? AND status = ? AND start_time < ? AND end_time > ?",
-				barberID, "scheduled", end, start,
-			).
-			Find(&conflicts).Error; err != nil {
-			return err
-		}
-
-		if len(conflicts) > 0 {
-			return httperr.ErrBusiness("time_conflict")
-		}
-
-		ap := models.Appointment{
-			BarbershopID:    barbershopID,
-			BarberID:        barberID,
-			ClientID:        client.ID,
-			BarberProductID: product.ID,
-			StartTime:       start,
-			EndTime:         end,
-			Status:          "scheduled",
-			Notes:           req.Notes,
-		}
-
-		if err := tx.Create(&ap).Error; err != nil {
-			return err
-		}
-
-		created = ap
-		return nil
-	})
+			BarberID:     barberID,
+			ClientName:   req.ClientName,
+			ClientPhone:  req.ClientPhone,
+			ClientEmail:  req.ClientEmail,
+			ProductID:    req.ProductID,
+			Date:         req.Date,
+			Time:         req.Time,
+			Notes:        req.Notes,
+		},
+	)
 
 	if err != nil {
-		if httperr.IsBusiness(err, "time_conflict") || httperr.IsExclusionConflict(err) {
-
-			h.audit.Dispatch(audit.Event{
-				BarbershopID: barbershopID,
-				UserID:       &barberID,
-				Action:       "appointment_conflict",
-				Entity:       "appointment",
-				EntityID:     nil,
-				Metadata: map[string]any{
-					"start": start,
-					"end":   end,
-				},
-			})
-
-			httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
-			return
-		}
-
-		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
+		mapCreateErrors(c, err)
 		return
 	}
 
-	h.audit.Dispatch(audit.Event{
-		BarbershopID: barbershopID,
-		UserID:       &barberID,
-		Action:       "appointment_created",
-		Entity:       "appointment",
-		EntityID:     &created.ID,
-		Metadata:     nil,
-	})
-
-	c.JSON(201, created)
+	c.JSON(http.StatusCreated, ap)
 }
 
-// ======================================================
-// LIST
-// ======================================================
+////////////////////////////////////////////////////////
+// COMPLETE
+////////////////////////////////////////////////////////
+
+func (h *AppointmentHandler) Complete(c *gin.Context) {
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		httperr.BadRequest(c, "invalid_id", "ID inválido.")
+		return
+	}
+
+	ap, err := h.completeUC.Execute(
+		c.Request.Context(),
+		barbershopID,
+		barberID,
+		uint(id),
+	)
+
+	if err != nil {
+		switch {
+		case httperr.IsBusiness(err, "appointment_not_found"):
+			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
+		case httperr.IsBusiness(err, "invalid_state"):
+			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser concluído.")
+		default:
+			httperr.Internal(c, "complete_failed", "Erro ao concluir agendamento.")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, ap)
+}
+
+////////////////////////////////////////////////////////
+// CANCEL
+////////////////////////////////////////////////////////
+
+func (h *AppointmentHandler) Cancel(c *gin.Context) {
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		httperr.BadRequest(c, "invalid_id", "ID inválido.")
+		return
+	}
+
+	ap, err := h.cancelUC.Execute(
+		c.Request.Context(),
+		barbershopID,
+		barberID,
+		uint(id),
+	)
+
+	if err != nil {
+		switch {
+		case httperr.IsBusiness(err, "appointment_not_found"):
+			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
+		case httperr.IsBusiness(err, "invalid_state"):
+			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser cancelado.")
+		default:
+			httperr.Internal(c, "cancel_failed", "Erro ao cancelar agendamento.")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, ap)
+}
+
+////////////////////////////////////////////////////////
+// LIST BY DATE
+////////////////////////////////////////////////////////
 
 func (h *AppointmentHandler) ListByDate(c *gin.Context) {
 	barberID := c.MustGet(middleware.ContextUserID).(uint)
@@ -220,254 +178,74 @@ func (h *AppointmentHandler) ListByDate(c *gin.Context) {
 		return
 	}
 
-	var shop models.Barbershop
-	if err := h.db.First(&shop, barbershopID).Error; err != nil {
-		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
-
-	date, err := parseDateInShop(&shop, dateStr)
+	date, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
 		httperr.BadRequest(c, "invalid_date", "Data inválida.")
 		return
 	}
 
-	start := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
-	end := start.Add(24 * time.Hour)
-
-	var result []dto.AppointmentListDTO
-
-	err = h.db.
-		Table("appointments a").
-		Select(`
-        a.id,
-        a.start_time,
-        a.end_time,
-        a.status,
-        c.name AS client_name,
-        p.name AS product_name
-    `).
-		Joins("JOIN clients c ON c.id = a.client_id").
-		Joins("JOIN barber_products p ON p.id = a.barber_product_id").
-		Where(
-			"a.barber_id = ? AND a.start_time >= ? AND a.start_time < ?",
-			barberID, start, end,
-		).
-		Order("a.start_time ASC").
-		Scan(&result).Error
-
+	list, err := h.listByDate.Execute(
+		c.Request.Context(),
+		barberID,
+		barbershopID,
+		date,
+	)
 	if err != nil {
 		httperr.Internal(c, "failed_to_list_appointments", "Erro ao listar agendamentos.")
 		return
 	}
 
-	httpresp.List(c, result)
-
+	httpresp.List(c, list)
 }
-
-// ======================================================
-// COMPLETE
-// ======================================================
-
-func (h *AppointmentHandler) Complete(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
-	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
-	id := c.Param("id")
-
-	var shop models.Barbershop
-	if err := h.db.First(&shop, barbershopID).Error; err != nil {
-		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
-
-	var ap models.Appointment
-	if err := h.db.Where("id = ? AND barber_id = ?", id, barberID).First(&ap).Error; err != nil {
-		httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
-		return
-	}
-
-	if ap.Status != "scheduled" {
-		httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser concluído.")
-		return
-	}
-
-	now := timezone.NowIn(shop.Timezone)
-	ap.Status = "completed"
-	ap.CompletedAt = &now
-
-	h.db.Save(&ap)
-
-	h.audit.Dispatch(audit.Event{
-		BarbershopID: barbershopID,
-		UserID:       &barberID,
-		Action:       "appointment_completed",
-		Entity:       "appointment",
-		EntityID:     &ap.ID,
-		Metadata:     nil})
-
-	c.JSON(200, ap)
-}
-
-// ======================================================
-// CANCEL
-// ======================================================
-
-func (h *AppointmentHandler) Cancel(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
-	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
-	id := c.Param("id")
-
-	var shop models.Barbershop
-	if err := h.db.First(&shop, barbershopID).Error; err != nil {
-		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
-
-	var ap models.Appointment
-	if err := h.db.Where("id = ? AND barber_id = ?", id, barberID).First(&ap).Error; err != nil {
-		httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
-		return
-	}
-
-	if ap.Status != "scheduled" {
-		httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser cancelado.")
-		return
-	}
-
-	now := timezone.NowIn(shop.Timezone)
-	ap.Status = "cancelled"
-	ap.CancelledAt = &now
-
-	h.db.Save(&ap)
-
-	h.audit.Dispatch(audit.Event{
-		BarbershopID: barbershopID,
-		UserID:       &barberID,
-		Action:       "appointment_cancelled",
-		Entity:       "appointment",
-		EntityID:     &ap.ID,
-		Metadata:     nil,
-	})
-
-	c.JSON(200, ap)
-}
-
-// ======================================================
-// WORKING HOURS + ALMOÇO
-// ======================================================
-
-func (h *AppointmentHandler) isWithinWorkingHours(
-	shop *models.Barbershop,
-	barberID uint,
-	start time.Time,
-	end time.Time,
-) (bool, error) {
-
-	weekday := int(start.Weekday())
-	loc := start.Location()
-
-	var wh models.WorkingHours
-	if err := h.db.
-		Where("barber_id = ? AND weekday = ?", barberID, weekday).
-		First(&wh).Error; err != nil {
-		return false, nil
-	}
-
-	if !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
-		return false, nil
-	}
-
-	parseHM := func(hm string) time.Time {
-		t, _ := time.Parse("15:04", hm)
-		return time.Date(start.Year(), start.Month(), start.Day(), t.Hour(), t.Minute(), 0, 0, loc)
-	}
-
-	workStart := parseHM(wh.StartTime)
-	workEnd := parseHM(wh.EndTime)
-
-	if start.Before(workStart) || end.After(workEnd) {
-		return false, nil
-	}
-
-	if wh.LunchStart != "" && wh.LunchEnd != "" {
-		lunchStart := parseHM(wh.LunchStart)
-		lunchEnd := parseHM(wh.LunchEnd)
-		if start.Before(lunchEnd) && end.After(lunchStart) {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// ======================================================
-// LIST BY MONTH
-// ======================================================
 
 func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
 	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
 
-	yearStr := c.Query("year")
-	monthStr := c.Query("month")
-
-	if yearStr == "" || monthStr == "" {
-		httperr.BadRequest(c, "missing_year_or_month", "Ano e mês são obrigatórios.")
-		return
-	}
-
-	year, err := strconv.Atoi(yearStr)
-	if err != nil || year < 2000 || year > 2100 {
+	year, err := strconv.Atoi(c.Query("year"))
+	if err != nil {
 		httperr.BadRequest(c, "invalid_year", "Ano inválido.")
 		return
 	}
 
-	month, err := strconv.Atoi(monthStr)
-	if err != nil || month < 1 || month > 12 {
+	month, err := strconv.Atoi(c.Query("month"))
+	if err != nil {
 		httperr.BadRequest(c, "invalid_month", "Mês inválido.")
 		return
 	}
 
-	var shop models.Barbershop
-	if err := h.db.First(&shop, barbershopID).Error; err != nil {
-		httperr.Internal(c, "barbershop_not_found", "Barbearia não encontrada.")
-		return
-	}
-
-	loc := timezone.Location(shop.Timezone)
-	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
-	end := start.AddDate(0, 1, 0)
-
-	var result []dto.AppointmentListDTO
-
-	err = h.db.
-		Table("appointments a").
-		Select(`
-        a.id,
-        a.start_time,
-        a.end_time,
-        a.status,
-        c.name AS client_name,
-        p.name AS product_name
-    `).
-		Joins("JOIN clients c ON c.id = a.client_id").
-		Joins("JOIN barber_products p ON p.id = a.barber_product_id").
-		Where(
-			"a.barber_id = ? AND a.start_time >= ? AND a.start_time < ?",
-			barberID, start, end,
-		).
-		Order("a.start_time ASC").
-		Scan(&result).Error
-
+	list, err := h.listByMonth.Execute(
+		c.Request.Context(),
+		barberID,
+		barbershopID,
+		year,
+		month,
+	)
 	if err != nil {
 		httperr.Internal(c, "failed_to_list_appointments", "Erro ao listar agendamentos.")
 		return
 	}
 
-	httpresp.OK(c, gin.H{
-		"year":  year,
-		"month": month,
-		"data":  result,
-	})
+	httpresp.List(c, list)
+}
 
+////////////////////////////////////////////////////////
+// HELPERS
+////////////////////////////////////////////////////////
+
+func mapCreateErrors(c *gin.Context, err error) {
+	switch {
+	case httperr.IsBusiness(err, "invalid_date_or_time"):
+		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
+	case httperr.IsBusiness(err, "too_soon"):
+		httperr.BadRequest(c, "too_soon", "Horário inválido.")
+	case httperr.IsBusiness(err, "product_not_found"):
+		httperr.BadRequest(c, "product_not_found", "Serviço não encontrado.")
+	case httperr.IsBusiness(err, "outside_working_hours"):
+		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
+	case httperr.IsBusiness(err, "time_conflict"):
+		httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
+	default:
+		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
+	}
 }

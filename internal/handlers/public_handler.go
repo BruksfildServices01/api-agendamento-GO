@@ -16,6 +16,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
+	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/paymentconfig"
 )
 
 ////////////////////////////////////////////////////////
@@ -172,18 +173,27 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 	slug := c.Param("slug")
 
+	// --------------------------------------------------
+	// 1️⃣ Barbearia
+	// --------------------------------------------------
 	var shop models.Barbershop
 	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
+	// --------------------------------------------------
+	// 2️⃣ Request
+	// --------------------------------------------------
 	var req PublicCreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
 	}
 
+	// --------------------------------------------------
+	// 3️⃣ Barbeiro (owner)
+	// --------------------------------------------------
 	var barber models.User
 	if err := h.db.
 		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
@@ -193,10 +203,34 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 		return
 	}
 
-	repo := infraRepo.NewAppointmentGormRepository(h.db)
-	uc := appointment.NewCreatePrivateAppointment(repo, h.audit)
+	// ==================================================
+	// 🔧 REPOSITORIES
+	// ==================================================
+	appointmentRepo := infraRepo.NewAppointmentGormRepository(h.db)
+	paymentConfigRepo := infraRepo.NewBarbershopPaymentConfigGormRepository(h.db)
 
-	ap, err := uc.Execute(
+	// ==================================================
+	// 🧠 PAYMENT POLICY (somente leitura)
+	// ==================================================
+	resolvePaymentPolicyUC :=
+		paymentconfig.NewResolveBookingPaymentPolicy(
+			paymentConfigRepo,
+		)
+
+	// ==================================================
+	// 🧠 USE CASE PRINCIPAL (CORRETO)
+	// ==================================================
+	createAppointmentUC :=
+		appointment.NewCreatePrivateAppointment(
+			appointmentRepo,
+			h.audit,
+			resolvePaymentPolicyUC,
+		)
+
+	// ==================================================
+	// 🚀 EXECUÇÃO
+	// ==================================================
+	ap, err := createAppointmentUC.Execute(
 		c.Request.Context(),
 		appointment.CreatePrivateAppointmentInput{
 			BarbershopID: shop.ID,
@@ -210,11 +244,13 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 			Notes:        req.Notes,
 		},
 	)
-
 	if err != nil {
 		mapCreateErrors(c, err)
 		return
 	}
 
+	// ==================================================
+	// ✅ RESPONSE
+	// ==================================================
 	c.JSON(http.StatusCreated, ap)
 }

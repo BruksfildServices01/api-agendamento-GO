@@ -7,7 +7,10 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
+// Repository é usado por fluxos HTTP (ações humanas).
+// Ex: criar, cancelar, concluir agendamentos via API.
 type Repository interface {
+
 	// -------- Barbershop --------
 	GetBarbershopByID(
 		ctx context.Context,
@@ -43,7 +46,7 @@ type Repository interface {
 		end time.Time,
 	) error
 
-	// -------- Appointment (state change) --------
+	// -------- Appointment (state change - user) --------
 	GetAppointmentForBarber(
 		ctx context.Context,
 		appointmentID uint,

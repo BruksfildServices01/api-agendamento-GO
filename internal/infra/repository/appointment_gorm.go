@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -247,6 +248,15 @@ func (r *AppointmentGormRepository) GetOrCreateClient(
 		First(&client).Error
 
 	if err == nil {
+
+		if email != "" && client.Email != email {
+			client.Email = email
+
+			if err := r.db.WithContext(ctx).Save(&client).Error; err != nil {
+				return nil, err
+			}
+		}
+
 		return &client, nil
 	}
 
@@ -317,6 +327,58 @@ func (r *AppointmentGormRepository) ListAppointmentsForPeriod(
 	}
 
 	return apps, nil
+}
+
+func (r *AppointmentGormRepository) ListAppointmentsForReminder(
+	ctx context.Context,
+	target time.Time,
+) ([]*models.Appointment, error) {
+
+	start := target.Add(-5 * time.Minute)
+	end := target.Add(5 * time.Minute)
+
+	var appointments []*models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Preload("Client").
+		Preload("Barbershop").
+		Where(
+			"start_time BETWEEN ? AND ? AND status = ?",
+			start,
+			end,
+			"scheduled",
+		).
+		Find(&appointments).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return appointments, nil
+}
+
+func (r *AppointmentGormRepository) GetAppointmentByID(
+	ctx context.Context,
+	appointmentID uint,
+) (*models.Appointment, error) {
+
+	var ap models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Preload("Client").
+		Preload("BarberProduct").
+		Preload("Barbershop").
+		First(&ap, appointmentID).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &ap, nil
 }
 
 // Compile-time check

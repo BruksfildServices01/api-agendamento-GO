@@ -9,6 +9,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
+	paymentconfig "github.com/BruksfildServices01/barber-scheduler/internal/usecase/paymentconfig"
 )
 
 // ======================================================
@@ -35,17 +36,22 @@ type CreatePrivateAppointmentInput struct {
 // ======================================================
 
 type CreatePrivateAppointment struct {
-	repo  domain.Repository
+	repo domain.Repository
+
 	audit *audit.Dispatcher
+
+	paymentPolicy *paymentconfig.ResolveBookingPaymentPolicy
 }
 
 func NewCreatePrivateAppointment(
 	repo domain.Repository,
 	audit *audit.Dispatcher,
+	paymentPolicy *paymentconfig.ResolveBookingPaymentPolicy,
 ) *CreatePrivateAppointment {
 	return &CreatePrivateAppointment{
-		repo:  repo,
-		audit: audit,
+		repo:          repo,
+		audit:         audit,
+		paymentPolicy: paymentPolicy,
 	}
 }
 
@@ -67,7 +73,15 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 2️⃣ Data / hora no timezone da barbearia
+	// 2️⃣ Política de pagamento
+	// --------------------------------------------------
+	policy, err := uc.paymentPolicy.Execute(ctx, in.BarbershopID)
+	if err != nil {
+		return nil, err
+	}
+
+	// --------------------------------------------------
+	// 3️⃣ Parse de data / hora
 	// --------------------------------------------------
 	start, err := time.ParseInLocation(
 		"2006-01-02 15:04",
@@ -79,7 +93,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 3️⃣ Antecedência mínima
+	// 4️⃣ Antecedência mínima
 	// --------------------------------------------------
 	minAdvance := shop.MinAdvanceMinutes
 	if minAdvance <= 0 {
@@ -92,13 +106,9 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 4️⃣ Serviço
+	// 5️⃣ Serviço
 	// --------------------------------------------------
-	product, err := uc.repo.GetProduct(
-		ctx,
-		in.BarbershopID,
-		in.ProductID,
-	)
+	product, err := uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
 	if err != nil {
 		return nil, httperr.ErrBusiness("product_not_found")
 	}
@@ -106,14 +116,9 @@ func (uc *CreatePrivateAppointment) Execute(
 	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
 
 	// --------------------------------------------------
-	// 5️⃣ Working hours + almoço
+	// 6️⃣ Horário de trabalho
 	// --------------------------------------------------
-	ok, err := uc.repo.IsWithinWorkingHours(
-		ctx,
-		in.BarberID,
-		start,
-		end,
-	)
+	ok, err := uc.repo.IsWithinWorkingHours(ctx, in.BarberID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +127,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 6️⃣ Cliente (get or create)
+	// 7️⃣ Cliente
 	// --------------------------------------------------
 	client, err := uc.repo.GetOrCreateClient(
 		ctx,
@@ -136,20 +141,20 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 7️⃣ Conflito de horário
+	// 8️⃣ Conflito de horário
 	// --------------------------------------------------
-	if err := uc.repo.AssertNoTimeConflict(
-		ctx,
-		in.BarberID,
-		start,
-		end,
-	); err != nil {
+	if err := uc.repo.AssertNoTimeConflict(ctx, in.BarberID, start, end); err != nil {
 		return nil, err
 	}
 
 	// --------------------------------------------------
-	// 8️⃣ Criação do agendamento (status centralizado)
+	// 9️⃣ Status inicial
 	// --------------------------------------------------
+	initialStatus := domain.StatusScheduled
+	if policy.RequirePix {
+		initialStatus = domain.StatusAwaitingPayment
+	}
+
 	ap := &models.Appointment{
 		BarbershopID:    in.BarbershopID,
 		BarberID:        in.BarberID,
@@ -157,7 +162,7 @@ func (uc *CreatePrivateAppointment) Execute(
 		BarberProductID: product.ID,
 		StartTime:       start,
 		EndTime:         end,
-		Status:          string(domain.StatusScheduled),
+		Status:          string(initialStatus),
 		Notes:           in.Notes,
 	}
 
@@ -166,7 +171,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 9️⃣ Auditoria
+	// 🔍 Auditoria
 	// --------------------------------------------------
 	uc.audit.Dispatch(audit.Event{
 		BarbershopID: in.BarbershopID,
@@ -174,6 +179,9 @@ func (uc *CreatePrivateAppointment) Execute(
 		Action:       "appointment_created",
 		Entity:       "appointment",
 		EntityID:     &ap.ID,
+		Metadata: map[string]any{
+			"status": ap.Status,
+		},
 	})
 
 	return ap, nil

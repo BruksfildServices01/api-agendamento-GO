@@ -4,25 +4,28 @@ import (
 	"context"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
-	"github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
-	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	domainAppointment "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
 type CancelAppointment struct {
-	repo  domain.Repository
-	audit *audit.Dispatcher
+	repo        domainAppointment.Repository
+	paymentRepo domainPayment.Repository
+	audit       *audit.Dispatcher
 }
 
 func NewCancelAppointment(
-	repo domain.Repository,
+	repo domainAppointment.Repository,
+	paymentRepo domainPayment.Repository,
 	audit *audit.Dispatcher,
 ) *CancelAppointment {
 	return &CancelAppointment{
-		repo:  repo,
-		audit: audit,
+		repo:        repo,
+		paymentRepo: paymentRepo,
+		audit:       audit,
 	}
 }
 
@@ -33,18 +36,37 @@ func (uc *CancelAppointment) Execute(
 	appointmentID uint,
 ) (*models.Appointment, error) {
 
+	// --------------------------------------------------
+	// 1️⃣ Barbearia
+	// --------------------------------------------------
 	shop, err := uc.repo.GetBarbershopByID(ctx, barbershopID)
 	if err != nil {
 		return nil, err
 	}
 
+	// --------------------------------------------------
+	// 2️⃣ Appointment
+	// --------------------------------------------------
 	ap, err := uc.repo.GetAppointmentForBarber(ctx, appointmentID, barberID)
 	if err != nil {
 		return nil, httperr.ErrBusiness("appointment_not_found")
 	}
 
+	// --------------------------------------------------
+	// 🔒 3️⃣ Enforcement: bloqueia cancelamento se pago
+	// --------------------------------------------------
+	payment, err := uc.paymentRepo.GetByAppointmentID(ctx, ap.ID)
+	if err == nil && payment != nil {
+		if payment.Status == string(domainPayment.StatusPaid) {
+			return nil, httperr.ErrBusiness("appointment_already_paid")
+		}
+	}
+
+	// --------------------------------------------------
+	// 4️⃣ Cancela (domínio)
+	// --------------------------------------------------
 	now := timezone.NowIn(shop.Timezone)
-	if err := appointment.Cancel(ap, now); err != nil {
+	if err := domainAppointment.Cancel(ap, now); err != nil {
 		return nil, err
 	}
 
@@ -52,6 +74,9 @@ func (uc *CancelAppointment) Execute(
 		return nil, err
 	}
 
+	// --------------------------------------------------
+	// 5️⃣ Auditoria
+	// --------------------------------------------------
 	uc.audit.Dispatch(audit.Event{
 		BarbershopID: barbershopID,
 		UserID:       &barberID,

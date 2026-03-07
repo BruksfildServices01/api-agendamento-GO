@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 type Config struct {
@@ -15,10 +16,17 @@ type Config struct {
 	ServerPort string
 
 	// =========================
+	// CORS
+	// =========================
+	// Allowlist de origens (CSV): "http://localhost:4200,https://app.seudominio.com"
+	// Se vazio, não libera CORS (recomendado falhar fechado).
+	CORSAllowedOrigins []string
+
+	// =========================
 	// EMAIL (BREVO SMTP)
 	// =========================
 	EmailEnabled bool
-	EmailFrom    string // ⚠️ EMAIL PURO (ex: corteon@gmail.com)
+	EmailFrom    string
 
 	SMTPHost string
 	SMTPPort string
@@ -42,6 +50,9 @@ func Load() *Config {
 		DBUrl:      dbURL,
 		JWTSecret:  getEnv("JWT_SECRET", "changeme"),
 		ServerPort: getEnv("SERVER_PORT", "8080"),
+
+		// CORS
+		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "")),
 
 		// EMAIL
 		EmailEnabled: getEnv("EMAIL_ENABLED", "false") == "true",
@@ -72,6 +83,13 @@ func Load() *Config {
 
 	log.Println("[CONFIG] EMAIL_ENABLED =", cfg.EmailEnabled)
 
+	// Opcional: log seguro só pra confirmar carregou (sem vazar dados)
+	if len(cfg.CORSAllowedOrigins) > 0 {
+		log.Println("[CONFIG] CORS_ALLOWED_ORIGINS =", strings.Join(cfg.CORSAllowedOrigins, ","))
+	} else {
+		log.Println("[CONFIG] CORS_ALLOWED_ORIGINS = (empty)")
+	}
+
 	return cfg
 }
 
@@ -80,6 +98,23 @@ func getEnv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return []string{}
+	}
+
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (c *Config) Addr() string {

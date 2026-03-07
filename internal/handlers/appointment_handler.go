@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
@@ -23,19 +24,28 @@ type AppointmentHandler struct {
 	cancelUC    *appointment.CancelAppointment
 	listByDate  *appointment.ListAppointmentsByDate
 	listByMonth *appointment.ListAppointmentsByMonth
+	noShow      *appointment.MarkAppointmentNoShow
+}
+
+type CompleteAppointmentRequest struct {
+	FinalAmountCents      *int64 `json:"final_amount_cents"`
+	OperationalNote       string `json:"operational_note"`
+	ConfirmNormalCharging bool   `json:"confirm_normal_charging"`
 }
 
 func NewAppointmentHandler(
-	createUC *appointment.CreatePrivateAppointment,
-	completeUC *appointment.CompleteAppointment,
-	cancelUC *appointment.CancelAppointment,
+	create *appointment.CreatePrivateAppointment,
+	complete *appointment.CompleteAppointment,
+	cancel *appointment.CancelAppointment,
+	noShow *appointment.MarkAppointmentNoShow,
 	listByDate *appointment.ListAppointmentsByDate,
 	listByMonth *appointment.ListAppointmentsByMonth,
 ) *AppointmentHandler {
 	return &AppointmentHandler{
-		createUC:    createUC,
-		completeUC:  completeUC,
-		cancelUC:    cancelUC,
+		createUC:    create,
+		completeUC:  complete,
+		cancelUC:    cancel,
+		noShow:      noShow,
 		listByDate:  listByDate,
 		listByMonth: listByMonth,
 	}
@@ -60,8 +70,8 @@ type CreateAppointmentRequest struct {
 ////////////////////////////////////////////////////////
 
 func (h *AppointmentHandler) Create(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
 
 	var req CreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -97,8 +107,8 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 ////////////////////////////////////////////////////////
 
 func (h *AppointmentHandler) Complete(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
 
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -106,26 +116,89 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 		return
 	}
 
-	ap, err := h.completeUC.Execute(
-		c.Request.Context(),
-		barbershopID,
-		barberID,
-		uint(id),
-	)
+	var req CompleteAppointmentRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
+			return
+		}
+	}
 
+	ap, closure, consumeResult, err := h.completeUC.Execute(
+		c.Request.Context(),
+		appointment.CompleteAppointmentInput{
+			BarbershopID:          barbershopID,
+			BarberID:              barberID,
+			AppointmentID:         uint(id),
+			FinalAmountCents:      req.FinalAmountCents,
+			OperationalNote:       req.OperationalNote,
+			ConfirmNormalCharging: req.ConfirmNormalCharging,
+		},
+	)
 	if err != nil {
 		switch {
 		case httperr.IsBusiness(err, "appointment_not_found"):
 			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
+
+		case httperr.IsBusiness(err, "invalid_barbershop"):
+			httperr.BadRequest(c, "invalid_barbershop", "Barbearia inválida.")
+
+		case httperr.IsBusiness(err, "invalid_final_amount"):
+			httperr.BadRequest(c, "invalid_final_amount", "Valor final inválido.")
+
 		case httperr.IsBusiness(err, "invalid_state"):
 			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser concluído.")
+
+		case httperr.IsBusiness(err, "appointment_payment_not_found"):
+			httperr.BadRequest(
+				c,
+				"appointment_payment_not_found",
+				"Pagamento obrigatório ainda não foi gerado.",
+			)
+
+		case httperr.IsBusiness(err, "appointment_payment_not_paid"):
+			httperr.BadRequest(
+				c,
+				"appointment_payment_not_paid",
+				"Pagamento obrigatório ainda não foi confirmado.",
+			)
+
 		default:
 			httperr.Internal(c, "complete_failed", "Erro ao concluir agendamento.")
 		}
 		return
 	}
 
-	c.JSON(http.StatusOK, ap)
+	var subscription *dto.CompleteAppointmentSubscriptionDTO
+	if consumeResult != nil {
+		subscription = &dto.CompleteAppointmentSubscriptionDTO{
+			ConsumeStatus: string(consumeResult.Status),
+			PlanID:        consumeResult.PlanID,
+		}
+	}
+
+	operational := dto.CompleteAppointmentOperationalDTO{}
+
+	if closure != nil {
+		operational.ServiceID = closure.ServiceID
+		operational.ServiceName = closure.ServiceName
+		operational.ReferenceAmountCents = closure.ReferenceAmountCents
+		operational.FinalAmountCents = closure.FinalAmountCents
+		operational.OperationalNote = closure.OperationalNote
+		operational.SubscriptionCovered = closure.SubscriptionCovered
+		operational.RequiresNormalCharging = closure.RequiresNormalCharging
+		operational.ConfirmNormalCharging = closure.ConfirmNormalCharging
+
+		if closure.SubscriptionConsumeStatus != nil {
+			operational.SubscriptionConsumeStatus = *closure.SubscriptionConsumeStatus
+		}
+	}
+
+	c.JSON(http.StatusOK, dto.CompleteAppointmentResponse{
+		Appointment:  ap,
+		Subscription: subscription,
+		Operational:  operational,
+	})
 }
 
 ////////////////////////////////////////////////////////
@@ -133,8 +206,8 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 ////////////////////////////////////////////////////////
 
 func (h *AppointmentHandler) Cancel(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
 
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -169,8 +242,8 @@ func (h *AppointmentHandler) Cancel(c *gin.Context) {
 ////////////////////////////////////////////////////////
 
 func (h *AppointmentHandler) ListByDate(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
 
 	dateStr := c.Query("date")
 	if dateStr == "" {
@@ -186,8 +259,8 @@ func (h *AppointmentHandler) ListByDate(c *gin.Context) {
 
 	list, err := h.listByDate.Execute(
 		c.Request.Context(),
-		barberID,
 		barbershopID,
+		barberID,
 		date,
 	)
 	if err != nil {
@@ -199,8 +272,8 @@ func (h *AppointmentHandler) ListByDate(c *gin.Context) {
 }
 
 func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
-	barberID := c.MustGet(middleware.ContextUserID).(uint)
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
 
 	year, err := strconv.Atoi(c.Query("year"))
 	if err != nil {
@@ -216,8 +289,8 @@ func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
 
 	list, err := h.listByMonth.Execute(
 		c.Request.Context(),
-		barberID,
 		barbershopID,
+		barberID,
 		year,
 		month,
 	)
@@ -248,4 +321,38 @@ func mapCreateErrors(c *gin.Context, err error) {
 	default:
 		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
 	}
+}
+
+func (h *AppointmentHandler) MarkNoShow(c *gin.Context) {
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	barberID := c.MustGet(middleware.ContextUserID).(uint)
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		httperr.BadRequest(c, "invalid_id", "ID inválido.")
+		return
+	}
+
+	err = h.noShow.Execute(
+		c.Request.Context(),
+		barbershopID,
+		barberID,
+		uint(id),
+	)
+
+	if err != nil {
+		switch {
+		case httperr.IsBusiness(err, "appointment_not_found"):
+			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
+
+		case httperr.IsBusiness(err, "invalid_state"):
+			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser marcado como falta.")
+
+		default:
+			httperr.Internal(c, "no_show_failed", "Erro ao marcar falta.")
+		}
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }

@@ -10,7 +10,6 @@ import (
 
 func renderPaymentConfirmed(input domain.PaymentConfirmedInput) (string, error) {
 
-	// 1️⃣ Lê template
 	raw, err := os.ReadFile(
 		"internal/infra/notification/templates/payment_confirmed.html",
 	)
@@ -20,12 +19,16 @@ func renderPaymentConfirmed(input domain.PaymentConfirmedInput) (string, error) 
 
 	html := string(raw)
 
-	// 2️⃣ Formata data
+	// timezone-safe
+	loc, err := time.LoadLocation(input.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+
 	start := input.StartTime.
-		In(time.FixedZone("", 0)).
+		In(loc).
 		Format("02/01/2006 às 15:04")
 
-	// 3️⃣ Replace simples (MVP-safe)
 	html = strings.ReplaceAll(html, "{{ClientName}}", input.ClientName)
 	html = strings.ReplaceAll(html, "{{AppointmentDate}}", start)
 	html = strings.ReplaceAll(html, "{{BarbershopName}}", input.BarbershopName)

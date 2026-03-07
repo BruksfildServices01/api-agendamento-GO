@@ -9,14 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/paymentconfig"
 )
 
 ////////////////////////////////////////////////////////
@@ -24,17 +22,17 @@ import (
 ////////////////////////////////////////////////////////
 
 type PublicHandler struct {
-	db    *gorm.DB
-	audit *audit.Dispatcher
+	db                *gorm.DB
+	createAppointment *appointment.CreatePrivateAppointment
 }
 
-func NewPublicHandler(db *gorm.DB) *PublicHandler {
-	logger := audit.New(db)
-	dispatcher := audit.NewDispatcher(logger)
-
+func NewPublicHandler(
+	db *gorm.DB,
+	createAppointment *appointment.CreatePrivateAppointment,
+) *PublicHandler {
 	return &PublicHandler{
-		db:    db,
-		audit: dispatcher,
+		db:                db,
+		createAppointment: createAppointment,
 	}
 }
 
@@ -53,7 +51,7 @@ type PublicCreateAppointmentRequest struct {
 }
 
 ////////////////////////////////////////////////////////
-// PRODUCTS
+// PRODUCTS (public catalog of services)
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) ListProducts(c *gin.Context) {
@@ -68,8 +66,7 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 	category := strings.TrimSpace(strings.ToLower(c.Query("category")))
 	query := strings.TrimSpace(strings.ToLower(c.Query("query")))
 
-	q := h.db.
-		Where("barbershop_id = ? AND active = true", shop.ID)
+	q := h.db.Where("barbershop_id = ? AND active = true", shop.ID)
 
 	if category != "" {
 		q = q.Where("LOWER(category) = ?", category)
@@ -80,7 +77,7 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 		q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
 	}
 
-	var products []models.BarberProduct
+	var products []models.BarbershopService
 	if err := q.Order("id ASC").Find(&products).Error; err != nil {
 		httperr.Internal(c, "failed_to_list_products", "Erro ao listar produtos.")
 		return
@@ -93,13 +90,13 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 }
 
 ////////////////////////////////////////////////////////
-// AVAILABILITY (REUSO TOTAL DO USE CASE)
+// AVAILABILITY (timezone-safe)
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 	slug := c.Param("slug")
-	dateStr := c.Query("date")
-	productIDStr := c.Query("product_id")
+	dateStr := strings.TrimSpace(c.Query("date"))
+	productIDStr := strings.TrimSpace(c.Query("product_id"))
 
 	if dateStr == "" || productIDStr == "" {
 		httperr.BadRequest(c, "missing_params", "Data e serviço obrigatórios.")
@@ -107,36 +104,39 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 	}
 
 	productID, err := strconv.ParseUint(productIDStr, 10, 64)
-	if err != nil {
+	if err != nil || productID == 0 {
 		httperr.BadRequest(c, "invalid_product_id", "Serviço inválido.")
 		return
 	}
 
+	// 1) Resolve barbershop
 	var shop models.Barbershop
 	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
+	// 2) Barber (owner) — MVP
 	var barber models.User
 	if err := h.db.
 		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
 		First(&barber).Error; err != nil {
-
 		httperr.BadRequest(c, "barber_not_found", "Barbeiro não encontrado.")
 		return
 	}
 
-	date, err := time.ParseInLocation(
-		"2006-01-02",
-		dateStr,
-		timezone.Location(shop.Timezone),
-	)
+	// 3) Date input (YYYY-MM-DD) -> midnight in barbershop timezone (source of truth)
+	loc := timezone.Location(shop.Timezone)
+
+	parsed, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
 		httperr.BadRequest(c, "invalid_date", "Data inválida.")
 		return
 	}
 
+	date := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, loc)
+
+	// 4) Usecase (timezone-safe internally)
 	repo := infraRepo.NewAppointmentGormRepository(h.db)
 	uc := appointment.NewGetAvailability(repo)
 
@@ -149,88 +149,54 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 			Date:         date,
 		},
 	)
-
 	if err != nil {
 		if httperr.IsBusiness(err, "product_not_found") {
 			httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
 			return
 		}
-
 		httperr.Internal(c, "availability_failed", "Erro ao calcular horários.")
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"date":  dateStr,
-		"slots": slots,
+		"date":     dateStr,
+		"timezone": shop.Timezone,
+		"slots":    slots,
 	})
 }
 
 ////////////////////////////////////////////////////////
-// CREATE APPOINTMENT (PUBLIC → REUSA PRIVATE)
+// CREATE APPOINTMENT (PUBLIC → reuses private usecase)
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 	slug := c.Param("slug")
 
-	// --------------------------------------------------
-	// 1️⃣ Barbearia
-	// --------------------------------------------------
+	// 1) Barbearia
 	var shop models.Barbershop
 	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
-	// --------------------------------------------------
-	// 2️⃣ Request
-	// --------------------------------------------------
+	// 2) Request
 	var req PublicCreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
 	}
 
-	// --------------------------------------------------
-	// 3️⃣ Barbeiro (owner)
-	// --------------------------------------------------
+	// 3) Barbeiro (owner)
 	var barber models.User
 	if err := h.db.
 		Where("barbershop_id = ? AND role = ?", shop.ID, "owner").
 		First(&barber).Error; err != nil {
-
 		httperr.BadRequest(c, "barber_not_found", "Barbeiro não encontrado.")
 		return
 	}
 
-	// ==================================================
-	// 🔧 REPOSITORIES
-	// ==================================================
-	appointmentRepo := infraRepo.NewAppointmentGormRepository(h.db)
-	paymentConfigRepo := infraRepo.NewBarbershopPaymentConfigGormRepository(h.db)
-
-	// ==================================================
-	// 🧠 PAYMENT POLICY (somente leitura)
-	// ==================================================
-	resolvePaymentPolicyUC :=
-		paymentconfig.NewResolveBookingPaymentPolicy(
-			paymentConfigRepo,
-		)
-
-	// ==================================================
-	// 🧠 USE CASE PRINCIPAL (CORRETO)
-	// ==================================================
-	createAppointmentUC :=
-		appointment.NewCreatePrivateAppointment(
-			appointmentRepo,
-			h.audit,
-			resolvePaymentPolicyUC,
-		)
-
-	// ==================================================
-	// 🚀 EXECUÇÃO
-	// ==================================================
-	ap, err := createAppointmentUC.Execute(
+	// 4) Executa (usecase já é timezone-safe)
+	ap, err := h.createAppointment.Execute(
 		c.Request.Context(),
 		appointment.CreatePrivateAppointmentInput{
 			BarbershopID: shop.ID,
@@ -245,12 +211,10 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 		},
 	)
 	if err != nil {
+		// helper já existe no package handlers (appointment_handler.go)
 		mapCreateErrors(c, err)
 		return
 	}
 
-	// ==================================================
-	// ✅ RESPONSE
-	// ==================================================
 	c.JSON(http.StatusCreated, ap)
 }

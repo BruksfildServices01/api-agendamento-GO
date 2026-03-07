@@ -6,6 +6,7 @@ import (
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
 type GetAvailability struct {
@@ -21,24 +22,36 @@ func (uc *GetAvailability) Execute(
 	in domain.AvailabilityInput,
 ) ([]domain.TimeSlot, error) {
 
-	product, err := uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
+	// 1) Barbearia (timezone é fonte da verdade)
+	shop, err := uc.repo.GetBarbershopByID(ctx, in.BarbershopID)
 	if err != nil {
+		return nil, err
+	}
+	if shop == nil {
+		return nil, httperr.ErrBusiness("barbershop_not_found")
+	}
+
+	loc := timezone.Location(shop.Timezone)
+	dateLocal := in.Date.In(loc)
+
+	// 2) Produto
+	product, err := uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
+	if err != nil || product == nil {
 		return nil, httperr.ErrBusiness("product_not_found")
 	}
 
-	weekday := int(in.Date.Weekday())
+	// 3) Working hours do weekday LOCAL
+	weekday := int(dateLocal.Weekday())
 
-	wh, err := uc.repo.GetWorkingHours(ctx, in.BarberID, weekday)
-	if err != nil || !wh.Active {
+	wh, err := uc.repo.GetWorkingHours(ctx, in.BarbershopID, in.BarberID, weekday)
+	if err != nil || wh == nil || !wh.Active {
 		return []domain.TimeSlot{}, nil
 	}
-
-	loc := in.Date.Location()
 
 	parseHM := func(hm string) time.Time {
 		t, _ := time.Parse("15:04", hm)
 		return time.Date(
-			in.Date.Year(), in.Date.Month(), in.Date.Day(),
+			dateLocal.Year(), dateLocal.Month(), dateLocal.Day(),
 			t.Hour(), t.Minute(), 0, 0,
 			loc,
 		)
@@ -54,8 +67,10 @@ func (uc *GetAvailability) Execute(
 		lunchEnd = parseHM(wh.LunchEnd)
 	}
 
+	// 4) Buscar appointments no range do dia
 	appointments, err := uc.repo.ListAppointmentsForDay(
 		ctx,
+		in.BarbershopID,
 		in.BarberID,
 		dayStart,
 		dayEnd,
@@ -64,22 +79,20 @@ func (uc *GetAvailability) Execute(
 		return nil, err
 	}
 
+	// 5) Slots
 	slotDuration := time.Duration(product.DurationMin) * time.Minute
-	var slots []domain.TimeSlot
+	slots := make([]domain.TimeSlot, 0)
 
 	apIdx := 0
 
 	for cur := dayStart; cur.Add(slotDuration).Before(dayEnd) || cur.Add(slotDuration).Equal(dayEnd); cur = cur.Add(slotDuration) {
-
 		slotStart := cur
 		slotEnd := cur.Add(slotDuration)
 
-		// almoço
 		if hasLunch && slotStart.Before(lunchEnd) && slotEnd.After(lunchStart) {
 			continue
 		}
 
-		// avança agendamentos finalizados
 		for apIdx < len(appointments) && appointments[apIdx].EndTime.Before(slotStart) {
 			apIdx++
 		}

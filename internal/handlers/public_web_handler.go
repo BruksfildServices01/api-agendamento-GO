@@ -74,7 +74,7 @@ func (h *PublicWebHandler) ShowBookingPage(c *gin.Context) {
 		orderClause = "duration_min DESC"
 	}
 
-	var products []models.BarberProduct
+	var products []models.BarbershopService
 	if err := q.
 		Order(orderClause).
 		Find(&products).Error; err != nil {

@@ -7,29 +7,28 @@ import (
 )
 
 func MarkAsPaid(p *models.Payment, now time.Time) error {
-	if Status(p.Status).IsFinal() {
-		return ErrInvalidState()
+
+	current := Status(p.Status)
+
+	if err := current.MustTransitionTo(StatusPaid); err != nil {
+		return err
 	}
 
-	if Status(p.Status) != StatusPending {
-		return ErrInvalidState()
-	}
-
-	p.Status = string(StatusPaid)
+	p.Status = models.PaymentStatus(StatusPaid)
 	p.PaidAt = &now
+
 	return nil
 }
 
 func Expire(p *models.Payment, now time.Time) error {
-	if Status(p.Status).IsFinal() {
-		return ErrInvalidState()
+
+	current := Status(p.Status)
+
+	if err := current.MustTransitionTo(StatusExpired); err != nil {
+		return err
 	}
 
-	if Status(p.Status) != StatusPending {
-		return ErrInvalidState()
-	}
+	p.Status = models.PaymentStatus(StatusExpired)
 
-	p.Status = string(StatusExpired)
-	p.ExpiresAt = &now
 	return nil
 }

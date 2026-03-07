@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
+	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/validators"
 )
@@ -24,7 +25,9 @@ func NewAuthHandler(db *gorm.DB, cfg *config.Config) *AuthHandler {
 	return &AuthHandler{db: db, config: cfg}
 }
 
-// --------- Requests ---------
+// ======================================================
+// REQUESTS
+// ======================================================
 
 type RegisterRequest struct {
 	BarbershopName    string `json:"barbershop_name" binding:"required"`
@@ -43,183 +46,201 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// --------- Handlers ---------
+// ======================================================
+// REGISTER (TRANSACTIONAL, CORRETO)
+// ======================================================
 
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
 
-	// --------------------------------------------------
-	// Slug
-	// --------------------------------------------------
 	slug := strings.ToLower(strings.TrimSpace(req.BarbershopSlug))
 
+	// --------------------------------------------------
+	// Validação de slug (antes da transação)
+	// --------------------------------------------------
 	var count int64
 	h.db.Model(&models.Barbershop{}).
 		Where("slug = ?", slug).
 		Count(&count)
 
 	if count > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "slug_already_exists",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "slug_already_exists"})
 		return
 	}
 
-	// --------------------------------------------------
-	// Barbearia
-	// --------------------------------------------------
-	shop := models.Barbershop{
-		Name:     req.BarbershopName,
-		Slug:     slug,
-		Phone:    req.BarbershopPhone,
-		Address:  req.BarbershopAddress,
-		Timezone: "America/Sao_Paulo",
-	}
+	ctx := c.Request.Context()
 
-	if err := h.db.Create(&shop).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_create_barbershop",
-		})
-		return
-	}
+	// ==================================================
+	// TRANSACTION
+	// ==================================================
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
-	// --------------------------------------------------
-	// Usuário (owner)
-	// --------------------------------------------------
-	hashed, err := bcrypt.GenerateFromPassword(
-		[]byte(req.Password),
-		bcrypt.DefaultCost,
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_hash_password",
-		})
-		return
-	}
-
-	email := strings.ToLower(strings.TrimSpace(req.Email))
-
-	if !validators.IsEmailDomainValid(email) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_email_domain",
-			"message": "O domínio do e-mail informado não parece ser válido.",
-		})
-		return
-	}
-
-	user := models.User{
-		BarbershopID: shop.ID,
-		Name:         req.Name,
-		Email:        email,
-		PasswordHash: string(hashed),
-		Phone:        req.Phone,
-		Role:         "owner",
-	}
-
-	if err := h.db.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_create_user",
-		})
-		return
-	}
-
-	// --------------------------------------------------
-	// ⏰ Horários padrão (Seg–Sex 09–17)
-	// --------------------------------------------------
-	var workingHours []models.WorkingHours
-
-	for weekday := 0; weekday <= 6; weekday++ {
-		active := weekday >= 1 && weekday <= 5
-
-		wh := models.WorkingHours{
-			BarberID:     user.ID,
-			BarbershopID: shop.ID, // Associando à barbearia
-			Weekday:      weekday,
-			Active:       active,
+		// -------------------------------
+		// Barbearia
+		// -------------------------------
+		shop := models.Barbershop{
+			Name:     req.BarbershopName,
+			Slug:     slug,
+			Phone:    req.BarbershopPhone,
+			Address:  req.BarbershopAddress,
+			Timezone: "America/Sao_Paulo",
 		}
 
-		if active {
-			wh.StartTime = "09:00"
-			wh.EndTime = "17:00"
+		if err := tx.Create(&shop).Error; err != nil {
+			return err
 		}
 
-		workingHours = append(workingHours, wh)
-	}
+		// -------------------------------
+		// 💳 Payment Config DEFAULT
+		// -------------------------------
+		paymentCfg := domainPayment.Default(shop.ID)
 
-	if err := h.db.Create(&workingHours).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_create_working_hours",
+		if err := tx.Create(&models.BarbershopPaymentConfig{
+			BarbershopID:         shop.ID,
+			DefaultRequirement:   models.PaymentRequirement(paymentCfg.DefaultRequirement),
+			PixExpirationMinutes: paymentCfg.PixExpirationMinutes,
+		}).Error; err != nil {
+			return err
+		}
+
+		// -------------------------------
+		// Usuário OWNER
+		// -------------------------------
+		hashed, err := bcrypt.GenerateFromPassword(
+			[]byte(req.Password),
+			bcrypt.DefaultCost,
+		)
+		if err != nil {
+			return err
+		}
+
+		email := strings.ToLower(strings.TrimSpace(req.Email))
+		if !validators.IsEmailDomainValid(email) {
+			return gorm.ErrInvalidData
+		}
+
+		user := models.User{
+			BarbershopID: &shop.ID,
+			Name:         req.Name,
+			Email:        email,
+			PasswordHash: string(hashed),
+			Phone:        req.Phone,
+			Role:         "owner",
+		}
+
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+
+		// -------------------------------
+		// Horários padrão
+		// -------------------------------
+		var workingHours []models.WorkingHours
+
+		for weekday := 0; weekday <= 6; weekday++ {
+			active := weekday >= 1 && weekday <= 5
+
+			wh := models.WorkingHours{
+				BarbershopID: shop.ID,
+				BarberID:     user.ID,
+				Weekday:      weekday,
+				Active:       active,
+			}
+
+			if active {
+				wh.StartTime = "09:00"
+				wh.EndTime = "17:00"
+			}
+
+			workingHours = append(workingHours, wh)
+		}
+
+		if err := tx.Create(&workingHours).Error; err != nil {
+			return err
+		}
+
+		// -------------------------------
+		// Serviço padrão
+		// -------------------------------
+		defaultProduct := models.BarbershopService{
+			BarbershopID: &shop.ID,
+			Name:         "Corte de cabelo",
+			Description:  "Corte masculino tradicional",
+			DurationMin:  30,
+			Price:        5000,
+			Active:       true,
+			Category:     "corte",
+		}
+
+		if err := tx.Create(&defaultProduct).Error; err != nil {
+			return err
+		}
+
+		// -------------------------------
+		// RESPONSE FINAL
+		// -------------------------------
+		token, err := h.generateToken(&user)
+		if err != nil {
+			return err
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"user": gin.H{
+				"id":            user.ID,
+				"name":          user.Name,
+				"email":         user.Email,
+				"phone":         user.Phone,
+				"barbershop_id": user.BarbershopID,
+			},
+			"barbershop": gin.H{
+				"id":      shop.ID,
+				"name":    shop.Name,
+				"slug":    shop.Slug,
+				"phone":   shop.Phone,
+				"address": shop.Address,
+			},
+			"token": token,
 		})
-		return
-	}
 
-	// --------------------------------------------------
-	// ✂️ SERVIÇO PADRÃO (MVP)
-	// --------------------------------------------------
-	defaultProduct := models.BarberProduct{
-		BarbershopID: shop.ID,
-		Name:         "Corte de cabelo",
-		Description:  "Corte masculino tradicional",
-		DurationMin:  30,
-		Price:        50.00,
-		Active:       true,
-		Category:     "corte",
-	}
-
-	if err := h.db.Create(&defaultProduct).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_create_default_product",
-		})
-		return
-	}
-
-	// --------------------------------------------------
-	// Token
-	// --------------------------------------------------
-	token, err := h.generateToken(&user)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_generate_token",
-		})
-		return
-	}
-
-	// --------------------------------------------------
-	// Response
-	// --------------------------------------------------
-	c.JSON(http.StatusCreated, gin.H{
-		"user": gin.H{
-			"id":            user.ID,
-			"name":          user.Name,
-			"email":         user.Email,
-			"phone":         user.Phone,
-			"barbershop_id": user.BarbershopID,
-		},
-		"barbershop": gin.H{
-			"id":      shop.ID,
-			"name":    shop.Name,
-			"slug":    shop.Slug,
-			"phone":   shop.Phone,
-			"address": shop.Address,
-		},
-		"token": token,
+		return nil
 	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed_to_register",
+		})
+	}
 }
+
+// ======================================================
+// JWT
+// ======================================================
+
+func (h *AuthHandler) generateToken(user *models.User) (string, error) {
+	claims := jwt.MapClaims{
+		"sub":          user.ID,
+		"barbershopId": user.BarbershopID,
+		"role":         user.Role,
+		"exp":          time.Now().Add(24 * time.Hour).Unix(),
+		"iat":          time.Now().Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(h.config.JWTSecret))
+}
+
+// ======================================================
+// LOGIN
+// ======================================================
 
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
 
@@ -234,11 +255,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
 			return
 		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword(
+		[]byte(user.PasswordHash),
+		[]byte(req.Password),
+	); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
 		return
 	}
@@ -266,34 +291,4 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		},
 		"token": token,
 	})
-}
-
-// Cria os horários padrão para o barbeiro
-func createDefaultWorkingHours(db *gorm.DB, barberID uint, barbershopID uint) error {
-	workingHours := []models.WorkingHours{
-		{BarberID: barberID, Weekday: 1, StartTime: "09:00", EndTime: "17:00", Active: true}, // Segunda-feira
-		{BarberID: barberID, Weekday: 2, StartTime: "09:00", EndTime: "17:00", Active: true}, // Terça-feira
-		{BarberID: barberID, Weekday: 3, StartTime: "09:00", EndTime: "17:00", Active: true}, // Quarta-feira
-		{BarberID: barberID, Weekday: 4, StartTime: "09:00", EndTime: "17:00", Active: true}, // Quinta-feira
-		{BarberID: barberID, Weekday: 5, StartTime: "09:00", EndTime: "17:00", Active: true}, // Sexta-feira
-		{BarberID: barberID, Weekday: 6, Active: false},                                      // Sábado inativo
-		{BarberID: barberID, Weekday: 7, Active: false},                                      // Domingo inativo
-	}
-
-	return db.Create(&workingHours).Error
-}
-
-// --------- JWT ---------
-
-func (h *AuthHandler) generateToken(user *models.User) (string, error) {
-	claims := jwt.MapClaims{
-		"sub":          user.ID,
-		"barbershopId": user.BarbershopID,
-		"role":         user.Role,
-		"exp":          time.Now().Add(24 * time.Hour).Unix(),
-		"iat":          time.Now().Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(h.config.JWTSecret))
 }

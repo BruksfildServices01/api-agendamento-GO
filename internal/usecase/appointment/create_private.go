@@ -6,15 +6,15 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
+	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 	paymentconfig "github.com/BruksfildServices01/barber-scheduler/internal/usecase/paymentconfig"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
-
-// ======================================================
-// INPUT
-// ======================================================
 
 type CreatePrivateAppointmentInput struct {
 	BarbershopID uint
@@ -26,38 +26,41 @@ type CreatePrivateAppointmentInput struct {
 
 	ProductID uint
 
-	Date  string
-	Time  string
-	Notes string
+	Date           string
+	Time           string
+	Notes          string
+	IdempotencyKey string
 }
 
-// ======================================================
-// USE CASE
-// ======================================================
-
 type CreatePrivateAppointment struct {
-	repo domain.Repository
-
-	audit *audit.Dispatcher
-
-	paymentPolicy *paymentconfig.ResolveBookingPaymentPolicy
+	repo              domain.Repository
+	audit             *audit.Dispatcher
+	paymentPolicy     *paymentconfig.ResolveBookingPaymentPolicy
+	metrics           *ucMetrics.UpdateClientMetrics
+	getCategoryUC     *ucMetrics.GetClientCategory
+	getSubscriptionUC *ucSubscription.GetActiveSubscription
+	idempotency       idempotency.Store
 }
 
 func NewCreatePrivateAppointment(
 	repo domain.Repository,
 	audit *audit.Dispatcher,
 	paymentPolicy *paymentconfig.ResolveBookingPaymentPolicy,
+	metrics *ucMetrics.UpdateClientMetrics,
+	getCategoryUC *ucMetrics.GetClientCategory,
+	getSubscriptionUC *ucSubscription.GetActiveSubscription,
+	idempotency idempotency.Store,
 ) *CreatePrivateAppointment {
 	return &CreatePrivateAppointment{
-		repo:          repo,
-		audit:         audit,
-		paymentPolicy: paymentPolicy,
+		repo:              repo,
+		audit:             audit,
+		paymentPolicy:     paymentPolicy,
+		metrics:           metrics,
+		getCategoryUC:     getCategoryUC,
+		getSubscriptionUC: getSubscriptionUC,
+		idempotency:       idempotency,
 	}
 }
-
-// ======================================================
-// EXECUTE
-// ======================================================
 
 func (uc *CreatePrivateAppointment) Execute(
 	ctx context.Context,
@@ -65,15 +68,20 @@ func (uc *CreatePrivateAppointment) Execute(
 ) (*models.Appointment, error) {
 
 	// --------------------------------------------------
-	// 1️⃣ Barbearia
+	// 1) Barbearia (timezone é fonte da verdade)
 	// --------------------------------------------------
 	shop, err := uc.repo.GetBarbershopByID(ctx, in.BarbershopID)
 	if err != nil {
 		return nil, err
 	}
+	if shop == nil {
+		return nil, httperr.ErrBusiness("barbershop_not_found")
+	}
+
+	loc := timezone.Location(shop.Timezone)
 
 	// --------------------------------------------------
-	// 2️⃣ Política de pagamento
+	// 2) Política de pagamento
 	// --------------------------------------------------
 	policy, err := uc.paymentPolicy.Execute(ctx, in.BarbershopID)
 	if err != nil {
@@ -81,53 +89,82 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 3️⃣ Parse de data / hora
+	// 3) Data / Hora (sempre interpretada no timezone da barbearia)
 	// --------------------------------------------------
 	start, err := time.ParseInLocation(
 		"2006-01-02 15:04",
 		in.Date+" "+in.Time,
-		timezone.Location(shop.Timezone),
+		loc,
 	)
 	if err != nil {
 		return nil, httperr.ErrBusiness("invalid_date_or_time")
 	}
 
-	// --------------------------------------------------
-	// 4️⃣ Antecedência mínima
-	// --------------------------------------------------
+	// Antecedência mínima
 	minAdvance := shop.MinAdvanceMinutes
 	if minAdvance <= 0 {
 		minAdvance = 120
 	}
 
-	now := timezone.NowIn(shop.Timezone)
-	if start.Before(now.Add(time.Duration(minAdvance) * time.Minute)) {
+	nowLocal := time.Now().In(loc)
+	if start.Before(nowLocal.Add(time.Duration(minAdvance) * time.Minute)) {
 		return nil, httperr.ErrBusiness("too_soon")
 	}
 
 	// --------------------------------------------------
-	// 5️⃣ Serviço
+	// 4) Produto
 	// --------------------------------------------------
 	product, err := uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
-	if err != nil {
+	if err != nil || product == nil {
 		return nil, httperr.ErrBusiness("product_not_found")
 	}
 
 	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
 
 	// --------------------------------------------------
-	// 6️⃣ Horário de trabalho
+	// 5) Horário de trabalho (timezone-safe)
 	// --------------------------------------------------
-	ok, err := uc.repo.IsWithinWorkingHours(ctx, in.BarberID, start, end)
+	startLocal := start.In(loc)
+	endLocal := end.In(loc)
+
+	weekday := int(startLocal.Weekday())
+
+	wh, err := uc.repo.GetWorkingHours(ctx, in.BarbershopID, in.BarberID, weekday)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
+
+	if wh == nil || !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
 		return nil, httperr.ErrBusiness("outside_working_hours")
 	}
 
+	parseHM := func(hm string) time.Time {
+		t, _ := time.Parse("15:04", hm)
+		return time.Date(
+			startLocal.Year(), startLocal.Month(), startLocal.Day(),
+			t.Hour(), t.Minute(), 0, 0,
+			loc,
+		)
+	}
+
+	workStart := parseHM(wh.StartTime)
+	workEnd := parseHM(wh.EndTime)
+
+	if startLocal.Before(workStart) || endLocal.After(workEnd) {
+		return nil, httperr.ErrBusiness("outside_working_hours")
+	}
+
+	if wh.LunchStart != "" && wh.LunchEnd != "" {
+		lunchStart := parseHM(wh.LunchStart)
+		lunchEnd := parseHM(wh.LunchEnd)
+
+		if startLocal.Before(lunchEnd) && endLocal.After(lunchStart) {
+			return nil, httperr.ErrBusiness("outside_working_hours")
+		}
+	}
+
 	// --------------------------------------------------
-	// 7️⃣ Cliente
+	// 6) Cliente
 	// --------------------------------------------------
 	client, err := uc.repo.GetOrCreateClient(
 		ctx,
@@ -141,28 +178,84 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 8️⃣ Conflito de horário
+	// 7) Conflito de horário (instantes)
 	// --------------------------------------------------
-	if err := uc.repo.AssertNoTimeConflict(ctx, in.BarberID, start, end); err != nil {
+	if err := uc.repo.AssertNoTimeConflict(
+		ctx,
+		in.BarbershopID,
+		in.BarberID,
+		start,
+		end,
+	); err != nil {
 		return nil, err
 	}
 
 	// --------------------------------------------------
-	// 9️⃣ Status inicial
+	// 8) Categoria CRM do cliente (comportamental)
+	// --------------------------------------------------
+	category, err := uc.getCategoryUC.Execute(
+		ctx,
+		in.BarbershopID,
+		client.ID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// --------------------------------------------------
+	// 9) Assinatura ativa (estado comercial separado do CRM)
+	// --------------------------------------------------
+	hasActiveSubscription := false
+	if uc.getSubscriptionUC != nil {
+		sub, err := uc.getSubscriptionUC.Execute(
+			ctx,
+			in.BarbershopID,
+			client.ID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		hasActiveSubscription = sub != nil
+	}
+
+	// --------------------------------------------------
+	// 10) Status inicial
 	// --------------------------------------------------
 	initialStatus := domain.StatusScheduled
-	if policy.RequirePix {
+
+	requirement := policy.CategoryPolicies.RequirementFor(
+		category,
+		policy.DefaultRequirement,
+	)
+
+	if hasActiveSubscription {
+		requirement = policy.SubscriptionActiveRequirement
+	}
+
+	if requirement == domainPayment.PaymentMandatory {
 		initialStatus = domain.StatusAwaitingPayment
 	}
 
+	// --------------------------------------------------
+	// 11) Criar Appointment
+	// --------------------------------------------------
+	barbershopID := in.BarbershopID
+	barberID := in.BarberID
+	clientID := client.ID
+	productID := product.ID
+
+	status := models.AppointmentStatus(initialStatus)
+
 	ap := &models.Appointment{
-		BarbershopID:    in.BarbershopID,
-		BarberID:        in.BarberID,
-		ClientID:        client.ID,
-		BarberProductID: product.ID,
+		BarbershopID:    &barbershopID,
+		BarberID:        &barberID,
+		ClientID:        &clientID,
+		BarberProductID: &productID,
 		StartTime:       start,
 		EndTime:         end,
-		Status:          string(initialStatus),
+		Status:          status,
+		CreatedBy:       models.CreatedByClient,
+		PaymentIntent:   models.PaymentIntentPayLater,
 		Notes:           in.Notes,
 	}
 
@@ -171,7 +264,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 🔍 Auditoria
+	// 12) Auditoria
 	// --------------------------------------------------
 	uc.audit.Dispatch(audit.Event{
 		BarbershopID: in.BarbershopID,
@@ -180,8 +273,21 @@ func (uc *CreatePrivateAppointment) Execute(
 		Entity:       "appointment",
 		EntityID:     &ap.ID,
 		Metadata: map[string]any{
-			"status": ap.Status,
+			"status":                  ap.Status,
+			"category":                category,
+			"has_active_subscription": hasActiveSubscription,
 		},
+	})
+
+	// --------------------------------------------------
+	// 13) Métricas
+	// --------------------------------------------------
+	_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
+		BarbershopID: in.BarbershopID,
+		ClientID:     client.ID,
+		EventType:    ucMetrics.EventAppointmentCreated,
+		OccurredAt:   time.Now().UTC(),
+		Amount:       0,
 	})
 
 	return ap, nil

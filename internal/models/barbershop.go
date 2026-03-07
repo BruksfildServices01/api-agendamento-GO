@@ -3,14 +3,15 @@ package models
 import "time"
 
 type Barbershop struct {
-	ID                uint                     `gorm:"primaryKey" json:"id"`
-	Name              string                   `gorm:"size:100;not null" json:"name"`
-	Slug              string                   `gorm:"size:100;uniqueIndex;not null" json:"slug"`
-	Phone             string                   `gorm:"size:20" json:"phone"`
-	Address           string                   `gorm:"size:255" json:"address"`
-	MinAdvanceMinutes int                      `gorm:"default:120" json:"min_advance_minutes"`
-	CreatedAt         time.Time                `json:"created_at"`
-	UpdatedAt         time.Time                `json:"updated_at"`
-	Timezone          string                   `gorm:"size:64"`
+	ID                uint                     `gorm:"primaryKey"`
+	Name              string                   `gorm:"size:100;not null"`
+	Slug              string                   `gorm:"size:100;uniqueIndex;not null"`
+	Phone             string                   `gorm:"size:20"`
+	Address           string                   `gorm:"size:255"`
+	MinAdvanceMinutes int                      `gorm:"default:120"`
+	Timezone          string                   `gorm:"size:64;not null;default:'America/Sao_Paulo'"`
 	PaymentConfig     *BarbershopPaymentConfig `gorm:"constraint:OnDelete:CASCADE;"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

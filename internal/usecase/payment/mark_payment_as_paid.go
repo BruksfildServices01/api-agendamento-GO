@@ -2,35 +2,39 @@ package payment
 
 import (
 	"context"
-	"log"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domainAppointment "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
+	domainOrder "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
 const pixPaidEvent = "pix_paid"
 
 type MarkPaymentAsPaid struct {
-	paymentRepo     domainPayment.Repository
-	appointmentRepo domainAppointment.JobRepository
-	audit           *audit.Dispatcher
-	notifier        domainNotification.Notifier
+	paymentRepo domainPayment.Repository
+	audit       *audit.Dispatcher
+	notifier    domainNotification.Notifier
+	idem        idempotency.Store
 }
 
 func NewMarkPaymentAsPaid(
 	paymentRepo domainPayment.Repository,
-	appointmentRepo domainAppointment.JobRepository,
 	audit *audit.Dispatcher,
 	notifier domainNotification.Notifier,
+	idem idempotency.Store,
 ) *MarkPaymentAsPaid {
 	return &MarkPaymentAsPaid{
-		paymentRepo:     paymentRepo,
-		appointmentRepo: appointmentRepo,
-		audit:           audit,
-		notifier:        notifier,
+		paymentRepo: paymentRepo,
+		audit:       audit,
+		notifier:    notifier,
+		idem:        idem,
 	}
 }
 
@@ -39,73 +43,143 @@ func (uc *MarkPaymentAsPaid) Execute(
 	txid string,
 ) error {
 
+	if txid == "" {
+		return errors.New("txid is required")
+	}
+
 	// ==================================================
-	// 1️⃣ BEGIN TX
+	// 1️⃣ Idempotência global (antes de qualquer coisa)
 	// ==================================================
-	tx, err := uc.paymentRepo.BeginTx(ctx)
+	idemKey := "pix:webhook:" + txid
+
+	exists, err := uc.idem.Exists(ctx, idemKey)
 	if err != nil {
-		return err
+		return fmt.Errorf("idempotency check failed: %w", err)
+	}
+	if exists {
+		return nil
+	}
+
+	// ==================================================
+	// 2️⃣ Resolver tenant pelo pagamento
+	// ==================================================
+	paymentBase, err := uc.paymentRepo.GetByTxIDGlobal(ctx, txid)
+	if err != nil {
+		return fmt.Errorf("failed to load payment: %w", err)
+	}
+	if paymentBase == nil {
+		return fmt.Errorf("payment not found for txid: %s", txid)
+	}
+
+	barbershopID := paymentBase.BarbershopID
+
+	// ==================================================
+	// 3️⃣ BEGIN TX
+	// ==================================================
+	tx, err := uc.paymentRepo.BeginTx(ctx, barbershopID)
+	if err != nil {
+		return fmt.Errorf("begin tx failed: %w", err)
 	}
 	defer tx.Rollback()
 
 	// ==================================================
-	// 2️⃣ Lock pessimista por TXID
+	// 4️⃣ Lock payment
 	// ==================================================
-	payment, err := tx.GetByTxIDForUpdate(ctx, txid)
-	if err != nil || payment == nil {
+	payment, err := tx.GetByTxIDForUpdate(ctx, barbershopID, txid)
+	if err != nil {
+		return fmt.Errorf("failed to lock payment: %w", err)
+	}
+	if payment == nil {
+		return fmt.Errorf("payment not found")
+	}
+
+	currentStatus := domainPayment.Status(payment.Status)
+
+	if currentStatus.IsFinal() {
 		return nil
 	}
 
-	// ==================================================
-	// 3️⃣ Idempotência por status
-	// ==================================================
-	if payment.Status != string(domainPayment.StatusPending) {
-		return nil
+	if currentStatus != domainPayment.StatusPending {
+		return fmt.Errorf(
+			"invalid payment state transition: current=%s expected=pending",
+			currentStatus,
+		)
 	}
 
-	// ==================================================
-	// 4️⃣ Idempotência por evento
-	// ==================================================
 	processed, err := tx.HasProcessedEvent(ctx, txid, pixPaidEvent)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed checking processed event: %w", err)
 	}
 	if processed {
 		return nil
 	}
 
 	// ==================================================
-	// 5️⃣ Marca payment como PAID
+	// 5️⃣ Atualizar payment
 	// ==================================================
-	now := timezone.Now()
+	now := time.Now().UTC()
 
-	payment.Status = string(domainPayment.StatusPaid)
+	payment.Status = models.PaymentStatus(domainPayment.StatusPaid)
 	payment.PaidAt = &now
 
-	if err := tx.MarkAsPaid(ctx, payment); err != nil {
-		return err
+	if err := tx.MarkAsPaid(ctx, barbershopID, payment); err != nil {
+		return fmt.Errorf("failed to mark payment as paid: %w", err)
 	}
 
 	if err := tx.RegisterEvent(ctx, txid, pixPaidEvent); err != nil {
-		return err
+		return fmt.Errorf("failed to register pix event: %w", err)
 	}
 
 	// ==================================================
-	// 6️⃣ Atualiza appointment
+	// 6️⃣ Atualizar entidade associada (SE NECESSÁRIO)
 	// ==================================================
-	ap, err := uc.appointmentRepo.GetAppointmentByID(
-		ctx,
-		payment.AppointmentID,
-	)
-	if err != nil || ap == nil {
-		return err
+
+	var ap *models.Appointment
+	var order *models.Order
+
+	// ---------- APPOINTMENT ----------
+	if payment.AppointmentID != nil {
+
+		ap, err = tx.GetAppointmentForUpdate(ctx, barbershopID, *payment.AppointmentID)
+		if err != nil {
+			return fmt.Errorf("failed to lock appointment: %w", err)
+		}
+		if ap == nil {
+			return fmt.Errorf("appointment not found")
+		}
+
+		// 🔹 Caso 1: aguardando pagamento → vira scheduled
+		if ap.Status == models.AppointmentStatus(domainAppointment.StatusAwaitingPayment) {
+
+			ap.Status = models.AppointmentStatus(domainAppointment.StatusScheduled)
+
+			if err := tx.UpdateAppointmentTx(ctx, ap); err != nil {
+				return fmt.Errorf("failed to update appointment: %w", err)
+			}
+		}
+
+		// 🔹 Caso 2: já estava scheduled (pay_later)
+		// Não altera status, apenas mantém consistência
 	}
 
-	if ap.Status == string(domainAppointment.StatusAwaitingPayment) {
-		ap.Status = string(domainAppointment.StatusScheduled)
+	// ---------- ORDER ----------
+	if payment.OrderID != nil {
 
-		if err := uc.appointmentRepo.UpdateAppointment(ctx, ap); err != nil {
-			return err
+		order, err = tx.GetOrderForUpdate(ctx, barbershopID, *payment.OrderID)
+		if err != nil {
+			return fmt.Errorf("failed to lock order: %w", err)
+		}
+		if order == nil {
+			return fmt.Errorf("order not found")
+		}
+
+		if order.Status == models.OrderStatusPending {
+
+			order.Status = models.OrderStatus(domainOrder.OrderStatusPaid)
+
+			if err := tx.UpdateOrderTx(ctx, order); err != nil {
+				return fmt.Errorf("failed to update order: %w", err)
+			}
 		}
 	}
 
@@ -113,56 +187,40 @@ func (uc *MarkPaymentAsPaid) Execute(
 	// 7️⃣ COMMIT
 	// ==================================================
 	if err := tx.Commit(); err != nil {
-		return err
+		return fmt.Errorf("commit failed: %w", err)
+	}
+
+	if err := uc.idem.Save(ctx, idemKey); err != nil {
+		return fmt.Errorf("failed to persist idempotency key: %w", err)
 	}
 
 	// ==================================================
-	// 8️⃣ Auditoria (fora da TX)
+	// 8️⃣ Auditoria (fora da transação)
 	// ==================================================
 	uc.audit.Dispatch(audit.Event{
-		BarbershopID: payment.BarbershopID,
+		BarbershopID: barbershopID,
 		Action:       "payment_pix_confirmed",
 		Entity:       "payment",
 		EntityID:     &payment.ID,
 	})
 
-	uc.audit.Dispatch(audit.Event{
-		BarbershopID: ap.BarbershopID,
-		Action:       "appointment_payment_confirmed",
-		Entity:       "appointment",
-		EntityID:     &ap.ID,
-	})
-
-	// ==================================================
-	// 9️⃣ Notificação (BEST EFFORT)
-	// ==================================================
-	// ⚠️ Se falhar, NÃO quebra o fluxo
-	log.Println("[EMAIL] will send to:", ap.Client.Email)
-
-	input := domainNotification.PaymentConfirmedInput{
-		PaymentID: payment.ID,
-
-		// -------- Barbearia --------
-		BarbershopName:    ap.Barbershop.Name,
-		BarbershopSlug:    ap.Barbershop.Slug,
-		BarbershopAddress: ap.Barbershop.Address,
-		BarbershopPhone:   ap.Barbershop.Phone,
-
-		// -------- Cliente --------
-		ClientName:  ap.Client.Name,
-		ClientEmail: ap.Client.Email,
-
-		// -------- Serviço --------
-		ServiceName: ap.BarberProduct.Name,
-
-		// -------- Horário --------
-		StartTime: ap.StartTime,
-		EndTime:   ap.EndTime,
-		Timezone:  ap.Barbershop.Timezone,
+	if ap != nil {
+		uc.audit.Dispatch(audit.Event{
+			BarbershopID: barbershopID,
+			Action:       "appointment_payment_confirmed",
+			Entity:       "appointment",
+			EntityID:     &ap.ID,
+		})
 	}
 
-	// BEST EFFORT: erro aqui não quebra o fluxo
-	_ = uc.notifier.Notify(ctx, input)
+	if order != nil {
+		uc.audit.Dispatch(audit.Event{
+			BarbershopID: barbershopID,
+			Action:       "order_payment_confirmed",
+			Entity:       "order",
+			EntityID:     &order.ID,
+		})
+	}
 
 	return nil
 }

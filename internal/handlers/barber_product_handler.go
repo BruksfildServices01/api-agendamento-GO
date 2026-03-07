@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,38 +21,54 @@ func NewBarberProductHandler(db *gorm.DB) *BarberProductHandler {
 	return &BarberProductHandler{db: db}
 }
 
-// --------- Requests ---------
+//
+// ======================================================
+// REQUEST DTOs (JSON usa CENTAVOS)
+// ======================================================
+//
 
 type CreateBarberProductRequest struct {
-	Name        string  `json:"name" binding:"required"`
-	Description string  `json:"description"`
-	DurationMin int     `json:"duration_min" binding:"required,min=1"`
-	Price       float64 `json:"price" binding:"required"`
-	Category    string  `json:"category"`
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+	DurationMin int    `json:"duration_min" binding:"required,min=1"`
+	Price       int64  `json:"price" binding:"required"` // cents
+	Category    string `json:"category"`
 }
 
 type UpdateBarberProductRequest struct {
-	Name        *string  `json:"name,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	DurationMin *int     `json:"duration_min,omitempty"`
-	Price       *float64 `json:"price,omitempty"`
-	Active      *bool    `json:"active,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	DurationMin *int    `json:"duration_min,omitempty"`
+	Price       *int64  `json:"price,omitempty"` // cents
+	Active      *bool   `json:"active,omitempty"`
+	Category    *string `json:"category,omitempty"`
 }
 
-// --------- Handlers ---------
+//
+// ======================================================
+// LIST
+// ======================================================
+//
+
 func (h *BarberProductHandler) List(c *gin.Context) {
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		return
+	}
 	barbershopID := barbershopIDVal.(uint)
 
 	category := strings.ToLower(strings.TrimSpace(c.Query("category")))
 	activeStr := strings.TrimSpace(c.Query("active"))
 	query := strings.ToLower(strings.TrimSpace(c.Query("query")))
-	minPriceStr := c.Query("min_price")
-	maxPriceStr := c.Query("max_price")
-	minDurationStr := c.Query("min_duration")
-	maxDurationStr := c.Query("max_duration")
+	minPriceStr := strings.TrimSpace(c.Query("min_price"))
+	maxPriceStr := strings.TrimSpace(c.Query("max_price"))
+	minDurationStr := strings.TrimSpace(c.Query("min_duration"))
+	maxDurationStr := strings.TrimSpace(c.Query("max_duration"))
 
-	q := h.db.Where("barbershop_id = ?", barbershopID)
+	q := h.db.WithContext(c.Request.Context()).
+		Model(&models.BarbershopService{}).
+		Where("barbershop_id = ?", barbershopID)
 
 	if category != "" {
 		q = q.Where("LOWER(category) = ?", category)
@@ -66,34 +83,31 @@ func (h *BarberProductHandler) List(c *gin.Context) {
 
 	if query != "" {
 		like := "%" + query + "%"
-		q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
+		q = q.Where(
+			"(LOWER(name) LIKE ? OR LOWER(description) LIKE ?)",
+			like,
+			like,
+		)
 	}
 
-	if minPriceStr != "" {
-		if minPrice, err := strconv.ParseFloat(minPriceStr, 64); err == nil {
-			q = q.Where("price >= ?", minPrice)
-		}
+	// filtros em CENTAVOS
+	if v, err := strconv.ParseInt(minPriceStr, 10, 64); err == nil {
+		q = q.Where("price >= ?", v)
 	}
 
-	if maxPriceStr != "" {
-		if maxPrice, err := strconv.ParseFloat(maxPriceStr, 64); err == nil {
-			q = q.Where("price <= ?", maxPrice)
-		}
+	if v, err := strconv.ParseInt(maxPriceStr, 10, 64); err == nil {
+		q = q.Where("price <= ?", v)
 	}
 
-	if minDurationStr != "" {
-		if minDuration, err := strconv.Atoi(minDurationStr); err == nil {
-			q = q.Where("duration_min >= ?", minDuration)
-		}
+	if v, err := strconv.Atoi(minDurationStr); err == nil {
+		q = q.Where("duration_min >= ?", v)
 	}
 
-	if maxDurationStr != "" {
-		if maxDuration, err := strconv.Atoi(maxDurationStr); err == nil {
-			q = q.Where("duration_min <= ?", maxDuration)
-		}
+	if v, err := strconv.Atoi(maxDurationStr); err == nil {
+		q = q.Where("duration_min <= ?", v)
 	}
 
-	var products []models.BarberProduct
+	var products []models.BarbershopService
 	if err := q.Order("id ASC").Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_list_products"})
 		return
@@ -102,8 +116,18 @@ func (h *BarberProductHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, products)
 }
 
+//
+// ======================================================
+// CREATE
+// ======================================================
+//
+
 func (h *BarberProductHandler) Create(c *gin.Context) {
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		return
+	}
 	barbershopID := barbershopIDVal.(uint)
 
 	var req CreateBarberProductRequest
@@ -115,17 +139,23 @@ func (h *BarberProductHandler) Create(c *gin.Context) {
 		return
 	}
 
-	product := models.BarberProduct{
-		BarbershopID: barbershopID,
-		Name:         req.Name,
-		Description:  req.Description,
-		DurationMin:  req.DurationMin,
-		Price:        req.Price,
-		Active:       true,
-		Category:     strings.ToLower(req.Category),
+	if req.Price <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+		return
 	}
 
-	if err := h.db.Create(&product).Error; err != nil {
+	product := models.BarbershopService{
+		BarbershopID: &barbershopID,
+		Name:         strings.TrimSpace(req.Name),
+		Description:  strings.TrimSpace(req.Description),
+		DurationMin:  req.DurationMin,
+		Price:        req.Price, // cents
+		Active:       true,
+		Category:     strings.ToLower(strings.TrimSpace(req.Category)),
+	}
+
+	if err := h.db.WithContext(c.Request.Context()).
+		Create(&product).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_create_product"})
 		return
 	}
@@ -133,21 +163,40 @@ func (h *BarberProductHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, product)
 }
 
+//
+// ======================================================
+// UPDATE
+// ======================================================
+//
+
 func (h *BarberProductHandler) Update(c *gin.Context) {
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		return
+	}
 	barbershopID := barbershopIDVal.(uint)
 
-	id := c.Param("id")
+	idParam := c.Param("id")
+	idUint, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
 
-	var product models.BarberProduct
-	if err := h.db.
-		Where("id = ? AND barbershop_id = ?", id, barbershopID).
-		First(&product).Error; err != nil {
+	var product models.BarbershopService
 
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "product_not_found"})
-			return
-		}
+	err = h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND barbershop_id = ?", uint(idUint), barbershopID).
+		First(&product).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "product_not_found"})
+		return
+	}
+
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_get_product"})
 		return
 	}
@@ -162,22 +211,30 @@ func (h *BarberProductHandler) Update(c *gin.Context) {
 	}
 
 	if req.Name != nil {
-		product.Name = *req.Name
+		product.Name = strings.TrimSpace(*req.Name)
 	}
 	if req.Description != nil {
-		product.Description = *req.Description
+		product.Description = strings.TrimSpace(*req.Description)
 	}
 	if req.DurationMin != nil {
 		product.DurationMin = *req.DurationMin
 	}
 	if req.Price != nil {
-		product.Price = *req.Price
+		if *req.Price <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+			return
+		}
+		product.Price = *req.Price // cents
 	}
 	if req.Active != nil {
 		product.Active = *req.Active
 	}
+	if req.Category != nil {
+		product.Category = strings.ToLower(strings.TrimSpace(*req.Category))
+	}
 
-	if err := h.db.Save(&product).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).
+		Save(&product).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_product"})
 		return
 	}

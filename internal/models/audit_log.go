@@ -3,15 +3,15 @@ package models
 import "time"
 
 type AuditLog struct {
-	ID uint `gorm:"primaryKey" json:"id"`
+	ID uint `gorm:"primaryKey"`
 
-	BarbershopID uint   `json:"barbershop_id"`
-	UserID       *uint  `json:"user_id"`
-	Action       string `gorm:"size:50;not null" json:"action"`
+	BarbershopID uint
+	UserID       *uint
 
-	Entity   string `gorm:"size:50" json:"entity"`
-	EntityID *uint  `json:"entity_id"`
-	Metadata string `gorm:"type:text" json:"metadata"`
+	Action   string `gorm:"size:50;not null"`
+	Entity   string `gorm:"size:50"`
+	EntityID *uint
+	Metadata string `gorm:"type:text"`
 
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time
 }

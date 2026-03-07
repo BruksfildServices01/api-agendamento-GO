@@ -5,4 +5,5 @@ type Config struct {
 
 	RequirePixOnBooking  bool
 	PixExpirationMinutes int
+	DefaultRequirement   PaymentRequirement
 }

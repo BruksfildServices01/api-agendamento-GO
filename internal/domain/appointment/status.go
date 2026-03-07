@@ -2,10 +2,6 @@ package appointment
 
 import "github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 
-// ===============================
-// Appointment Status
-// ===============================
-
 type Status string
 
 const (
@@ -13,17 +9,20 @@ const (
 	StatusAwaitingPayment Status = "awaiting_payment"
 	StatusCancelled       Status = "cancelled"
 	StatusCompleted       Status = "completed"
+	StatusNoShow          Status = "no_show"
 )
 
-// ===============================
-// Validations
-// ===============================
+// --------------------------------------
+// Regras de transição
+// --------------------------------------
 
 func CanCancel(current Status) error {
-	if current != StatusScheduled {
+	switch current {
+	case StatusScheduled, StatusAwaitingPayment:
+		return nil
+	default:
 		return httperr.ErrBusiness("invalid_state")
 	}
-	return nil
 }
 
 func CanComplete(current Status) error {
@@ -32,6 +31,17 @@ func CanComplete(current Status) error {
 	}
 	return nil
 }
+
+func CanMarkNoShow(current Status) error {
+	if current != StatusScheduled {
+		return httperr.ErrBusiness("invalid_state")
+	}
+	return nil
+}
+
+// --------------------------------------
+// Estados iniciais
+// --------------------------------------
 
 func InitialStatus() Status {
 	return StatusScheduled

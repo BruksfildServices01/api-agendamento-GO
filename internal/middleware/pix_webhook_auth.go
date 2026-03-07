@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -40,6 +41,8 @@ const PixSignatureAlgo = "sha256"
 // - Deve vir de ENV (ex: PIX_WEBHOOK_SECRET)
 // - Nunca hardcode
 func NewPixWebhookAuth(secret string) gin.HandlerFunc {
+
+	log.Println("PIX SECRET LOADED:", secret)
 
 	if secret == "" {
 		// Fail fast em boot: webhook sem auth é falha crítica

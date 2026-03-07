@@ -3,14 +3,15 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type AppointmentGormRepository struct {
@@ -21,120 +22,181 @@ func NewAppointmentGormRepository(db *gorm.DB) *AppointmentGormRepository {
 	return &AppointmentGormRepository{db: db}
 }
 
-// --------------------------------------------------
-// Barbershop
-// --------------------------------------------------
+func (r *AppointmentGormRepository) WithTx(tx *gorm.DB) *AppointmentGormRepository {
+	return &AppointmentGormRepository{db: tx}
+}
+
+//
+// ======================================================
+// BARBERSHOP
+// ======================================================
+//
 
 func (r *AppointmentGormRepository) GetBarbershopByID(
 	ctx context.Context,
-	id uint,
+	barbershopID uint,
 ) (*models.Barbershop, error) {
 
 	var shop models.Barbershop
-	if err := r.db.WithContext(ctx).First(&shop, id).Error; err != nil {
-		return nil, err
+
+	err := r.db.WithContext(ctx).
+		First(&shop, barbershopID).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
 	}
-	return &shop, nil
+
+	return &shop, err
 }
 
-// --------------------------------------------------
-// Product
-// --------------------------------------------------
+//
+// ======================================================
+// PRODUCT
+// ======================================================
+//
 
 func (r *AppointmentGormRepository) GetProduct(
 	ctx context.Context,
 	barbershopID uint,
 	productID uint,
-) (*models.BarberProduct, error) {
+) (*models.BarbershopService, error) {
 
-	var product models.BarberProduct
-	if err := r.db.WithContext(ctx).
+	var product models.BarbershopService
+
+	err := r.db.WithContext(ctx).
 		Where("id = ? AND barbershop_id = ?", productID, barbershopID).
-		First(&product).Error; err != nil {
-		return nil, err
+		First(&product).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
 	}
-	return &product, nil
+
+	return &product, err
 }
 
-// --------------------------------------------------
-// Client
-// --------------------------------------------------
+//
+// ======================================================
+// CLIENT
+// ======================================================
+//
 
-func (r *AppointmentGormRepository) FindClientByPhone(
+func (r *AppointmentGormRepository) GetOrCreateClient(
 	ctx context.Context,
 	barbershopID uint,
+	name string,
 	phone string,
+	email string,
 ) (*models.Client, error) {
 
 	var client models.Client
-	if err := r.db.WithContext(ctx).
+
+	err := r.db.WithContext(ctx).
 		Where("barbershop_id = ? AND phone = ?", barbershopID, phone).
-		First(&client).Error; err != nil {
+		First(&client).
+		Error
+
+	if err == nil {
+		if email != "" && client.Email != email {
+			client.Email = email
+			if err := r.db.WithContext(ctx).Save(&client).Error; err != nil {
+				return nil, err
+			}
+		}
+		return &client, nil
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
+
+	client = models.Client{
+		BarbershopID: &barbershopID,
+		Name:         name,
+		Phone:        phone,
+		Email:        email,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&client).Error; err != nil {
+		return nil, err
+	}
+
 	return &client, nil
 }
 
-func (r *AppointmentGormRepository) CreateClient(
-	ctx context.Context,
-	client *models.Client,
-) error {
-	return r.db.WithContext(ctx).Create(client).Error
-}
-
-// --------------------------------------------------
-// Appointment
-// --------------------------------------------------
-
-func (r *AppointmentGormRepository) HasTimeConflict(
-	ctx context.Context,
-	barberID uint,
-	start time.Time,
-	end time.Time,
-) (bool, error) {
-
-	var count int64
-	if err := r.db.WithContext(ctx).
-		Model(&models.Appointment{}).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where(
-			"barber_id = ? AND status = 'scheduled' AND start_time < ? AND end_time > ?",
-			barberID,
-			end,
-			start,
-		).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-
-	return count > 0, nil
-}
+//
+// ======================================================
+// CREATE APPOINTMENT
+// ======================================================
+//
 
 func (r *AppointmentGormRepository) CreateAppointment(
 	ctx context.Context,
 	ap *models.Appointment,
 ) error {
-	return r.db.WithContext(ctx).Create(ap).Error
+
+	err := r.db.WithContext(ctx).Create(ap).Error
+	if err == nil {
+		return nil
+	}
+
+	if isUniqueBarberSlotActiveViolation(err) {
+		return httperr.ErrBusiness("time_conflict")
+	}
+
+	return err
 }
 
-// --------------------------------------------------
-// Appointment (Cancel / Complete)
-// --------------------------------------------------
+func isUniqueBarberSlotActiveViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" && pgErr.ConstraintName == "unique_barber_slot_active" {
+			return true
+		}
+	}
+
+	msg := err.Error()
+	return strings.Contains(msg, "unique_barber_slot_active")
+}
+
+//
+// ======================================================
+// STATE CHANGE
+// ======================================================
+//
 
 func (r *AppointmentGormRepository) GetAppointmentForBarber(
 	ctx context.Context,
+	barbershopID uint,
 	appointmentID uint,
 	barberID uint,
 ) (*models.Appointment, error) {
 
 	var ap models.Appointment
-	if err := r.db.WithContext(ctx).
-		Where("id = ? AND barber_id = ?", appointmentID, barberID).
-		First(&ap).Error; err != nil {
-		return nil, err
+
+	err := r.db.WithContext(ctx).
+		Preload("BarberProduct").
+		Preload("Client").
+		Preload("Barbershop").
+		Where(
+			"id = ? AND barber_id = ? AND barbershop_id = ?",
+			appointmentID,
+			barberID,
+			barbershopID,
+		).
+		First(&ap).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
 	}
 
-	return &ap, nil
+	return &ap, err
 }
 
 func (r *AppointmentGormRepository) UpdateAppointment(
@@ -144,68 +206,135 @@ func (r *AppointmentGormRepository) UpdateAppointment(
 	return r.db.WithContext(ctx).Save(ap).Error
 }
 
-// --------------------------------------------------
-// Availability
-// --------------------------------------------------
+func (r *AppointmentGormRepository) SaveAppointmentClosure(
+	ctx context.Context,
+	closure *models.AppointmentClosure,
+) error {
+	return r.db.WithContext(ctx).Create(closure).Error
+}
+
+func (r *AppointmentGormRepository) GetAppointmentClosure(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+) (*models.AppointmentClosure, error) {
+
+	var closure models.AppointmentClosure
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND appointment_id = ?", barbershopID, appointmentID).
+		First(&closure).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &closure, nil
+}
+
+//
+// ======================================================
+// TIME CONFLICT
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) AssertNoTimeConflict(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	start time.Time,
+	end time.Time,
+) error {
+
+	var count int64
+
+	statuses := []models.AppointmentStatus{
+		models.AppointmentStatus("scheduled"),
+		models.AppointmentStatus("awaiting_payment"),
+	}
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Where(
+			"barbershop_id = ? AND barber_id = ? AND status IN ? AND start_time < ? AND end_time > ?",
+			barbershopID,
+			barberID,
+			statuses,
+			end,
+			start,
+		).
+		Count(&count).
+		Error
+
+	if err != nil {
+		return err
+	}
+
+	if count > 0 {
+		return httperr.ErrBusiness("time_conflict")
+	}
+
+	return nil
+}
+
+//
+// ======================================================
+// WORKING HOURS
+// ======================================================
+//
 
 func (r *AppointmentGormRepository) GetWorkingHours(
 	ctx context.Context,
+	barbershopID uint,
 	barberID uint,
 	weekday int,
 ) (*models.WorkingHours, error) {
 
 	var wh models.WorkingHours
-	if err := r.db.WithContext(ctx).
-		Where("barber_id = ? AND weekday = ?", barberID, weekday).
-		First(&wh).Error; err != nil {
-		return nil, err
-	}
 
-	return &wh, nil
-}
-
-func (r *AppointmentGormRepository) ListAppointmentsForDay(
-	ctx context.Context,
-	barberID uint,
-	start time.Time,
-	end time.Time,
-) ([]models.Appointment, error) {
-
-	var apps []models.Appointment
-	if err := r.db.WithContext(ctx).
-		Select("start_time", "end_time").
+	err := r.db.WithContext(ctx).
 		Where(
-			"barber_id = ? AND status = 'scheduled' AND start_time >= ? AND start_time < ?",
-			barberID, start, end,
+			"barbershop_id = ? AND barber_id = ? AND weekday = ?",
+			barbershopID,
+			barberID,
+			weekday,
 		).
-		Order("start_time ASC").
-		Find(&apps).Error; err != nil {
-		return nil, err
+		First(&wh).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
 	}
 
-	return apps, nil
+	return &wh, err
 }
 
+// DEPRECATED: timezone-unsafe.
 func (r *AppointmentGormRepository) IsWithinWorkingHours(
 	ctx context.Context,
+	barbershopID uint,
 	barberID uint,
 	start time.Time,
 	end time.Time,
 ) (bool, error) {
 
 	weekday := int(start.Weekday())
-	loc := start.Location()
 
-	var wh models.WorkingHours
-	if err := r.db.WithContext(ctx).
-		Where("barber_id = ? AND weekday = ?", barberID, weekday).
-		First(&wh).Error; err != nil {
-		return false, nil
+	wh, err := r.GetWorkingHours(ctx, barbershopID, barberID, weekday)
+	if err != nil || wh == nil {
+		return false, err
 	}
 
 	if !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
 		return false, nil
 	}
+
+	loc := start.Location()
 
 	parseHM := func(hm string) time.Time {
 		t, _ := time.Parse("15:04", hm)
@@ -234,75 +363,40 @@ func (r *AppointmentGormRepository) IsWithinWorkingHours(
 	return true, nil
 }
 
-func (r *AppointmentGormRepository) GetOrCreateClient(
+//
+// ======================================================
+// LIST
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) ListAppointmentsForDay(
 	ctx context.Context,
 	barbershopID uint,
-	name string,
-	phone string,
-	email string,
-) (*models.Client, error) {
-
-	var client models.Client
-	err := r.db.WithContext(ctx).
-		Where("barbershop_id = ? AND phone = ?", barbershopID, phone).
-		First(&client).Error
-
-	if err == nil {
-
-		if email != "" && client.Email != email {
-			client.Email = email
-
-			if err := r.db.WithContext(ctx).Save(&client).Error; err != nil {
-				return nil, err
-			}
-		}
-
-		return &client, nil
-	}
-
-	client = models.Client{
-		BarbershopID: barbershopID,
-		Name:         name,
-		Phone:        phone,
-		Email:        email,
-	}
-
-	if err := r.db.WithContext(ctx).Create(&client).Error; err != nil {
-		return nil, err
-	}
-
-	return &client, nil
-}
-
-func (r *AppointmentGormRepository) AssertNoTimeConflict(
-	ctx context.Context,
 	barberID uint,
 	start time.Time,
 	end time.Time,
-) error {
+) ([]models.Appointment, error) {
 
-	var count int64
-	if err := r.db.WithContext(ctx).
-		Model(&models.Appointment{}).
+	var apps []models.Appointment
+
+	err := r.db.WithContext(ctx).
 		Where(
-			"barber_id = ? AND status = 'scheduled' AND start_time < ? AND end_time > ?",
+			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ?",
+			barbershopID,
 			barberID,
-			end,
 			start,
+			end,
 		).
-		Count(&count).Error; err != nil {
-		return err
-	}
+		Order("start_time ASC").
+		Find(&apps).
+		Error
 
-	if count > 0 {
-		return httperr.ErrBusiness("time_conflict")
-	}
-
-	return nil
+	return apps, err
 }
 
 func (r *AppointmentGormRepository) ListAppointmentsForPeriod(
 	ctx context.Context,
+	barbershopID uint,
 	barberID uint,
 	start time.Time,
 	end time.Time,
@@ -314,51 +408,55 @@ func (r *AppointmentGormRepository) ListAppointmentsForPeriod(
 		Preload("Client").
 		Preload("BarberProduct").
 		Where(
-			"barber_id = ? AND start_time >= ? AND start_time < ?",
+			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ?",
+			barbershopID,
 			barberID,
 			start,
 			end,
 		).
 		Order("start_time ASC").
-		Find(&apps).Error
+		Find(&apps).
+		Error
 
-	if err != nil {
-		return nil, err
-	}
-
-	return apps, nil
+	return apps, err
 }
+
+//
+// ======================================================
+// REMINDER
+// ======================================================
+//
 
 func (r *AppointmentGormRepository) ListAppointmentsForReminder(
 	ctx context.Context,
+	barbershopID uint,
 	target time.Time,
 ) ([]*models.Appointment, error) {
 
 	start := target.Add(-5 * time.Minute)
 	end := target.Add(5 * time.Minute)
 
-	var appointments []*models.Appointment
+	var apps []*models.Appointment
 
 	err := r.db.WithContext(ctx).
 		Preload("Client").
 		Preload("Barbershop").
 		Where(
-			"start_time BETWEEN ? AND ? AND status = ?",
+			"barbershop_id = ? AND start_time BETWEEN ? AND ? AND status = ?",
+			barbershopID,
 			start,
 			end,
-			"scheduled",
+			models.AppointmentStatus("scheduled"),
 		).
-		Find(&appointments).Error
+		Find(&apps).
+		Error
 
-	if err != nil {
-		return nil, err
-	}
-
-	return appointments, nil
+	return apps, err
 }
 
 func (r *AppointmentGormRepository) GetAppointmentByID(
 	ctx context.Context,
+	barbershopID uint,
 	appointmentID uint,
 ) (*models.Appointment, error) {
 
@@ -368,18 +466,160 @@ func (r *AppointmentGormRepository) GetAppointmentByID(
 		Preload("Client").
 		Preload("BarberProduct").
 		Preload("Barbershop").
-		First(&ap, appointmentID).
+		Where("id = ? AND barbershop_id = ?", appointmentID, barbershopID).
+		First(&ap).
 		Error
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
+
+	return &ap, err
+}
+
+//
+// ======================================================
+// BARBERSHOP LISTER
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) ListBarbershops(
+	ctx context.Context,
+) ([]domain.BarbershopInfo, error) {
+
+	type result struct {
+		ID       uint
+		Timezone string
+	}
+
+	var rows []result
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Barbershop{}).
+		Select("id, timezone").
+		Find(&rows).
+		Error
+
 	if err != nil {
 		return nil, err
 	}
 
-	return &ap, nil
+	shops := make([]domain.BarbershopInfo, 0, len(rows))
+
+	for _, row := range rows {
+		shops = append(shops, domain.BarbershopInfo{
+			ID:       row.ID,
+			Timezone: row.Timezone,
+		})
+	}
+
+	return shops, nil
 }
 
-// Compile-time check
+//
+// ======================================================
+// OPERATIONAL SUMMARY (FINANCE SAFE)
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetOperationalSummary(
+	ctx context.Context,
+	barbershopID uint,
+) (*domain.OperationalSummary, error) {
+
+	type resultRow struct {
+		TotalReceived  int64
+		CountCompleted int64
+		CountCancelled int64
+		CountNoShow    int64
+	}
+
+	var row resultRow
+
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			(SELECT COALESCE(SUM(p.amount), 0)
+			 FROM payments p
+			 WHERE p.barbershop_id = ?
+			   AND p.status = 'paid'
+			) AS total_received,
+
+			COUNT(*) FILTER (WHERE a.status = 'completed') AS count_completed,
+			COUNT(*) FILTER (WHERE a.status = 'cancelled') AS count_cancelled,
+			COUNT(*) FILTER (WHERE a.status = 'no_show')   AS count_no_show
+
+		FROM appointments a
+		WHERE a.barbershop_id = ?
+	`, barbershopID, barbershopID).Scan(&row).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.OperationalSummary{
+		TotalReceived:  row.TotalReceived,
+		CountCompleted: int(row.CountCompleted),
+		CountCancelled: int(row.CountCancelled),
+		CountNoShow:    int(row.CountNoShow),
+	}, nil
+}
+
+// ======================================================
+// JOB REPOSITORY (P0.2 - race-safe no-show)
+// ======================================================
+
+func (r *AppointmentGormRepository) ListNoShowCandidates(
+	ctx context.Context,
+	barbershopID uint,
+	cutoffUTC time.Time,
+) ([]*models.Appointment, error) {
+
+	var apps []*models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Select("id, client_id, status").
+		Where(
+			"barbershop_id = ? AND status = ? AND start_time <= ?",
+			barbershopID,
+			models.AppointmentStatusScheduled,
+			cutoffUTC,
+		).
+		Order("start_time ASC").
+		Limit(500).
+		Find(&apps).Error
+
+	return apps, err
+}
+
+func (r *AppointmentGormRepository) MarkNoShowAuto(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+	noShowAt time.Time,
+) (bool, error) {
+
+	res := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Where(
+			"id = ? AND barbershop_id = ? AND status = ?",
+			appointmentID,
+			barbershopID,
+			models.AppointmentStatusScheduled,
+		).
+		Updates(map[string]any{
+			"status":         models.AppointmentStatusNoShow,
+			"no_show_at":     noShowAt,
+			"no_show_source": models.NoShowSourceAuto,
+		})
+
+	if res.Error != nil {
+		return false, res.Error
+	}
+
+	return res.RowsAffected > 0, nil
+}
+
 var _ domain.Repository = (*AppointmentGormRepository)(nil)
+var _ domain.BarbershopLister = (*AppointmentGormRepository)(nil)
+var _ domain.JobRepository = (*AppointmentGormRepository)(nil)

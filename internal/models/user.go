@@ -3,16 +3,16 @@ package models
 import "time"
 
 type User struct {
-	ID           uint       `gorm:"primaryKey" json:"id"`
-	BarbershopID uint       `json:"barbershop_id"`
-	Barbershop   Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"barbershop"`
+	ID           uint        `gorm:"primaryKey" json:"id"`
+	BarbershopID *uint       `json:"barbershop_id"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 
-	Name         string `gorm:"size:100;not null" json:"name"`
-	Email        string `gorm:"size:100;uniqueIndex;not null" json:"email"`
-	PasswordHash string `gorm:"size:255;not null" json:"-"`
-	Phone        string `gorm:"size:20" json:"phone"`
-	Role         string `gorm:"size:20;default:'owner'" json:"role"`
+	Name         string   `gorm:"size:100;not null"`
+	Email        string   `gorm:"size:100;uniqueIndex;not null"`
+	PasswordHash string   `gorm:"size:255;not null"`
+	Phone        string   `gorm:"size:20"`
+	Role         UserRole `gorm:"type:user_role;not null;default:'owner'"`
 
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

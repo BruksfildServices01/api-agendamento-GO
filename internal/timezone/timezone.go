@@ -23,8 +23,8 @@ func Location(tz string) *time.Location {
 	return loc
 }
 
-func Now() time.Time {
-	return time.Now().In(Location(DefaultTimezone))
+func NowUTC() time.Time {
+	return time.Now().UTC()
 }
 
 func NowIn(tz string) time.Time {

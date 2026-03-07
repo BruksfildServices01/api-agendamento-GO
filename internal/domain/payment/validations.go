@@ -1,15 +1,20 @@
 package payment
 
 func ValidateCreation(
-	appointmentID uint,
-	amount float64,
+	appointmentID *uint,
+	orderID *uint,
+	amountCents int64,
 ) error {
 
-	if appointmentID == 0 {
-		return ErrInvalidAppointment()
+	if appointmentID == nil && orderID == nil {
+		return ErrInvalidTarget()
 	}
 
-	if amount <= 0 {
+	if appointmentID != nil && orderID != nil {
+		return ErrInvalidTarget()
+	}
+
+	if amountCents <= 0 {
 		return ErrInvalidAmount()
 	}
 

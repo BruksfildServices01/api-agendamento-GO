@@ -12,8 +12,8 @@ import (
 )
 
 type EmailNotifier struct {
-	fromAddress string // envelope-from (email validado no Brevo)
-	fromHeader  string // "CorteOn <email>"
+	fromAddress string
+	fromHeader  string
 	addr        string
 	auth        smtp.Auth
 }

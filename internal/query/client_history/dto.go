@@ -7,8 +7,11 @@ import "time"
 type ClientHistoryDTO struct {
 	ClientID int64 `json:"client_id"`
 
-	// Classificação atual do cliente
+	// Classificação comportamental atual do cliente
 	Category string `json:"category"`
+
+	// Estado comercial derivado de assinatura ativa
+	Premium bool `json:"premium"`
 
 	// Contadores principais
 	AppointmentsTotal int `json:"appointments_total"`

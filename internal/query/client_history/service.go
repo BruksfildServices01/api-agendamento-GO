@@ -5,41 +5,56 @@ import (
 
 	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
 type Service struct {
-	repo              *Repository
-	getClientCategory *ucMetrics.GetClientCategory
+	repo                  *Repository
+	getClientCategory     *ucMetrics.GetClientCategory
+	getActiveSubscription *ucSubscription.GetActiveSubscription
 }
 
 func NewService(
 	repo *Repository,
 	getClientCategory *ucMetrics.GetClientCategory,
+	getActiveSubscription *ucSubscription.GetActiveSubscription,
 ) *Service {
 	return &Service{
-		repo:              repo,
-		getClientCategory: getClientCategory,
+		repo:                  repo,
+		getClientCategory:     getClientCategory,
+		getActiveSubscription: getActiveSubscription,
 	}
 }
 
 func (s *Service) GetClientHistory(
+	ctx context.Context,
 	barbershopID int64,
 	clientID int64,
 ) (*ClientHistoryDTO, error) {
 
-	dto, err := s.repo.GetClientHistory(barbershopID, clientID)
+	dto, err := s.repo.GetClientHistory(ctx, barbershopID, clientID)
 	if err != nil {
 		return nil, err
 	}
 
 	category, err := s.getClientCategory.Execute(
-		context.Background(),
+		ctx,
 		uint(barbershopID),
 		uint(clientID),
 	)
 	if err == nil {
-
 		dto.Category = string(category)
+	}
+
+	if s.getActiveSubscription != nil {
+		sub, err := s.getActiveSubscription.Execute(
+			ctx,
+			uint(barbershopID),
+			uint(clientID),
+		)
+		if err == nil {
+			dto.Premium = sub != nil
+		}
 	}
 
 	if dto.AppointmentsTotal > 0 {

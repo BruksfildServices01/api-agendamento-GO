@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -63,9 +64,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// Validação de slug (antes da transação)
 	// --------------------------------------------------
 	var count int64
-	h.db.Model(&models.Barbershop{}).
+	if err := h.db.Model(&models.Barbershop{}).
 		Where("slug = ?", slug).
-		Count(&count)
+		Count(&count).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_check_slug"})
+		return
+	}
 
 	if count > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "slug_already_exists"})
@@ -74,11 +78,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	var (
+		createdShop   models.Barbershop
+		createdUser   models.User
+		responseToken string
+	)
+
 	// ==================================================
 	// TRANSACTION
 	// ==================================================
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-
 		// -------------------------------
 		// Barbearia
 		// -------------------------------
@@ -167,7 +176,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		// Serviço padrão
 		// -------------------------------
 		defaultProduct := models.BarbershopService{
-			BarbershopID: &shop.ID,
+			BarbershopID: shop.ID,
 			Name:         "Corte de cabelo",
 			Description:  "Corte masculino tradicional",
 			DurationMin:  30,
@@ -180,40 +189,47 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			return err
 		}
 
-		// -------------------------------
-		// RESPONSE FINAL
-		// -------------------------------
 		token, err := h.generateToken(&user)
 		if err != nil {
 			return err
 		}
 
-		c.JSON(http.StatusCreated, gin.H{
-			"user": gin.H{
-				"id":            user.ID,
-				"name":          user.Name,
-				"email":         user.Email,
-				"phone":         user.Phone,
-				"barbershop_id": user.BarbershopID,
-			},
-			"barbershop": gin.H{
-				"id":      shop.ID,
-				"name":    shop.Name,
-				"slug":    shop.Slug,
-				"phone":   shop.Phone,
-				"address": shop.Address,
-			},
-			"token": token,
-		})
+		createdShop = shop
+		createdUser = user
+		responseToken = token
 
 		return nil
 	})
 
 	if err != nil {
+		if errors.Is(err, gorm.ErrInvalidData) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email_domain"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed_to_register",
 		})
+		return
 	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"user": gin.H{
+			"id":            createdUser.ID,
+			"name":          createdUser.Name,
+			"email":         createdUser.Email,
+			"phone":         createdUser.Phone,
+			"barbershop_id": createdUser.BarbershopID,
+		},
+		"barbershop": gin.H{
+			"id":      createdShop.ID,
+			"name":    createdShop.Name,
+			"slug":    createdShop.Slug,
+			"phone":   createdShop.Phone,
+			"address": createdShop.Address,
+		},
+		"token": responseToken,
+	})
 }
 
 // ======================================================

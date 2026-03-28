@@ -77,9 +77,6 @@ func (uc *CompleteAppointment) Execute(
 	err := uc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := appointmentRepoBase.WithTx(tx)
 
-		// --------------------------------------------------
-		// 1️⃣ Carrega appointment
-		// --------------------------------------------------
 		apLoaded, err := txRepo.GetAppointmentForBarber(
 			ctx,
 			barbershopID,
@@ -99,9 +96,6 @@ func (uc *CompleteAppointment) Execute(
 			return httperr.ErrBusiness("invalid_final_amount")
 		}
 
-		// --------------------------------------------------
-		// 2️⃣ Se aguardando pagamento → validar pagamento
-		// --------------------------------------------------
 		if ap.Status == models.AppointmentStatus(domain.StatusAwaitingPayment) {
 			payment, err := uc.paymentRepo.GetByAppointmentID(ctx, barbershopID, ap.ID)
 			if err != nil {
@@ -115,9 +109,6 @@ func (uc *CompleteAppointment) Execute(
 			}
 		}
 
-		// --------------------------------------------------
-		// 3️⃣ Consumir franquia de assinatura ANTES de concluir (best effort)
-		// --------------------------------------------------
 		if ap.ClientID != nil &&
 			ap.BarberProductID != nil &&
 			uc.consumeCutUC != nil {
@@ -128,30 +119,23 @@ func (uc *CompleteAppointment) Execute(
 				*ap.ClientID,
 				*ap.BarberProductID,
 			)
-			if err == nil {
-				consumeCutResult = result
+			if err != nil {
+				return err
 			}
+
+			consumeCutResult = result
 		}
 
-		// --------------------------------------------------
-		// 4️⃣ Regra de domínio (complete)
-		// --------------------------------------------------
 		now := time.Now().UTC()
 
 		if err := domain.Complete(ap, now); err != nil {
 			return err
 		}
 
-		// --------------------------------------------------
-		// 5️⃣ Persistir appointment
-		// --------------------------------------------------
 		if err := txRepo.UpdateAppointment(ctx, ap); err != nil {
 			return err
 		}
 
-		// --------------------------------------------------
-		// 6️⃣ Montar e persistir closure
-		// --------------------------------------------------
 		var serviceID *uint
 		var serviceName string
 
@@ -172,10 +156,24 @@ func (uc *CompleteAppointment) Execute(
 			subscriptionConsumeStatus = &status
 			subscriptionPlanID = consumeCutResult.PlanID
 
-			if status == "consumed" {
+			switch consumeCutResult.Status {
+			case ucSubscription.ConsumeCutStatusConsumed:
 				subscriptionCovered = true
 				requiresNormalCharging = false
+
+			case ucSubscription.ConsumeCutStatusNoActiveSubscription,
+				ucSubscription.ConsumeCutStatusExpiredPeriod,
+				ucSubscription.ConsumeCutStatusPlanNotFound,
+				ucSubscription.ConsumeCutStatusPlanInactive,
+				ucSubscription.ConsumeCutStatusServiceNotAllowed,
+				ucSubscription.ConsumeCutStatusLimitExceeded:
+				subscriptionCovered = false
+				requiresNormalCharging = true
 			}
+		}
+
+		if requiresNormalCharging && !input.ConfirmNormalCharging {
+			return httperr.ErrBusiness("normal_charging_confirmation_required")
 		}
 
 		closure = &models.AppointmentClosure{
@@ -204,9 +202,6 @@ func (uc *CompleteAppointment) Execute(
 		return nil, nil, nil, err
 	}
 
-	// --------------------------------------------------
-	// 7️⃣ Auditoria
-	// --------------------------------------------------
 	metadata := map[string]any{}
 
 	if input.FinalAmountCents != nil {
@@ -241,9 +236,6 @@ func (uc *CompleteAppointment) Execute(
 		Metadata:     metadata,
 	})
 
-	// --------------------------------------------------
-	// 8️⃣ Métricas (best effort)
-	// --------------------------------------------------
 	if ap.ClientID != nil {
 		_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
 			BarbershopID: barbershopID,

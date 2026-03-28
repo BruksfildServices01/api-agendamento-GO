@@ -7,5 +7,4 @@ const (
 	CategoryRegular ClientCategory = "regular"
 	CategoryTrusted ClientCategory = "trusted"
 	CategoryAtRisk  ClientCategory = "at_risk"
-	CategoryPremium ClientCategory = "premium"
 )

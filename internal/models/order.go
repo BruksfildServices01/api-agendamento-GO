@@ -5,7 +5,6 @@ import "time"
 type OrderType string
 
 const (
-	OrderTypeService OrderType = "service"
 	OrderTypeProduct OrderType = "product"
 )
 
@@ -23,10 +22,15 @@ type Order struct {
 	BarbershopID uint        `gorm:"index;not null"`
 	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 
+	ClientID *uint   `gorm:"index"`
+	Client   *Client `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
 	Type   OrderType   `gorm:"type:order_type;not null"`
 	Status OrderStatus `gorm:"type:order_status;not null;default:'pending'"`
 
-	TotalAmount int64 `gorm:"type:bigint;not null;default:0"`
+	SubtotalAmount int64 `gorm:"type:bigint;not null;default:0"`
+	DiscountAmount int64 `gorm:"type:bigint;not null;default:0"`
+	TotalAmount    int64 `gorm:"type:bigint;not null;default:0"`
 
 	Items []OrderItem `gorm:"foreignKey:OrderID"`
 

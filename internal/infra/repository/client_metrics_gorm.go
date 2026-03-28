@@ -62,17 +62,23 @@ func mapToDomain(m *infraModels.ClientMetrics) *domain.ClientMetrics {
 		ClientID:     m.ClientID,
 		BarbershopID: m.BarbershopID,
 
-		TotalAppointments:     m.TotalAppointments,
-		CompletedAppointments: m.CompletedAppointments,
-		CancelledAppointments: m.CancelledAppointments,
-		NoShowAppointments:    m.NoShowAppointments,
+		TotalAppointments:           m.TotalAppointments,
+		CompletedAppointments:       m.CompletedAppointments,
+		CancelledAppointments:       m.CancelledAppointments,
+		NoShowAppointments:          m.NoShowAppointments,
+		RescheduledAppointments:     m.RescheduledAppointments,
+		LateCancelledAppointments:   m.LateCancelledAppointments,
+		LateRescheduledAppointments: m.LateRescheduledAppointments,
 
 		TotalSpent: m.TotalSpent,
 
-		FirstAppointmentAt: m.FirstAppointmentAt,
-		LastAppointmentAt:  m.LastAppointmentAt,
-		LastCompletedAt:    m.LastCompletedAt,
-		LastCanceledAt:     m.LastCanceledAt,
+		FirstAppointmentAt:    m.FirstAppointmentAt,
+		LastAppointmentAt:     m.LastAppointmentAt,
+		LastCompletedAt:       m.LastCompletedAt,
+		LastCanceledAt:        m.LastCanceledAt,
+		LastNoShowAt:          m.LastNoShowAt,
+		LastLateCanceledAt:    m.LastLateCanceledAt,
+		LastLateRescheduledAt: m.LastLateRescheduledAt,
 
 		Category:       domain.ClientCategory(m.Category),
 		CategorySource: domain.CategorySource(m.CategorySource),
@@ -87,20 +93,26 @@ func mapToModel(m *domain.ClientMetrics) *infraModels.ClientMetrics {
 		ClientID:     m.ClientID,
 		BarbershopID: m.BarbershopID,
 
-		TotalAppointments:     m.TotalAppointments,
-		CompletedAppointments: m.CompletedAppointments,
-		CancelledAppointments: m.CancelledAppointments,
-		NoShowAppointments:    m.NoShowAppointments,
+		TotalAppointments:           m.TotalAppointments,
+		CompletedAppointments:       m.CompletedAppointments,
+		CancelledAppointments:       m.CancelledAppointments,
+		NoShowAppointments:          m.NoShowAppointments,
+		RescheduledAppointments:     m.RescheduledAppointments,
+		LateCancelledAppointments:   m.LateCancelledAppointments,
+		LateRescheduledAppointments: m.LateRescheduledAppointments,
 
 		TotalSpent: m.TotalSpent,
 
-		FirstAppointmentAt: m.FirstAppointmentAt,
-		LastAppointmentAt:  m.LastAppointmentAt,
-		LastCompletedAt:    m.LastCompletedAt,
-		LastCanceledAt:     m.LastCanceledAt,
+		FirstAppointmentAt:    m.FirstAppointmentAt,
+		LastAppointmentAt:     m.LastAppointmentAt,
+		LastCompletedAt:       m.LastCompletedAt,
+		LastCanceledAt:        m.LastCanceledAt,
+		LastNoShowAt:          m.LastNoShowAt,
+		LastLateCanceledAt:    m.LastLateCanceledAt,
+		LastLateRescheduledAt: m.LastLateRescheduledAt,
 
-		Category:       infraModels.ClientCategory(m.Category),           // ✅ conversão correta
-		CategorySource: infraModels.CategorySourceType(m.CategorySource), // ✅ conversão correta
+		Category:       infraModels.ClientCategory(m.Category),
+		CategorySource: infraModels.CategorySourceType(m.CategorySource),
 	}
 }
 

@@ -19,6 +19,17 @@ func (uc *CancelSubscription) Execute(
 	barbershopID uint,
 	clientID uint,
 ) error {
+	if barbershopID == 0 || clientID == 0 {
+		return ErrInvalidInput
+	}
 
-	return uc.repo.CancelSubscription(ctx, barbershopID, clientID)
+	err := uc.repo.CancelSubscription(ctx, barbershopID, clientID)
+	if err != nil {
+		if err.Error() == "active_subscription_not_found" {
+			return ErrActiveSubscriptionNotFound
+		}
+		return err
+	}
+
+	return nil
 }

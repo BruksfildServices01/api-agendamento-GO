@@ -32,18 +32,14 @@ func (uc *SetClientCategory) Execute(
 		return errors.New("invalid_context")
 	}
 
-	// premium não pode ser manual:
-	// premium agora é derivado de assinatura ativa
 	switch input.Category {
 	case domain.CategoryNew,
 		domain.CategoryRegular,
 		domain.CategoryTrusted,
 		domain.CategoryAtRisk:
-		// ok
 	default:
 		return errors.New("invalid_category")
 	}
-
 	m, err := uc.repo.GetOrCreate(ctx, input.BarbershopID, input.ClientID)
 	if err != nil {
 		return err

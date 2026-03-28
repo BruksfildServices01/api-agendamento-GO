@@ -21,15 +21,11 @@ func NewClientCategoryOverrideHandler(
 	return &ClientCategoryOverrideHandler{uc: uc}
 }
 
-// --------------------------------
-// REQUEST
-// --------------------------------
 type setClientCategoryRequest struct {
 	Category domainMetrics.ClientCategory `json:"category" binding:"required"`
 }
 
 func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
-
 	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
@@ -59,7 +55,14 @@ func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
 		},
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_category"})
+		switch err.Error() {
+		case "invalid_context":
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+		case "invalid_category":
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_category"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_category"})
+		}
 		return
 	}
 

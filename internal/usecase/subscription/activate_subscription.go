@@ -2,7 +2,6 @@ package subscription
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
@@ -26,20 +25,52 @@ func (uc *ActivateSubscription) Execute(
 	ctx context.Context,
 	input ActivateSubscriptionInput,
 ) error {
-
-	if input.ClientID == 0 || input.PlanID == 0 {
-		return fmt.Errorf("invalid_input")
+	if input.BarbershopID == 0 || input.ClientID == 0 || input.PlanID == 0 {
+		return ErrActivateSubscriptionInvalidInput
 	}
+
+	activeSub, err := uc.repo.GetActiveSubscription(
+		ctx,
+		input.BarbershopID,
+		input.ClientID,
+	)
+	if err != nil {
+		return err
+	}
+	if activeSub != nil {
+		return ErrActivateSubscriptionClientAlreadyHasActiveSub
+	}
+
+	plan, err := uc.repo.GetPlanByID(ctx, input.BarbershopID, input.PlanID)
+	if err != nil {
+		return err
+	}
+	if plan == nil {
+		return ErrActivateSubscriptionPlanNotFound
+	}
+	if !plan.Active {
+		return ErrActivateSubscriptionPlanInactive
+	}
+	if plan.DurationDays <= 0 {
+		return ErrActivateSubscriptionInvalidPlanDuration
+	}
+
+	now := time.Now().UTC()
 
 	sub := &domain.Subscription{
 		BarbershopID:       input.BarbershopID,
 		ClientID:           input.ClientID,
 		PlanID:             input.PlanID,
 		Status:             domain.StatusActive,
-		CurrentPeriodStart: time.Now().UTC(),
-		CurrentPeriodEnd:   time.Now().UTC().AddDate(0, 1, 0),
+		CurrentPeriodStart: now,
+		CurrentPeriodEnd:   now.AddDate(0, 0, plan.DurationDays),
 		CutsUsedInPeriod:   0,
+		Plan:               plan,
 	}
 
-	return uc.repo.ActivateSubscription(ctx, sub)
+	if err := uc.repo.ActivateSubscription(ctx, sub); err != nil {
+		return err
+	}
+
+	return nil
 }

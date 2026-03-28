@@ -9,11 +9,11 @@ import (
 
 	domainOrder "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
 
-// contrato mínimo (seu OrderGormRepository já atende)
 type OrderRepository interface {
 	GetByID(ctx context.Context, barbershopID uint, id uint) (*domainOrder.Order, error)
 }
@@ -37,30 +37,30 @@ func NewOrderPaymentHandler(
 func (h *OrderPaymentHandler) Create(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "Barbershop inválida.")
 		return
 	}
 
 	orderID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || orderID64 == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_order_id"})
+		httperr.BadRequest(c, "invalid_order_id", "ID do pedido inválido.")
 		return
 	}
 	orderID := uint(orderID64)
 
 	order, err := h.orderRepo.GetByID(c.Request.Context(), barbershopID, orderID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_load_order"})
+		httperr.Internal(c, "failed_to_load_order", "Falha ao carregar pedido.")
 		return
 	}
 	if order == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "order_not_found"})
+		httperr.NotFound(c, "order_not_found", "Pedido não encontrado.")
 		return
 	}
 
 	out, err := h.createPixForOrder.Execute(c.Request.Context(), order)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		httperr.BadRequest(c, "failed_to_create_pix_for_order", err.Error())
 		return
 	}
 

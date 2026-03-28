@@ -570,7 +570,7 @@ func (r *PaymentGormTxRepository) ListOrderItems(
 	return items, nil
 }
 
-func (r *PaymentGormTxRepository) IncreaseProductStock(
+func (r *PaymentGormTxRepository) DecreaseProductStock(
 	ctx context.Context,
 	barbershopID uint,
 	productID uint,
@@ -580,11 +580,20 @@ func (r *PaymentGormTxRepository) IncreaseProductStock(
 		return nil
 	}
 
-	return r.tx.WithContext(ctx).
+	result := r.tx.WithContext(ctx).
 		Model(&models.Product{}).
-		Where("id = ? AND barbershop_id = ?", productID, barbershopID).
-		Update("stock", gorm.Expr("stock + ?", quantity)).
-		Error
+		Where("id = ? AND barbershop_id = ? AND stock >= ?", productID, barbershopID, quantity).
+		Update("stock", gorm.Expr("stock - ?", quantity))
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("insufficient_stock")
+	}
+
+	return nil
 }
 
 func (r *PaymentGormRepository) BeginTx(

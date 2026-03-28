@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
 ////////////////////////////////////////////////////////
@@ -79,18 +81,21 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 		return
 	}
 
+	idempotencyKey := c.GetHeader("X-Idempotency-Key")
+
 	ap, err := h.createUC.Execute(
 		c.Request.Context(),
 		appointment.CreatePrivateAppointmentInput{
-			BarbershopID: barbershopID,
-			BarberID:     barberID,
-			ClientName:   req.ClientName,
-			ClientPhone:  req.ClientPhone,
-			ClientEmail:  req.ClientEmail,
-			ProductID:    req.ProductID,
-			Date:         req.Date,
-			Time:         req.Time,
-			Notes:        req.Notes,
+			BarbershopID:   barbershopID,
+			BarberID:       barberID,
+			ClientName:     req.ClientName,
+			ClientPhone:    req.ClientPhone,
+			ClientEmail:    req.ClientEmail,
+			ProductID:      req.ProductID,
+			Date:           req.Date,
+			Time:           req.Time,
+			Notes:          req.Notes,
+			IdempotencyKey: idempotencyKey,
 		},
 	)
 
@@ -161,6 +166,20 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 				c,
 				"appointment_payment_not_paid",
 				"Pagamento obrigatório ainda não foi confirmado.",
+			)
+
+		case httperr.IsBusiness(err, "normal_charging_confirmation_required"):
+			httperr.BadRequest(
+				c,
+				"normal_charging_confirmation_required",
+				"Confirmação de cobrança normal é obrigatória.",
+			)
+
+		case isSubscriptionConsumeFailure(err):
+			httperr.Internal(
+				c,
+				"subscription_consume_failed",
+				"Erro ao processar o consumo da assinatura do cliente.",
 			)
 
 		default:
@@ -308,19 +327,36 @@ func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
 
 func mapCreateErrors(c *gin.Context, err error) {
 	switch {
+	case httperr.IsBusiness(err, "duplicate_request"):
+		httperr.Write(
+			c,
+			http.StatusConflict,
+			"duplicate_request",
+			"Requisição duplicada. Aguarde antes de tentar novamente.",
+		)
+
 	case httperr.IsBusiness(err, "invalid_date_or_time"):
 		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
+
 	case httperr.IsBusiness(err, "too_soon"):
 		httperr.BadRequest(c, "too_soon", "Horário inválido.")
+
 	case httperr.IsBusiness(err, "product_not_found"):
 		httperr.BadRequest(c, "product_not_found", "Serviço não encontrado.")
+
 	case httperr.IsBusiness(err, "outside_working_hours"):
 		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
+
 	case httperr.IsBusiness(err, "time_conflict"):
 		httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
+
 	default:
 		httperr.Internal(c, "failed_to_create_appointment", "Erro ao criar agendamento.")
 	}
+}
+
+func isSubscriptionConsumeFailure(err error) bool {
+	return errors.Is(err, ucSubscription.ErrConsumeCutInfra)
 }
 
 func (h *AppointmentHandler) MarkNoShow(c *gin.Context) {

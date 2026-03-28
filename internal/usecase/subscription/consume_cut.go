@@ -2,11 +2,14 @@ package subscription
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 )
+
+var ErrConsumeCutInfra = errors.New("consume_cut_infra_error")
 
 type ConsumeCutStatus string
 
@@ -15,6 +18,7 @@ const (
 	ConsumeCutStatusNoActiveSubscription ConsumeCutStatus = "no_active_subscription"
 	ConsumeCutStatusExpiredPeriod        ConsumeCutStatus = "expired_period"
 	ConsumeCutStatusPlanNotFound         ConsumeCutStatus = "plan_not_found"
+	ConsumeCutStatusPlanInactive         ConsumeCutStatus = "plan_inactive"
 	ConsumeCutStatusServiceNotAllowed    ConsumeCutStatus = "service_not_allowed"
 	ConsumeCutStatusLimitExceeded        ConsumeCutStatus = "limit_exceeded"
 )
@@ -40,13 +44,15 @@ func (uc *ConsumeCut) Execute(
 	clientID uint,
 	serviceID uint,
 ) (*ConsumeCutResult, error) {
+	if barbershopID == 0 || clientID == 0 || serviceID == 0 {
+		return &ConsumeCutResult{
+			Status: ConsumeCutStatusNoActiveSubscription,
+		}, nil
+	}
 
-	// --------------------------------------------------
-	// 1) Buscar assinatura ativa
-	// --------------------------------------------------
 	sub, err := uc.repo.GetActiveSubscription(ctx, barbershopID, clientID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: get active subscription: %v", ErrConsumeCutInfra, err)
 	}
 
 	if sub == nil {
@@ -59,30 +65,15 @@ func (uc *ConsumeCut) Execute(
 		PlanID: &sub.PlanID,
 	}
 
-	// --------------------------------------------------
-	// 2) Verificar período
-	// --------------------------------------------------
 	now := time.Now().UTC()
-
-	if now.After(sub.CurrentPeriodEnd) {
+	if now.Before(sub.CurrentPeriodStart) || !now.Before(sub.CurrentPeriodEnd) {
 		result.Status = ConsumeCutStatusExpiredPeriod
 		return result, nil
 	}
 
-	// --------------------------------------------------
-	// 3) Buscar plano para saber limite
-	// --------------------------------------------------
-	plans, err := uc.repo.ListPlans(ctx, barbershopID)
+	plan, err := uc.repo.GetPlanByID(ctx, barbershopID, sub.PlanID)
 	if err != nil {
-		return nil, err
-	}
-
-	var plan *domain.Plan
-	for i := range plans {
-		if plans[i].ID == sub.PlanID {
-			plan = &plans[i]
-			break
-		}
+		return nil, fmt.Errorf("%w: get plan: %v", ErrConsumeCutInfra, err)
 	}
 
 	if plan == nil {
@@ -90,12 +81,14 @@ func (uc *ConsumeCut) Execute(
 		return result, nil
 	}
 
-	// --------------------------------------------------
-	// 4) Validar se serviço está permitido no plano
-	// --------------------------------------------------
+	if !plan.Active {
+		result.Status = ConsumeCutStatusPlanInactive
+		return result, nil
+	}
+
 	allowedServices, err := uc.repo.ListAllowedServiceIDs(ctx, sub.PlanID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: list allowed services: %v", ErrConsumeCutInfra, err)
 	}
 
 	isAllowed := false
@@ -111,19 +104,18 @@ func (uc *ConsumeCut) Execute(
 		return result, nil
 	}
 
-	// --------------------------------------------------
-	// 5) Limite de cortes
-	// --------------------------------------------------
 	if sub.CutsUsedInPeriod >= plan.CutsIncluded {
 		result.Status = ConsumeCutStatusLimitExceeded
 		return result, nil
 	}
 
-	// --------------------------------------------------
-	// 6) Incrementar
-	// --------------------------------------------------
 	if err := uc.repo.IncrementCutsUsed(ctx, barbershopID, clientID); err != nil {
-		return nil, fmt.Errorf("increment subscription cuts used: %w", err)
+		if err.Error() == "active_subscription_not_found" {
+			result.Status = ConsumeCutStatusNoActiveSubscription
+			return result, nil
+		}
+
+		return nil, fmt.Errorf("%w: increment cuts used: %v", ErrConsumeCutInfra, err)
 	}
 
 	result.Status = ConsumeCutStatusConsumed

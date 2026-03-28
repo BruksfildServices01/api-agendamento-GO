@@ -7,6 +7,7 @@ type Plan struct {
 	BarbershopID      uint
 	Name              string
 	MonthlyPriceCents int64
+	DurationDays      int
 	CutsIncluded      int
 	DiscountPercent   int
 	Active            bool

@@ -47,9 +47,6 @@ func (uc *MarkPaymentAsPaid) Execute(
 		return errors.New("txid is required")
 	}
 
-	// ==================================================
-	// 1️⃣ Idempotência global (antes de qualquer coisa)
-	// ==================================================
 	idemKey := "pix:webhook:" + txid
 
 	exists, err := uc.idem.Exists(ctx, idemKey)
@@ -60,9 +57,6 @@ func (uc *MarkPaymentAsPaid) Execute(
 		return nil
 	}
 
-	// ==================================================
-	// 2️⃣ Resolver tenant pelo pagamento
-	// ==================================================
 	paymentBase, err := uc.paymentRepo.GetByTxIDGlobal(ctx, txid)
 	if err != nil {
 		return fmt.Errorf("failed to load payment: %w", err)
@@ -73,18 +67,12 @@ func (uc *MarkPaymentAsPaid) Execute(
 
 	barbershopID := paymentBase.BarbershopID
 
-	// ==================================================
-	// 3️⃣ BEGIN TX
-	// ==================================================
 	tx, err := uc.paymentRepo.BeginTx(ctx, barbershopID)
 	if err != nil {
 		return fmt.Errorf("begin tx failed: %w", err)
 	}
 	defer tx.Rollback()
 
-	// ==================================================
-	// 4️⃣ Lock payment
-	// ==================================================
 	payment, err := tx.GetByTxIDForUpdate(ctx, barbershopID, txid)
 	if err != nil {
 		return fmt.Errorf("failed to lock payment: %w", err)
@@ -114,9 +102,6 @@ func (uc *MarkPaymentAsPaid) Execute(
 		return nil
 	}
 
-	// ==================================================
-	// 5️⃣ Atualizar payment
-	// ==================================================
 	now := time.Now().UTC()
 
 	payment.Status = models.PaymentStatus(domainPayment.StatusPaid)
@@ -130,16 +115,10 @@ func (uc *MarkPaymentAsPaid) Execute(
 		return fmt.Errorf("failed to register pix event: %w", err)
 	}
 
-	// ==================================================
-	// 6️⃣ Atualizar entidade associada (SE NECESSÁRIO)
-	// ==================================================
-
 	var ap *models.Appointment
 	var order *models.Order
 
-	// ---------- APPOINTMENT ----------
 	if payment.AppointmentID != nil {
-
 		ap, err = tx.GetAppointmentForUpdate(ctx, barbershopID, *payment.AppointmentID)
 		if err != nil {
 			return fmt.Errorf("failed to lock appointment: %w", err)
@@ -148,23 +127,16 @@ func (uc *MarkPaymentAsPaid) Execute(
 			return fmt.Errorf("appointment not found")
 		}
 
-		// 🔹 Caso 1: aguardando pagamento → vira scheduled
 		if ap.Status == models.AppointmentStatus(domainAppointment.StatusAwaitingPayment) {
-
 			ap.Status = models.AppointmentStatus(domainAppointment.StatusScheduled)
 
 			if err := tx.UpdateAppointmentTx(ctx, ap); err != nil {
 				return fmt.Errorf("failed to update appointment: %w", err)
 			}
 		}
-
-		// 🔹 Caso 2: já estava scheduled (pay_later)
-		// Não altera status, apenas mantém consistência
 	}
 
-	// ---------- ORDER ----------
 	if payment.OrderID != nil {
-
 		order, err = tx.GetOrderForUpdate(ctx, barbershopID, *payment.OrderID)
 		if err != nil {
 			return fmt.Errorf("failed to lock order: %w", err)
@@ -174,6 +146,21 @@ func (uc *MarkPaymentAsPaid) Execute(
 		}
 
 		if order.Status == models.OrderStatusPending {
+			items, err := tx.ListOrderItems(ctx, barbershopID, order.ID)
+			if err != nil {
+				return fmt.Errorf("failed to list order items: %w", err)
+			}
+
+			for _, it := range items {
+				if err := tx.DecreaseProductStock(ctx, barbershopID, it.ProductID, it.Quantity); err != nil {
+					return fmt.Errorf(
+						"failed to decrease stock product=%d qty=%d: %w",
+						it.ProductID,
+						it.Quantity,
+						err,
+					)
+				}
+			}
 
 			order.Status = models.OrderStatus(domainOrder.OrderStatusPaid)
 
@@ -183,9 +170,6 @@ func (uc *MarkPaymentAsPaid) Execute(
 		}
 	}
 
-	// ==================================================
-	// 7️⃣ COMMIT
-	// ==================================================
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit failed: %w", err)
 	}
@@ -194,9 +178,6 @@ func (uc *MarkPaymentAsPaid) Execute(
 		return fmt.Errorf("failed to persist idempotency key: %w", err)
 	}
 
-	// ==================================================
-	// 8️⃣ Auditoria (fora da transação)
-	// ==================================================
 	uc.audit.Dispatch(audit.Event{
 		BarbershopID: barbershopID,
 		Action:       "payment_pix_confirmed",

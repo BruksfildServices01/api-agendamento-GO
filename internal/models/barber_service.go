@@ -4,8 +4,8 @@ import "time"
 
 type BarbershopService struct {
 	ID           uint        `gorm:"primaryKey"`
-	BarbershopID *uint       `gorm:"index"`
-	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	BarbershopID uint        `gorm:"index;not null"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 
 	Name        string `gorm:"size:100;not null"`
 	Description string `gorm:"size:255"`

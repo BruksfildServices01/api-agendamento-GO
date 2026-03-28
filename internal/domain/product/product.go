@@ -11,8 +11,9 @@ type Product struct {
 	Category    string
 	Price       int64
 
-	Stock  int
-	Active bool
+	Stock         int
+	Active        bool
+	OnlineVisible bool
 }
 
 type Repository interface {
@@ -21,4 +22,11 @@ type Repository interface {
 	Delete(ctx context.Context, barbershopID uint, id uint) error
 	GetByID(ctx context.Context, barbershopID uint, id uint) (*Product, error)
 	ListByBarbershop(ctx context.Context, barbershopID uint) ([]*Product, error)
+
+	ListPublicProducts(
+		ctx context.Context,
+		barbershopID uint,
+		category string,
+		query string,
+	) ([]*Product, error)
 }

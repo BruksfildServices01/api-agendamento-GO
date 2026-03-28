@@ -7,36 +7,16 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
-//
-// ======================================================
-// ROOT REPOSITORY (Multi-tenant obrigatório)
-// ======================================================
-//
-
 type Repository interface {
-
-	// ==================================================
-	// 🔎 GLOBAL LOOKUP (EXCEÇÃO CONTROLADA)
-	// ==================================================
-	// Usado apenas para webhook PIX para descobrir o barbershopID.
-	// Nunca deve ser usado para update.
 	GetByTxIDGlobal(
 		ctx context.Context,
 		txid string,
 	) (*models.Payment, error)
 
-	// ==================================================
-	// 🔒 Transação (sempre escopada por tenant)
-	// ==================================================
-
 	BeginTx(
 		ctx context.Context,
 		barbershopID uint,
 	) (TxRepository, error)
-
-	// ==================================================
-	// CRUD básico (sempre escopado por tenant)
-	// ==================================================
 
 	Create(
 		ctx context.Context,
@@ -60,7 +40,6 @@ type Repository interface {
 		appointmentID uint,
 	) (*models.Payment, error)
 
-	// ✅ suporte a Order
 	GetByOrderID(
 		ctx context.Context,
 		barbershopID uint,
@@ -72,10 +51,6 @@ type Repository interface {
 		barbershopID uint,
 		txid string,
 	) (*models.Payment, error)
-
-	// ==================================================
-	// Jobs / relatórios
-	// ==================================================
 
 	ListExpiredPending(
 		ctx context.Context,
@@ -97,26 +72,13 @@ type Repository interface {
 	) (*PaymentSummary, error)
 }
 
-//
-// ======================================================
-// TX REPOSITORY
-// Multi-tenant obrigatório dentro da transação
-// ======================================================
-//
-
 type TxRepository interface {
-
-	// ==================================================
-	// 🔒 Locks pessimistas
-	// ==================================================
-
 	GetByTxIDForUpdate(
 		ctx context.Context,
 		barbershopID uint,
 		txid string,
 	) (*models.Payment, error)
 
-	// ✅ NOVO — lock do payment por appointment (resolve corrida do PIX)
 	GetByAppointmentIDForUpdate(
 		ctx context.Context,
 		barbershopID uint,
@@ -129,7 +91,6 @@ type TxRepository interface {
 		appointmentID uint,
 	) (*models.Appointment, error)
 
-	// ✅ Lock pessimista de Order
 	GetOrderForUpdate(
 		ctx context.Context,
 		barbershopID uint,
@@ -141,10 +102,6 @@ type TxRepository interface {
 		barbershopID uint,
 		now time.Time,
 	) ([]*models.Payment, error)
-
-	// ==================================================
-	// Escritas dentro da TX
-	// ==================================================
 
 	Create(
 		ctx context.Context,
@@ -163,7 +120,6 @@ type TxRepository interface {
 		p *models.Payment,
 	) error
 
-	// ✅ NOVO — update do payment dentro da TX (txid/qr/expires)
 	UpdatePaymentTx(
 		ctx context.Context,
 		barbershopID uint,
@@ -186,10 +142,6 @@ type TxRepository interface {
 		eventType string,
 	) error
 
-	// ==================================================
-	// Idempotência por evento
-	// ==================================================
-
 	HasProcessedEvent(
 		ctx context.Context,
 		txid string,
@@ -202,24 +154,18 @@ type TxRepository interface {
 		orderID uint,
 	) (*models.Payment, error)
 
-	// Order items (para restock no expire)
 	ListOrderItems(
 		ctx context.Context,
 		barbershopID uint,
 		orderID uint,
 	) ([]models.OrderItem, error)
 
-	// Restock transacional (só pra rollback/expire)
-	IncreaseProductStock(
+	DecreaseProductStock(
 		ctx context.Context,
 		barbershopID uint,
 		productID uint,
 		quantity int,
 	) error
-
-	// ==================================================
-	// Controle transacional
-	// ==================================================
 
 	Commit() error
 	Rollback() error

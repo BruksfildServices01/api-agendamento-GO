@@ -33,21 +33,14 @@ func (uc *ExpirePayments) Execute(
 	ctx context.Context,
 	now time.Time,
 	barbershopID uint,
-
 ) error {
 
-	// ==========================================================
-	// 1️⃣ BEGIN TX
-	// ==========================================================
 	tx, err := uc.paymentRepo.BeginTx(ctx, barbershopID)
 	if err != nil {
 		return fmt.Errorf("expire job begin tx failed: %w", err)
 	}
 	defer tx.Rollback()
 
-	// ==========================================================
-	// 2️⃣ LOCK pessimista nos payments expirados
-	// ==========================================================
 	payments, err := tx.ListExpiredPendingForUpdate(ctx, barbershopID, now)
 	if err != nil {
 		return fmt.Errorf("failed to lock expired payments: %w", err)
@@ -57,9 +50,6 @@ func (uc *ExpirePayments) Execute(
 		return tx.Commit()
 	}
 
-	// ==========================================================
-	// 3️⃣ Processar cada payment dentro da mesma TX
-	// ==========================================================
 	for _, p := range payments {
 		currentStatus := domainPayment.Status(p.Status)
 
@@ -70,12 +60,10 @@ func (uc *ExpirePayments) Execute(
 			continue
 		}
 
-		// 3.1 expira payment
 		if err := tx.MarkAsExpired(ctx, barbershopID, p); err != nil {
 			return fmt.Errorf("failed to mark payment expired: %w", err)
 		}
 
-		// 3.2 APPOINTMENT
 		if p.AppointmentID != nil {
 			ap, err := tx.GetAppointmentForUpdate(ctx, barbershopID, *p.AppointmentID)
 			if err != nil {
@@ -96,7 +84,6 @@ func (uc *ExpirePayments) Execute(
 			}
 		}
 
-		// 3.3 ORDER
 		if p.OrderID != nil {
 			order, err := tx.GetOrderForUpdate(ctx, barbershopID, *p.OrderID)
 			if err != nil {
@@ -105,20 +92,9 @@ func (uc *ExpirePayments) Execute(
 
 			if order != nil && order.Status == models.OrderStatusPending {
 				order.Status = models.OrderStatusCancelled
+
 				if err := tx.UpdateOrderTx(ctx, order); err != nil {
 					return fmt.Errorf("failed to update order: %w", err)
-				}
-
-				items, err := tx.ListOrderItems(ctx, barbershopID, order.ID)
-				if err != nil {
-					return fmt.Errorf("failed to list order items: %w", err)
-				}
-
-				// aqui eu recomendo NÃO ignorar erro (senão você cancela order e não devolve stock)
-				for _, it := range items {
-					if err := tx.IncreaseProductStock(ctx, barbershopID, it.ItemID, it.Quantity); err != nil {
-						return fmt.Errorf("failed to restock product=%d qty=%d: %w", it.ItemID, it.Quantity, err)
-					}
 				}
 
 				uc.audit.Dispatch(audit.Event{
@@ -130,7 +106,6 @@ func (uc *ExpirePayments) Execute(
 			}
 		}
 
-		// 3.4 audit payment expirado (sempre)
 		uc.audit.Dispatch(audit.Event{
 			BarbershopID: p.BarbershopID,
 			Action:       "payment_expired",
@@ -139,9 +114,6 @@ func (uc *ExpirePayments) Execute(
 		})
 	}
 
-	// ==========================================================
-	// 4️⃣ COMMIT
-	// ==========================================================
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("expire job commit failed: %w", err)
 	}

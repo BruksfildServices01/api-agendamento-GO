@@ -4,7 +4,6 @@ import (
 	"context"
 
 	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
-	domainSubscription "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 )
 
 type ClientWithCategory struct {
@@ -13,17 +12,14 @@ type ClientWithCategory struct {
 }
 
 type GetClientsWithCategory struct {
-	repo             domainMetrics.ClientMetricsRepository
-	subscriptionRepo domainSubscription.Repository
+	repo domainMetrics.ClientMetricsRepository
 }
 
 func NewGetClientsWithCategory(
 	repo domainMetrics.ClientMetricsRepository,
-	subscriptionRepo domainSubscription.Repository,
 ) *GetClientsWithCategory {
 	return &GetClientsWithCategory{
-		repo:             repo,
-		subscriptionRepo: subscriptionRepo,
+		repo: repo,
 	}
 }
 
@@ -45,15 +41,6 @@ func (uc *GetClientsWithCategory) Execute(
 		// 1) override manual
 		if m.CategorySource == domainMetrics.CategorySourceManual && m.Category != "" {
 			category = m.Category
-		} else {
-			// 2) premium por assinatura ativa
-			sub, err := uc.subscriptionRepo.GetActiveSubscription(ctx, barbershopID, m.ClientID)
-			if err != nil {
-				return nil, err
-			}
-			if sub != nil && sub.Status == domainSubscription.StatusActive {
-				category = domainMetrics.CategoryPremium
-			}
 		}
 
 		out = append(out, ClientWithCategory{

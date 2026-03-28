@@ -89,7 +89,6 @@ func (h *PublicPaymentHandler) CreatePix(c *gin.Context) {
 		return
 	}
 
-	// ✅ Sprint 7.2: só permite PIX se appointment estiver aguardando pagamento
 	if ap.Status != models.AppointmentStatusAwaitingPayment {
 		httperr.BadRequest(
 			c,

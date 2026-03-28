@@ -45,10 +45,15 @@ func Load() *Config {
 		log.Fatal("❌ DATABASE_URL não definida")
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("❌ JWT_SECRET não definida")
+	}
+
 	cfg := &Config{
 		// CORE
 		DBUrl:      dbURL,
-		JWTSecret:  getEnv("JWT_SECRET", "changeme"),
+		JWTSecret:  jwtSecret,
 		ServerPort: getEnv("SERVER_PORT", "8080"),
 
 		// CORS
@@ -56,7 +61,7 @@ func Load() *Config {
 
 		// EMAIL
 		EmailEnabled: getEnv("EMAIL_ENABLED", "false") == "true",
-		EmailFrom:    getEnv("EMAIL_FROM", ""), // 🔴 obrigatório se EmailEnabled=true
+		EmailFrom:    getEnv("EMAIL_FROM", ""),
 
 		SMTPHost: getEnv("SMTP_HOST", ""),
 		SMTPPort: getEnv("SMTP_PORT", ""),
@@ -76,14 +81,12 @@ func Load() *Config {
 			cfg.SMTPPort == "" ||
 			cfg.SMTPUser == "" ||
 			cfg.SMTPPass == "" {
-
 			log.Fatal("❌ EMAIL_ENABLED=true mas variáveis SMTP incompletas")
 		}
 	}
 
 	log.Println("[CONFIG] EMAIL_ENABLED =", cfg.EmailEnabled)
 
-	// Opcional: log seguro só pra confirmar carregou (sem vazar dados)
 	if len(cfg.CORSAllowedOrigins) > 0 {
 		log.Println("[CONFIG] CORS_ALLOWED_ORIGINS =", strings.Join(cfg.CORSAllowedOrigins, ","))
 	} else {

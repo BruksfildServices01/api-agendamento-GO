@@ -6,7 +6,6 @@ type OrderType string
 
 const (
 	OrderTypeProduct OrderType = "product"
-	OrderTypeMixed   OrderType = "mixed"
 )
 
 type OrderStatus string
@@ -20,11 +19,14 @@ const (
 type Order struct {
 	ID           uint
 	BarbershopID uint
+	ClientID     *uint
 
 	Type   OrderType
 	Status OrderStatus
 
-	TotalAmount int64
+	SubtotalAmount int64
+	DiscountAmount int64
+	TotalAmount    int64
 
 	Items []OrderItem
 
@@ -34,23 +36,26 @@ type Order struct {
 
 func New(
 	barbershopID uint,
-	orderType OrderType,
+	clientID *uint,
 ) *Order {
 	return &Order{
-		BarbershopID: barbershopID,
-		Type:         orderType,
-		Status:       OrderStatusPending,
-		Items:        []OrderItem{},
+		BarbershopID:   barbershopID,
+		ClientID:       clientID,
+		Type:           OrderTypeProduct,
+		Status:         OrderStatusPending,
+		SubtotalAmount: 0,
+		DiscountAmount: 0,
+		TotalAmount:    0,
+		Items:          []OrderItem{},
 	}
 }
 
 func (o *Order) AddItem(
-	itemID uint,
-	name string,
+	productID uint,
+	productName string,
 	quantity int,
 	unitPrice int64,
 ) error {
-
 	if quantity <= 0 {
 		return ErrInvalidQuantity
 	}
@@ -59,33 +64,42 @@ func (o *Order) AddItem(
 		return ErrInvalidPrice
 	}
 
-	total := int64(quantity) * unitPrice
+	lineTotal := int64(quantity) * unitPrice
 
 	o.Items = append(o.Items, OrderItem{
-		ItemID:    itemID,
-		ItemName:  name,
-		Quantity:  quantity,
-		UnitPrice: unitPrice,
-		Total:     total,
+		ProductID:           productID,
+		ProductNameSnapshot: productName,
+		Quantity:            quantity,
+		UnitPrice:           unitPrice,
+		LineTotal:           lineTotal,
 	})
 
-	o.recalculateTotal()
+	o.recalculateTotals()
 	return nil
 }
 
-func (o *Order) recalculateTotal() {
-	var total int64
+func (o *Order) recalculateTotals() {
+	var subtotal int64
 
 	for _, item := range o.Items {
-		total += item.Total
+		subtotal += item.LineTotal
 	}
 
-	o.TotalAmount = total
+	o.SubtotalAmount = subtotal
+	o.TotalAmount = o.SubtotalAmount - o.DiscountAmount
 }
 
 func (o *Order) Validate() error {
 	if len(o.Items) == 0 {
 		return ErrEmptyOrder
+	}
+
+	if o.SubtotalAmount <= 0 {
+		return ErrInvalidSubtotal
+	}
+
+	if o.DiscountAmount < 0 {
+		return ErrInvalidDiscount
 	}
 
 	if o.TotalAmount <= 0 {

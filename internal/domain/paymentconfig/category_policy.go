@@ -70,8 +70,7 @@ func isValidClientCategory(c domainMetrics.ClientCategory) bool {
 		domainMetrics.CategoryNew,
 		domainMetrics.CategoryRegular,
 		domainMetrics.CategoryAtRisk,
-		domainMetrics.CategoryTrusted,
-		domainMetrics.CategoryPremium:
+		domainMetrics.CategoryTrusted:
 		return true
 	default:
 		return false

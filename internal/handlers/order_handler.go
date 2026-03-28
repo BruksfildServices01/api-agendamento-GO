@@ -3,28 +3,40 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucOrder "github.com/BruksfildServices01/barber-scheduler/internal/usecase/order"
 )
 
 type OrderHandler struct {
-	createUC *ucOrder.CreateOrder
+	createUC    *ucOrder.CreateOrder
+	getUC       *ucOrder.GetOrder
+	listAdminUC *ucOrder.ListOrdersAdmin
 }
 
-func NewOrderHandler(createUC *ucOrder.CreateOrder) *OrderHandler {
-	return &OrderHandler{createUC: createUC}
+func NewOrderHandler(
+	createUC *ucOrder.CreateOrder,
+	getUC *ucOrder.GetOrder,
+	listAdminUC *ucOrder.ListOrdersAdmin,
+) *OrderHandler {
+	return &OrderHandler{
+		createUC:    createUC,
+		getUC:       getUC,
+		listAdminUC: listAdminUC,
+	}
 }
-
-// ================================
-// Request / Response DTOs
-// ================================
 
 type CreateOrderRequest struct {
-	Items []CreateOrderItemRequest `json:"items" binding:"required"`
+	ClientID *uint                    `json:"client_id,omitempty"`
+	Items    []CreateOrderItemRequest `json:"items" binding:"required"`
 }
 
 type CreateOrderItemRequest struct {
@@ -33,36 +45,35 @@ type CreateOrderItemRequest struct {
 }
 
 type OrderResponse struct {
-	ID           uint                `json:"id"`
-	BarbershopID uint                `json:"barbershop_id"`
-	Type         string              `json:"type"`
-	Status       string              `json:"status"`
-	TotalAmount  int64               `json:"total_amount"`
-	Items        []OrderItemResponse `json:"items"`
+	ID             uint                `json:"id"`
+	BarbershopID   uint                `json:"barbershop_id"`
+	ClientID       *uint               `json:"client_id,omitempty"`
+	Type           string              `json:"type"`
+	Status         string              `json:"status"`
+	SubtotalAmount int64               `json:"subtotal_amount"`
+	DiscountAmount int64               `json:"discount_amount"`
+	TotalAmount    int64               `json:"total_amount"`
+	Items          []OrderItemResponse `json:"items"`
 }
 
 type OrderItemResponse struct {
-	ItemID    uint   `json:"item_id"`
-	ItemName  string `json:"item_name"`
-	Quantity  int    `json:"quantity"`
-	UnitPrice int64  `json:"unit_price"`
-	Total     int64  `json:"total"`
+	ProductID           uint   `json:"product_id"`
+	ProductNameSnapshot string `json:"product_name_snapshot"`
+	Quantity            int    `json:"quantity"`
+	UnitPrice           int64  `json:"unit_price"`
+	LineTotal           int64  `json:"line_total"`
 }
-
-// ================================
-// POST /api/me/orders
-// ================================
 
 func (h *OrderHandler) Create(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "Barbershop inválida.")
 		return
 	}
 
 	var req CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httperr.BadRequest(c, "invalid_request", "Payload inválido.")
 		return
 	}
 
@@ -77,42 +88,148 @@ func (h *OrderHandler) Create(c *gin.Context) {
 	order, err := h.createUC.Execute(
 		c.Request.Context(),
 		ucOrder.CreateOrderInput{
-			BarbershopID: barbershopID, // 🔒 tenant vem do JWT (não do body)
+			BarbershopID: barbershopID,
+			ClientID:     req.ClientID,
 			Items:        items,
 		},
 	)
 	if err != nil {
 		switch {
 		case errors.Is(err, productDomain.ErrProductNotFound):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "product_not_found"})
-			return
-		case errors.Is(err, productDomain.ErrInsufficientStock):
-			c.JSON(http.StatusConflict, gin.H{"error": "insufficient_stock"})
+			httperr.BadRequest(c, "product_not_found", "Produto não encontrado.")
 			return
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_create_order"})
+			httperr.Internal(c, "failed_to_create_order", "Falha ao criar pedido.")
 			return
 		}
 	}
 
+	c.JSON(http.StatusCreated, toOrderResponse(order))
+}
+
+func (h *OrderHandler) GetByID(c *gin.Context) {
+	barbershopID := c.GetUint(middleware.ContextBarbershopID)
+	if barbershopID == 0 {
+		httperr.Unauthorized(c, "invalid_barbershop", "Barbershop inválida.")
+		return
+	}
+
+	orderID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || orderID64 == 0 {
+		httperr.BadRequest(c, "invalid_order_id", "ID do pedido inválido.")
+		return
+	}
+
+	order, err := h.getUC.Execute(c.Request.Context(), barbershopID, uint(orderID64))
+	if err != nil {
+		httperr.Internal(c, "failed_to_get_order", "Falha ao buscar pedido.")
+		return
+	}
+	if order == nil {
+		httperr.NotFound(c, "order_not_found", "Pedido não encontrado.")
+		return
+	}
+
+	httpresp.OK(c, toOrderResponse(order))
+}
+
+func (h *OrderHandler) List(c *gin.Context) {
+	barbershopID := c.GetUint(middleware.ContextBarbershopID)
+	if barbershopID == 0 {
+		httperr.Unauthorized(c, "invalid_barbershop", "Barbershop inválida.")
+		return
+	}
+
+	page, err := parsePositiveIntDefault(c.Query("page"), 1)
+	if err != nil {
+		httperr.BadRequest(c, "invalid_page", "Parâmetro page inválido.")
+		return
+	}
+
+	limit, err := parsePositiveIntDefault(c.Query("limit"), 10)
+	if err != nil {
+		httperr.BadRequest(c, "invalid_limit", "Parâmetro limit inválido.")
+		return
+	}
+
+	var statusPtr *string
+	status := strings.TrimSpace(c.Query("status"))
+	if status != "" {
+		statusPtr = &status
+	}
+
+	result, err := h.listAdminUC.Execute(
+		c.Request.Context(),
+		ucOrder.ListOrdersAdminInput{
+			BarbershopID: barbershopID,
+			Status:       statusPtr,
+			Page:         page,
+			Limit:        limit,
+			SortBy:       c.Query("sort"),
+			SortOrder:    c.Query("order"),
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ucOrder.ErrInvalidPage):
+			httperr.BadRequest(c, "invalid_page", "Parâmetro page inválido.")
+			return
+		case errors.Is(err, ucOrder.ErrInvalidLimit):
+			httperr.BadRequest(c, "invalid_limit", "Parâmetro limit inválido.")
+			return
+		case errors.Is(err, ucOrder.ErrInvalidSortField):
+			httperr.BadRequest(c, "invalid_sort", "Campo de ordenação inválido.")
+			return
+		case errors.Is(err, ucOrder.ErrInvalidSortOrder):
+			httperr.BadRequest(c, "invalid_order", "Direção de ordenação inválida.")
+			return
+		default:
+			httperr.Internal(c, "failed_to_list_orders", "Falha ao listar pedidos.")
+			return
+		}
+	}
+
+	httpresp.OK(c, result)
+}
+
+func toOrderResponse(order *orderDomain.Order) OrderResponse {
 	resp := OrderResponse{
-		ID:           order.ID,
-		BarbershopID: order.BarbershopID,
-		Type:         string(order.Type),
-		Status:       string(order.Status),
-		TotalAmount:  order.TotalAmount,
-		Items:        make([]OrderItemResponse, 0, len(order.Items)),
+		ID:             order.ID,
+		BarbershopID:   order.BarbershopID,
+		ClientID:       order.ClientID,
+		Type:           string(order.Type),
+		Status:         string(order.Status),
+		SubtotalAmount: order.SubtotalAmount,
+		DiscountAmount: order.DiscountAmount,
+		TotalAmount:    order.TotalAmount,
+		Items:          make([]OrderItemResponse, 0, len(order.Items)),
 	}
 
 	for _, it := range order.Items {
 		resp.Items = append(resp.Items, OrderItemResponse{
-			ItemID:    it.ItemID,
-			ItemName:  it.ItemName,
-			Quantity:  it.Quantity,
-			UnitPrice: it.UnitPrice,
-			Total:     it.Total,
+			ProductID:           it.ProductID,
+			ProductNameSnapshot: it.ProductNameSnapshot,
+			Quantity:            it.Quantity,
+			UnitPrice:           it.UnitPrice,
+			LineTotal:           it.LineTotal,
 		})
 	}
 
-	c.JSON(http.StatusCreated, resp)
+	return resp
+}
+
+func parsePositiveIntDefault(raw string, def int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return def, nil
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	if v < 1 {
+		return 0, errors.New("must be positive")
+	}
+
+	return v, nil
 }

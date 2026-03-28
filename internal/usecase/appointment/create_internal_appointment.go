@@ -21,12 +21,6 @@ func NewCreateInternalAppointment(
 	}
 }
 
-//
-// ======================================================
-// INPUT
-// ======================================================
-//
-
 type CreateInternalAppointmentInput struct {
 	BarbershopID uint
 	BarberID     uint
@@ -40,25 +34,14 @@ type CreateInternalAppointmentInput struct {
 	StartTime time.Time
 	EndTime   time.Time
 
-	PaymentIntent string // "paid" | "pay_later"
+	PaymentIntent string
 	Notes         string
 }
-
-//
-// ======================================================
-// EXECUTE
-// ======================================================
-//
 
 func (uc *CreateInternalAppointment) Execute(
 	ctx context.Context,
 	input CreateInternalAppointmentInput,
 ) (*models.Appointment, error) {
-
-	// --------------------------------------------------
-	// 1️⃣ Validações mínimas
-	// --------------------------------------------------
-
 	if input.BarbershopID == 0 || input.BarberID == 0 {
 		return nil, httperr.ErrBusiness("invalid_context")
 	}
@@ -67,20 +50,12 @@ func (uc *CreateInternalAppointment) Execute(
 		return nil, httperr.ErrBusiness("invalid_time_range")
 	}
 
-	// --------------------------------------------------
-	// 2️⃣ Validar PaymentIntent
-	// --------------------------------------------------
-
 	intent := models.PaymentIntentType(input.PaymentIntent)
 
 	if intent != models.PaymentIntentPaid &&
 		intent != models.PaymentIntentPayLater {
 		return nil, httperr.ErrBusiness("invalid_payment_intent")
 	}
-
-	// --------------------------------------------------
-	// 3️⃣ Cliente (get or create)
-	// --------------------------------------------------
 
 	client, err := uc.appointmentRepo.GetOrCreateClient(
 		ctx,
@@ -93,10 +68,6 @@ func (uc *CreateInternalAppointment) Execute(
 		return nil, err
 	}
 
-	// --------------------------------------------------
-	// 4️⃣ Conflito de horário
-	// --------------------------------------------------
-
 	if err := uc.appointmentRepo.AssertNoTimeConflict(
 		ctx,
 		input.BarbershopID,
@@ -106,10 +77,6 @@ func (uc *CreateInternalAppointment) Execute(
 	); err != nil {
 		return nil, err
 	}
-
-	// --------------------------------------------------
-	// 5️⃣ Criar Appointment
-	// --------------------------------------------------
 
 	barbershopID := input.BarbershopID
 	barberID := input.BarberID

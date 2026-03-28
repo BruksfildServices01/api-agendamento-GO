@@ -3,7 +3,9 @@ package idempotency
 import (
 	"context"
 	"errors"
+	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -39,7 +41,6 @@ func (s *GormStore) Exists(
 	return count > 0, nil
 }
 
-// Save persists the idempotency key
 func (s *GormStore) Save(
 	ctx context.Context,
 	key string,
@@ -49,8 +50,21 @@ func (s *GormStore) Save(
 		Create(&IdempotencyKey{Key: key}).
 		Error
 
+	if err == nil {
+		return nil
+	}
+
 	// Duplicate key = idempotent replay
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrDuplicateRequest
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrDuplicateRequest
+	}
+
+	if strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
 		return ErrDuplicateRequest
 	}
 

@@ -49,6 +49,15 @@ func (uc *UpdateClientMetrics) Execute(
 	in UpdateClientMetricsInput,
 ) error {
 
+	if in.BarbershopID == 0 || in.ClientID == 0 {
+		return nil
+	}
+
+	occurredAt := in.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+
 	m, err := uc.repo.GetOrCreate(
 		ctx,
 		in.BarbershopID,
@@ -61,19 +70,29 @@ func (uc *UpdateClientMetrics) Execute(
 	switch in.EventType {
 
 	case EventAppointmentCreated:
-		m.OnAppointmentCreated(in.OccurredAt)
+		m.OnAppointmentCreated(occurredAt)
 
 	case EventAppointmentCompleted:
 		m.OnAppointmentCompleted(
-			in.OccurredAt,
+			occurredAt,
 			in.Amount,
 		)
 
 	case EventAppointmentCanceled:
-		m.OnAppointmentCanceled(in.OccurredAt)
+		m.OnAppointmentCanceled(occurredAt)
 
 	case EventAppointmentNoShow:
-		m.OnAppointmentNoShow(in.OccurredAt)
+		m.OnAppointmentNoShow(occurredAt)
+
+	case EventType("appointment_rescheduled"):
+		m.OnAppointmentRescheduled(occurredAt, false)
+
+	case EventType("appointment_late_canceled"):
+		m.OnAppointmentCanceled(occurredAt)
+		m.OnLateCancellation(occurredAt)
+
+	case EventType("appointment_late_rescheduled"):
+		m.OnAppointmentRescheduled(occurredAt, true)
 
 	default:
 		return nil

@@ -36,6 +36,7 @@ type CreateOrderItemInput struct {
 
 type CreateOrderInput struct {
 	BarbershopID uint                   `json:"barbershop_id"`
+	ClientID     *uint                  `json:"client_id,omitempty"`
 	Items        []CreateOrderItemInput `json:"items"`
 }
 
@@ -43,8 +44,6 @@ func (uc *CreateOrder) Execute(
 	ctx context.Context,
 	input CreateOrderInput,
 ) (*orderDomain.Order, error) {
-
-	// Validações mínimas (usecase-level)
 	if input.BarbershopID == 0 {
 		return nil, errors.New("invalid_barbershop_id")
 	}
@@ -57,17 +56,15 @@ func (uc *CreateOrder) Execute(
 	err := uc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = tx.WithContext(ctx)
 
-		// ✅ amarra repos na MESMA TX
 		orderRepoTx := uc.orderRepository.WithTx(tx)
 		productRepoTx := uc.productRepository.WithTx(tx)
 
 		order := orderDomain.New(
 			input.BarbershopID,
-			orderDomain.OrderTypeProduct,
+			input.ClientID,
 		)
 
 		for _, item := range input.Items {
-			// leitura dentro da tx
 			product, err := productRepoTx.GetByID(
 				ctx,
 				input.BarbershopID,
@@ -80,17 +77,6 @@ func (uc *CreateOrder) Execute(
 				return productDomain.ErrProductNotFound
 			}
 
-			// decremento dentro da tx (repo já é tx-aware)
-			if err := productRepoTx.DecreaseStock(
-				ctx,
-				input.BarbershopID,
-				product.ID,
-				item.Quantity,
-			); err != nil {
-				return err
-			}
-
-			// adiciona item no agregado do pedido
 			if err := order.AddItem(
 				product.ID,
 				product.Name,
@@ -105,11 +91,6 @@ func (uc *CreateOrder) Execute(
 			return err
 		}
 
-		// 🔥 TESTE TEMPORÁRIO: força rollback após mexer em estoque e montar o pedido
-		// Remova esta linha depois de validar no banco que stock NÃO mudou e order NÃO foi criado.
-		// return errors.New("force_rollback_test")
-
-		// ✅ cria order+items dentro da MESMA tx (repo NÃO abre tx interna)
 		if err := orderRepoTx.Create(ctx, order); err != nil {
 			return err
 		}

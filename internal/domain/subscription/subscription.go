@@ -11,4 +11,6 @@ type Subscription struct {
 	CurrentPeriodStart time.Time
 	CurrentPeriodEnd   time.Time
 	CutsUsedInPeriod   int
+
+	Plan *Plan
 }

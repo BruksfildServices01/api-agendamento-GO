@@ -2,6 +2,7 @@ package appointment
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
@@ -203,9 +204,11 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 9) Assinatura ativa (estado comercial separado do CRM)
+	// 9) Assinatura ativa + cobertura do serviço
 	// --------------------------------------------------
 	hasActiveSubscription := false
+	subscriptionCoversService := false
+
 	if uc.getSubscriptionUC != nil {
 		sub, err := uc.getSubscriptionUC.Execute(
 			ctx,
@@ -215,29 +218,56 @@ func (uc *CreatePrivateAppointment) Execute(
 		if err != nil {
 			return nil, err
 		}
-		hasActiveSubscription = sub != nil
+
+		if sub != nil {
+			hasActiveSubscription = true
+
+			if sub.Plan != nil {
+				for _, allowedServiceID := range sub.Plan.ServiceIDs {
+					if allowedServiceID == product.ID {
+						subscriptionCoversService = true
+						break
+					}
+				}
+			}
+		}
 	}
 
 	// --------------------------------------------------
-	// 10) Status inicial
+	// 10) Regra final de cobrança
 	// --------------------------------------------------
-	initialStatus := domain.StatusScheduled
-
 	requirement := policy.CategoryPolicies.RequirementFor(
 		category,
 		policy.DefaultRequirement,
 	)
 
-	if hasActiveSubscription {
-		requirement = policy.SubscriptionActiveRequirement
+	if hasActiveSubscription && subscriptionCoversService {
+		requirement = domainPayment.PaymentOptional
 	}
 
+	initialStatus := domain.StatusScheduled
 	if requirement == domainPayment.PaymentMandatory {
 		initialStatus = domain.StatusAwaitingPayment
 	}
 
 	// --------------------------------------------------
-	// 11) Criar Appointment
+	// 11) Idempotência (checa antes, grava só no sucesso)
+	// --------------------------------------------------
+	idempotencyStorageKey := ""
+	if uc.idempotency != nil && in.IdempotencyKey != "" {
+		idempotencyStorageKey = "appointment:create:" + in.IdempotencyKey
+
+		exists, err := uc.idempotency.Exists(ctx, idempotencyStorageKey)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, httperr.ErrBusiness("duplicate_request")
+		}
+	}
+
+	// --------------------------------------------------
+	// 12) Criar Appointment
 	// --------------------------------------------------
 	barbershopID := in.BarbershopID
 	barberID := in.BarberID
@@ -264,23 +294,19 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 12) Auditoria
+	// 13) Persistir chave de idempotência após sucesso real
 	// --------------------------------------------------
-	uc.audit.Dispatch(audit.Event{
-		BarbershopID: in.BarbershopID,
-		UserID:       &in.BarberID,
-		Action:       "appointment_created",
-		Entity:       "appointment",
-		EntityID:     &ap.ID,
-		Metadata: map[string]any{
-			"status":                  ap.Status,
-			"category":                category,
-			"has_active_subscription": hasActiveSubscription,
-		},
-	})
+	if idempotencyStorageKey != "" {
+		if err := uc.idempotency.Save(ctx, idempotencyStorageKey); err != nil {
+			if errors.Is(err, idempotency.ErrDuplicateRequest) {
+				return nil, httperr.ErrBusiness("duplicate_request")
+			}
+			return nil, err
+		}
+	}
 
 	// --------------------------------------------------
-	// 13) Métricas
+	// 14) Métricas
 	// --------------------------------------------------
 	_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
 		BarbershopID: in.BarbershopID,

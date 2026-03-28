@@ -5,10 +5,10 @@ type OrderItem struct {
 
 	OrderID uint `gorm:"index;not null"`
 
-	ItemID   uint
-	ItemName string `gorm:"size:150;not null"`
+	ProductID           uint   `gorm:"not null;index"`
+	ProductNameSnapshot string `gorm:"size:150;not null"`
 
 	Quantity  int   `gorm:"not null"`
 	UnitPrice int64 `gorm:"type:bigint;not null"`
-	Total     int64 `gorm:"type:bigint;not null"`
+	LineTotal int64 `gorm:"type:bigint;not null"`
 }

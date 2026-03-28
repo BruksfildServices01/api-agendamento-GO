@@ -8,30 +8,35 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
-// Handler responsável APENAS por retornar a categoria do cliente
 type ClientCategoryHandler struct {
-	uc *ucMetrics.GetClientCategory
+	getCategoryUC     *ucMetrics.GetClientCategory
+	getSubscriptionUC *ucSubscription.GetActiveSubscription
 }
 
 func NewClientCategoryHandler(
-	uc *ucMetrics.GetClientCategory,
+	getCategoryUC *ucMetrics.GetClientCategory,
+	getSubscriptionUC *ucSubscription.GetActiveSubscription,
 ) *ClientCategoryHandler {
-	return &ClientCategoryHandler{uc: uc}
+	return &ClientCategoryHandler{
+		getCategoryUC:     getCategoryUC,
+		getSubscriptionUC: getSubscriptionUC,
+	}
 }
 
 func (h *ClientCategoryHandler) Get(c *gin.Context) {
 	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid client id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
 		return
 	}
 
 	raw, exists := c.Get(middleware.ContextBarbershopID)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "barbershop context not found",
+			"error": "barbershop_context_not_found",
 		})
 		return
 	}
@@ -46,25 +51,44 @@ func (h *ClientCategoryHandler) Get(c *gin.Context) {
 		barbershopID = uint(v)
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "invalid barbershop context type",
+			"error": "invalid_barbershop_context_type",
 		})
 		return
 	}
 
-	category, err := h.uc.Execute(
+	category, err := h.getCategoryUC.Execute(
 		c.Request.Context(),
 		barbershopID,
 		uint(clientID),
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to load client category",
+			"error": "failed_to_load_client_category",
 		})
 		return
+	}
+
+	premium := false
+
+	sub, err := h.getSubscriptionUC.Execute(
+		c.Request.Context(),
+		barbershopID,
+		uint(clientID),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed_to_load_client_subscription",
+		})
+		return
+	}
+
+	if sub != nil {
+		premium = true
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"client_id": clientID,
 		"category":  string(category),
+		"premium":   premium,
 	})
 }

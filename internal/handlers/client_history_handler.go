@@ -10,24 +10,23 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	clienthistory "github.com/BruksfildServices01/barber-scheduler/internal/query/client_history"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
-// Handler responsável pelo HISTÓRICO consolidado do cliente
 type ClientHistoryHandler struct {
 	service *clienthistory.Service
 }
 
-// NewClientHistoryHandler recebe TODAS as dependências prontas.
-// Handler não cria use case.
 func NewClientHistoryHandler(
 	db *gorm.DB,
 	getClientCategory *ucMetrics.GetClientCategory,
+	getActiveSubscription *ucSubscription.GetActiveSubscription,
 ) *ClientHistoryHandler {
-
 	repo := clienthistory.NewRepository(db)
 	service := clienthistory.NewService(
 		repo,
 		getClientCategory,
+		getActiveSubscription,
 	)
 
 	return &ClientHistoryHandler{
@@ -65,7 +64,11 @@ func (h *ClientHistoryHandler) Get(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.GetClientHistory(barbershopID, clientID)
+	result, err := h.service.GetClientHistory(
+		c.Request.Context(),
+		barbershopID,
+		clientID,
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to load history",

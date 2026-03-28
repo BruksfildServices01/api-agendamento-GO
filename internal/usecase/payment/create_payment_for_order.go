@@ -92,8 +92,6 @@ func (uc *CreatePixPaymentForOrder) Execute(
 	now := time.Now().UTC()
 
 	// 5) Se não existe payment pendente “usável”, cria um novo (sem txid ainda)
-	// Observação: mantém o produto simples e evita duplicar por concorrência (lock no order).
-	// Se você quiser impedir histórico múltiplo, dá pra mudar para “reusar sempre o mesmo row”.
 	if p == nil || domainPayment.Status(p.Status) != domainPayment.StatusPending {
 		expiresAt := now.Add(15 * time.Minute)
 
@@ -121,7 +119,7 @@ func (uc *CreatePixPaymentForOrder) Execute(
 		return nil, err
 	}
 
-	// 7) Persistir txid/qr/expires no MESMO row (ainda sob lock do order)
+	// 7) Persistir txid/qr/expires no MESMO row
 	txid := charge.TxID
 	p.TxID = &txid
 

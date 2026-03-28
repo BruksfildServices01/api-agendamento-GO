@@ -44,8 +44,7 @@ CREATE TYPE client_category AS ENUM (
   'new',
   'regular',
   'trusted',
-  'at_risk',
-  'premium'
+  'at_risk'
 );
 
 CREATE TYPE category_source_type AS ENUM (
@@ -60,7 +59,6 @@ CREATE TYPE payment_requirement AS ENUM (
 );
 
 CREATE TYPE order_type AS ENUM (
-  'service',
   'product'
 );
 
@@ -221,7 +219,7 @@ COMMENT ON COLUMN client_metrics.total_spent IS
 
 CREATE TABLE barbershop_services (
   id BIGSERIAL PRIMARY KEY,
-  barbershop_id BIGINT REFERENCES barbershops(id) ON DELETE SET NULL,
+  barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
   name VARCHAR(100) NOT NULL,
   description VARCHAR(255),
   duration_min INTEGER,
@@ -254,6 +252,7 @@ CREATE TABLE products (
   price BIGINT NOT NULL CHECK (price >= 0),
   stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
   active BOOLEAN DEFAULT true,
+  online_visible BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -266,6 +265,37 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMENT ON COLUMN products.price IS
 'Product price stored in CENTS (int64).';
+
+COMMENT ON COLUMN products.online_visible IS
+'Defines whether the product can appear in the public catalog/store.';
+
+-- ============================================================
+-- SERVICE SUGGESTED PRODUCTS
+-- ============================================================
+
+CREATE TABLE service_suggested_products (
+  id BIGSERIAL PRIMARY KEY,
+  barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  service_id BIGINT NOT NULL REFERENCES barbershop_services(id) ON DELETE CASCADE,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(barbershop_id, service_id)
+);
+
+CREATE INDEX idx_service_suggested_products_service
+ON service_suggested_products(service_id);
+
+CREATE INDEX idx_service_suggested_products_product
+ON service_suggested_products(product_id);
+
+CREATE INDEX idx_service_suggested_products_barbershop
+ON service_suggested_products(barbershop_id);
+
+CREATE TRIGGER trg_service_suggested_products_updated
+BEFORE UPDATE ON service_suggested_products
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
 -- APPOINTMENTS
@@ -314,18 +344,28 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TABLE orders (
   id BIGSERIAL PRIMARY KEY,
   barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  client_id BIGINT REFERENCES clients(id) ON DELETE SET NULL,
   type order_type NOT NULL,
   status order_status NOT NULL DEFAULT 'pending',
+  subtotal_amount BIGINT NOT NULL DEFAULT 0 CHECK (subtotal_amount >= 0),
+  discount_amount BIGINT NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
   total_amount BIGINT NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX idx_orders_barbershop ON orders(barbershop_id);
+CREATE INDEX idx_orders_client ON orders(client_id);
 
 CREATE TRIGGER trg_orders_updated
 BEFORE UPDATE ON orders
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+COMMENT ON COLUMN orders.subtotal_amount IS
+'Order subtotal stored in CENTS (int64).';
+
+COMMENT ON COLUMN orders.discount_amount IS
+'Order discount stored in CENTS (int64).';
 
 COMMENT ON COLUMN orders.total_amount IS
 'Order total stored in CENTS (int64).';
@@ -337,18 +377,20 @@ COMMENT ON COLUMN orders.total_amount IS
 CREATE TABLE order_items (
   id BIGSERIAL PRIMARY KEY,
   order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-  item_id BIGINT,
-  item_name VARCHAR(150) NOT NULL,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  product_name_snapshot VARCHAR(150) NOT NULL,
   quantity INTEGER NOT NULL CHECK (quantity > 0),
   unit_price BIGINT NOT NULL CHECK (unit_price >= 0),
-  total BIGINT NOT NULL CHECK (total >= 0)
+  line_total BIGINT NOT NULL CHECK (line_total >= 0)
 );
 
 CREATE INDEX idx_order_items_order ON order_items(order_id);
+CREATE INDEX idx_order_items_product ON order_items(product_id);
 
 COMMENT ON COLUMN order_items.unit_price IS
 'Item unit price stored in CENTS (int64).';
-COMMENT ON COLUMN order_items.total IS
+
+COMMENT ON COLUMN order_items.line_total IS
 'Item line total stored in CENTS (int64).';
 
 -- ============================================================
@@ -501,6 +543,7 @@ CREATE TABLE plans (
   barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
   name VARCHAR(100) NOT NULL,
   monthly_price_cents BIGINT NOT NULL CHECK (monthly_price_cents >= 0),
+  duration_days INTEGER NOT NULL CHECK (duration_days > 0),
   cuts_included INTEGER NOT NULL CHECK (cuts_included >= 0),
   discount_percent INTEGER NOT NULL CHECK (discount_percent BETWEEN 0 AND 100),
   active BOOLEAN NOT NULL DEFAULT true,
@@ -514,8 +557,8 @@ CREATE TRIGGER trg_plans_updated
 BEFORE UPDATE ON plans
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-COMMENT ON COLUMN plans.monthly_price_cents IS
-'Monthly plan price stored in CENTS (int64).';
+COMMENT ON COLUMN plans.duration_days IS
+'Plan duration in days. Used to calculate subscription current_period_end.';
 
 -- ============================================================
 -- PLAN SERVICES (pivot)

@@ -628,6 +628,13 @@ CREATE TABLE appointment_closures (
 
   operational_note VARCHAR(255),
 
+  -- Sprint 6: fechamento operacional real
+  actual_service_id   BIGINT REFERENCES barbershop_services(id) ON DELETE SET NULL,
+  actual_service_name VARCHAR(150),
+  payment_method      VARCHAR(20),
+  additional_order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+  suggestion_removed  BOOLEAN NOT NULL DEFAULT false,
+
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -638,6 +645,33 @@ ON appointment_closures(barbershop_id);
 CREATE TRIGGER trg_appointment_closures_updated
 BEFORE UPDATE ON appointment_closures
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- CLOSURE ADJUSTMENTS (Sprint 7)
+-- ============================================================
+
+CREATE TABLE closure_adjustments (
+  id BIGSERIAL PRIMARY KEY,
+  closure_id    BIGINT NOT NULL REFERENCES appointment_closures(id) ON DELETE CASCADE,
+  barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  barber_id     BIGINT REFERENCES users(id) ON DELETE SET NULL,
+
+  -- Delta fields: only the fields that changed are set (others null = unchanged)
+  delta_final_amount_cents BIGINT CHECK (delta_final_amount_cents >= 0),
+  delta_payment_method     VARCHAR(20),
+  delta_operational_note   VARCHAR(255),
+
+  reason      VARCHAR(255) NOT NULL,
+  adjusted_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_closure_adjustments_closure    ON closure_adjustments(closure_id);
+CREATE INDEX idx_closure_adjustments_barbershop ON closure_adjustments(barbershop_id);
+
+COMMENT ON TABLE closure_adjustments IS
+'Post-closure corrections within the 7-day window. Never modifies the original closure.';
 
 -- ============================================================
 -- CARTS

@@ -26,6 +26,13 @@ type AppointmentClosure struct {
 
 	OperationalNote string `gorm:"size:255"`
 
+	// Sprint 6: fechamento operacional real
+	ActualServiceID   *uint  `gorm:"index"`
+	ActualServiceName string `gorm:"size:150"`
+	PaymentMethod     string `gorm:"size:20"` // cash|card|pix|subscription
+	AdditionalOrderID *uint  `gorm:"index"`
+	SuggestionRemoved bool   `gorm:"not null;default:false"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

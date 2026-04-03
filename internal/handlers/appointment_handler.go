@@ -29,8 +29,26 @@ type AppointmentHandler struct {
 	noShow      *appointment.MarkAppointmentNoShow
 }
 
+type CompleteAppointmentItemRequest struct {
+	ProductID uint `json:"product_id" binding:"required"`
+	Quantity  int  `json:"quantity" binding:"required,min=1"`
+}
+
 type CompleteAppointmentRequest struct {
-	FinalAmountCents      *int64 `json:"final_amount_cents"`
+	// Serviço realizado — se omitido, usa o serviço agendado.
+	ActualServiceID *uint `json:"actual_service_id"`
+
+	FinalAmountCents *int64 `json:"final_amount_cents"`
+
+	// Venda adicional de produtos durante o atendimento.
+	AdditionalItems []CompleteAppointmentItemRequest `json:"additional_items"`
+
+	// Forma de pagamento real: "cash" | "card" | "pix" | "subscription".
+	PaymentMethod string `json:"payment_method"`
+
+	// O item previsto (suggestion) foi removido/não utilizado.
+	SuggestionRemoved bool `json:"suggestion_removed"`
+
 	OperationalNote       string `json:"operational_note"`
 	ConfirmNormalCharging bool   `json:"confirm_normal_charging"`
 }
@@ -129,13 +147,25 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 		}
 	}
 
+	additionalItems := make([]appointment.ClosureItemInput, len(req.AdditionalItems))
+	for i, item := range req.AdditionalItems {
+		additionalItems[i] = appointment.ClosureItemInput{
+			ProductID: item.ProductID,
+			Quantity:  item.Quantity,
+		}
+	}
+
 	ap, closure, consumeResult, err := h.completeUC.Execute(
 		c.Request.Context(),
 		appointment.CompleteAppointmentInput{
 			BarbershopID:          barbershopID,
 			BarberID:              barberID,
 			AppointmentID:         uint(id),
+			ActualServiceID:       req.ActualServiceID,
 			FinalAmountCents:      req.FinalAmountCents,
+			AdditionalItems:       additionalItems,
+			PaymentMethod:         req.PaymentMethod,
+			SuggestionRemoved:     req.SuggestionRemoved,
 			OperationalNote:       req.OperationalNote,
 			ConfirmNormalCharging: req.ConfirmNormalCharging,
 		},
@@ -201,8 +231,13 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 	if closure != nil {
 		operational.ServiceID = closure.ServiceID
 		operational.ServiceName = closure.ServiceName
+		operational.ActualServiceID = closure.ActualServiceID
+		operational.ActualServiceName = closure.ActualServiceName
 		operational.ReferenceAmountCents = closure.ReferenceAmountCents
 		operational.FinalAmountCents = closure.FinalAmountCents
+		operational.PaymentMethod = closure.PaymentMethod
+		operational.SuggestionRemoved = closure.SuggestionRemoved
+		operational.AdditionalOrderID = closure.AdditionalOrderID
 		operational.OperationalNote = closure.OperationalNote
 		operational.SubscriptionCovered = closure.SubscriptionCovered
 		operational.RequiresNormalCharging = closure.RequiresNormalCharging

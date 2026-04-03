@@ -31,6 +31,7 @@ import (
 	ucServiceSuggestion "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/crm"
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/daypanel"
 )
 
@@ -207,6 +208,8 @@ func RegisterRoutes(
 		db,
 		appointmentRepo,
 		paymentRepo,
+		orderRepo,
+		productRepo,
 		auditDispatcher,
 		updateClientMetricsUC,
 		consumeCutUC,
@@ -397,6 +400,12 @@ func RegisterRoutes(
 	dayPanelQuery := daypanel.New(db)
 	dayPanelHandler := handlers.NewDayPanelHandler(dayPanelQuery)
 
+	crmQuery := crm.New(db)
+	crmHandler := handlers.NewCRMHandler(crmQuery)
+
+	adjustClosureUC := ucAppointment.NewAdjustClosure(db, auditDispatcher)
+	closureAdjustmentHandler := handlers.NewClosureAdjustmentHandler(adjustClosureUC)
+
 	subscriptionHandler := handlers.NewSubscriptionHandler(
 		activateSubscriptionUC,
 		cancelSubscriptionUC,
@@ -472,6 +481,7 @@ func RegisterRoutes(
 		secured.PUT("/me/working-hours", workingHoursHandler.Update)
 
 		secured.GET("/me/clients", clientHandler.List)
+		secured.GET("/me/clients/:id/crm", crmHandler.Get)
 		secured.GET("/me/clients/:id/history", clientHistoryHandler.Get)
 		secured.GET("/me/clients/:id/category", clientCategoryHandler.Get)
 		secured.PUT("/me/clients/:id/category", clientCategoryOverrideHandler.Update)
@@ -483,6 +493,7 @@ func RegisterRoutes(
 		secured.PUT("/me/appointments/:id/complete", appointmentHandler.Complete)
 		secured.PUT("/me/appointments/:id/cancel", appointmentHandler.Cancel)
 		secured.PUT("/me/appointments/:id/no-show", appointmentHandler.MarkNoShow)
+		secured.POST("/me/appointments/:id/closure/adjustment", closureAdjustmentHandler.Create)
 		secured.GET("/me/appointments/date", appointmentHandler.ListByDate)
 		secured.GET("/me/appointments/month", appointmentHandler.ListByMonth)
 

@@ -7,8 +7,10 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
+	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
+	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
@@ -20,6 +22,8 @@ type CompleteAppointment struct {
 	db           *gorm.DB
 	repo         domain.Repository
 	paymentRepo  domainPayment.Repository
+	orderRepo    *infraRepo.OrderGormRepository
+	productRepo  *infraRepo.ProductGormRepository
 	audit        *audit.Dispatcher
 	metrics      *ucMetrics.UpdateClientMetrics
 	consumeCutUC *ucSubscription.ConsumeCut
@@ -29,6 +33,8 @@ func NewCompleteAppointment(
 	db *gorm.DB,
 	repo domain.Repository,
 	paymentRepo domainPayment.Repository,
+	orderRepo *infraRepo.OrderGormRepository,
+	productRepo *infraRepo.ProductGormRepository,
 	audit *audit.Dispatcher,
 	metrics *ucMetrics.UpdateClientMetrics,
 	consumeCutUC *ucSubscription.ConsumeCut,
@@ -37,10 +43,18 @@ func NewCompleteAppointment(
 		db:           db,
 		repo:         repo,
 		paymentRepo:  paymentRepo,
+		orderRepo:    orderRepo,
+		productRepo:  productRepo,
 		audit:        audit,
 		metrics:      metrics,
 		consumeCutUC: consumeCutUC,
 	}
+}
+
+// ClosureItemInput is a product sold during the appointment (venda adicional).
+type ClosureItemInput struct {
+	ProductID uint
+	Quantity  int
 }
 
 type CompleteAppointmentInput struct {
@@ -48,7 +62,21 @@ type CompleteAppointmentInput struct {
 	BarberID      uint
 	AppointmentID uint
 
-	FinalAmountCents      *int64
+	// Serviço realizado — se nil, usa o serviço agendado originalmente.
+	ActualServiceID *uint
+
+	// Valor final cobrado — se nil, usa o preço de referência do serviço.
+	FinalAmountCents *int64
+
+	// Venda adicional de produtos durante o atendimento.
+	AdditionalItems []ClosureItemInput
+
+	// Forma de pagamento real: "cash" | "card" | "pix" | "subscription".
+	PaymentMethod string
+
+	// O item previsto (suggestion) foi removido/não utilizado.
+	SuggestionRemoved bool
+
 	OperationalNote       string
 	ConfirmNormalCharging bool
 }
@@ -77,12 +105,7 @@ func (uc *CompleteAppointment) Execute(
 	err := uc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := appointmentRepoBase.WithTx(tx)
 
-		apLoaded, err := txRepo.GetAppointmentForBarber(
-			ctx,
-			barbershopID,
-			appointmentID,
-			barberID,
-		)
+		apLoaded, err := txRepo.GetAppointmentForBarber(ctx, barbershopID, appointmentID, barberID)
 		if err != nil || apLoaded == nil {
 			return httperr.ErrBusiness("appointment_not_found")
 		}
@@ -109,20 +132,34 @@ func (uc *CompleteAppointment) Execute(
 			}
 		}
 
-		if ap.ClientID != nil &&
-			ap.BarberProductID != nil &&
-			uc.consumeCutUC != nil {
+		// Resolves the actual service: use ActualServiceID if provided, else the scheduled one.
+		actualServiceID := ap.BarberProductID
+		actualServiceName := ""
+		if input.ActualServiceID != nil {
+			actualServiceID = input.ActualServiceID
+		}
 
-			result, err := uc.consumeCutUC.Execute(
-				ctx,
-				barbershopID,
-				*ap.ClientID,
-				*ap.BarberProductID,
-			)
+		// Load actual service details for reference price and subscription check.
+		if ap.BarberProduct != nil && (input.ActualServiceID == nil || *input.ActualServiceID == ap.BarberProduct.ID) {
+			actualServiceName = ap.BarberProduct.Name
+			referenceAmount = ap.BarberProduct.Price
+		} else if actualServiceID != nil {
+			var svc models.BarbershopService
+			if err := tx.WithContext(ctx).
+				Where("id = ? AND barbershop_id = ?", *actualServiceID, barbershopID).
+				First(&svc).Error; err != nil {
+				return httperr.ErrBusiness("actual_service_not_found")
+			}
+			actualServiceName = svc.Name
+			referenceAmount = svc.Price
+		}
+
+		// Consume subscription using the ACTUAL service performed.
+		if ap.ClientID != nil && actualServiceID != nil && uc.consumeCutUC != nil {
+			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID)
 			if err != nil {
 				return err
 			}
-
 			consumeCutResult = result
 		}
 
@@ -134,15 +171,6 @@ func (uc *CompleteAppointment) Execute(
 
 		if err := txRepo.UpdateAppointment(ctx, ap); err != nil {
 			return err
-		}
-
-		var serviceID *uint
-		var serviceName string
-
-		if ap.BarberProduct != nil {
-			serviceID = &ap.BarberProduct.ID
-			serviceName = ap.BarberProduct.Name
-			referenceAmount = ap.BarberProduct.Price
 		}
 
 		subscriptionCovered := false
@@ -160,15 +188,6 @@ func (uc *CompleteAppointment) Execute(
 			case ucSubscription.ConsumeCutStatusConsumed:
 				subscriptionCovered = true
 				requiresNormalCharging = false
-
-			case ucSubscription.ConsumeCutStatusNoActiveSubscription,
-				ucSubscription.ConsumeCutStatusExpiredPeriod,
-				ucSubscription.ConsumeCutStatusPlanNotFound,
-				ucSubscription.ConsumeCutStatusPlanInactive,
-				ucSubscription.ConsumeCutStatusServiceNotAllowed,
-				ucSubscription.ConsumeCutStatusLimitExceeded:
-				subscriptionCovered = false
-				requiresNormalCharging = true
 			}
 		}
 
@@ -176,11 +195,48 @@ func (uc *CompleteAppointment) Execute(
 			return httperr.ErrBusiness("normal_charging_confirmation_required")
 		}
 
+		// Venda adicional — cria Order dentro da mesma transação.
+		var additionalOrderID *uint
+		if len(input.AdditionalItems) > 0 {
+			txOrderRepo := uc.orderRepo.WithTx(tx)
+			txProductRepo := uc.productRepo.WithTx(tx)
+
+			order := orderDomain.New(barbershopID, ap.ClientID)
+
+			for _, item := range input.AdditionalItems {
+				product, err := txProductRepo.GetByID(ctx, barbershopID, item.ProductID)
+				if err != nil {
+					return err
+				}
+				if product == nil {
+					return productDomain.ErrProductNotFound
+				}
+				if err := order.AddItem(product.ID, product.Name, item.Quantity, product.Price); err != nil {
+					return err
+				}
+			}
+
+			if err := order.Validate(); err != nil {
+				return err
+			}
+
+			if err := txOrderRepo.Create(ctx, order); err != nil {
+				return err
+			}
+
+			additionalOrderID = &order.ID
+		}
+
 		closure = &models.AppointmentClosure{
 			AppointmentID:             ap.ID,
 			BarbershopID:              barbershopID,
-			ServiceID:                 serviceID,
-			ServiceName:               serviceName,
+			ServiceID:                 ap.BarberProductID,
+			ServiceName:               func() string {
+				if ap.BarberProduct != nil {
+					return ap.BarberProduct.Name
+				}
+				return ""
+			}(),
 			ReferenceAmountCents:      referenceAmount,
 			FinalAmountCents:          input.FinalAmountCents,
 			SubscriptionConsumeStatus: subscriptionConsumeStatus,
@@ -189,6 +245,11 @@ func (uc *CompleteAppointment) Execute(
 			RequiresNormalCharging:    requiresNormalCharging,
 			ConfirmNormalCharging:     input.ConfirmNormalCharging,
 			OperationalNote:           input.OperationalNote,
+			ActualServiceID:           actualServiceID,
+			ActualServiceName:         actualServiceName,
+			PaymentMethod:             input.PaymentMethod,
+			AdditionalOrderID:         additionalOrderID,
+			SuggestionRemoved:         input.SuggestionRemoved,
 		}
 
 		if err := txRepo.SaveAppointmentClosure(ctx, closure); err != nil {
@@ -202,29 +263,38 @@ func (uc *CompleteAppointment) Execute(
 		return nil, nil, nil, err
 	}
 
-	metadata := map[string]any{}
+	// Audit
+	metadata := map[string]any{
+		"confirm_normal_charging": input.ConfirmNormalCharging,
+		"suggestion_removed":      input.SuggestionRemoved,
+	}
 
 	if input.FinalAmountCents != nil {
 		metadata["final_amount_cents"] = *input.FinalAmountCents
 	}
-
 	if input.OperationalNote != "" {
 		metadata["operational_note"] = input.OperationalNote
 	}
-
-	metadata["confirm_normal_charging"] = input.ConfirmNormalCharging
-
-	if ap != nil && ap.BarberProduct != nil {
-		metadata["service_reference_price"] = ap.BarberProduct.Price
-		metadata["service_id"] = ap.BarberProduct.ID
-		metadata["service_name"] = ap.BarberProduct.Name
+	if input.PaymentMethod != "" {
+		metadata["payment_method"] = input.PaymentMethod
 	}
-
+	if ap != nil && ap.BarberProduct != nil {
+		metadata["scheduled_service_id"] = ap.BarberProduct.ID
+		metadata["scheduled_service_name"] = ap.BarberProduct.Name
+		metadata["service_reference_price"] = ap.BarberProduct.Price
+	}
+	if closure != nil && closure.ActualServiceID != nil {
+		metadata["actual_service_id"] = *closure.ActualServiceID
+		metadata["actual_service_name"] = closure.ActualServiceName
+	}
 	if consumeCutResult != nil {
 		metadata["subscription_consume_status"] = consumeCutResult.Status
 		if consumeCutResult.PlanID != nil {
 			metadata["subscription_plan_id"] = *consumeCutResult.PlanID
 		}
+	}
+	if closure != nil && closure.AdditionalOrderID != nil {
+		metadata["additional_order_id"] = *closure.AdditionalOrderID
 	}
 
 	uc.audit.Dispatch(audit.Event{

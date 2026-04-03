@@ -4,10 +4,12 @@ import (
 	"log"
 	"time"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/config"
-
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 )
 
 func NewDB(cfg *config.Config) *gorm.DB {
@@ -16,19 +18,25 @@ func NewDB(cfg *config.Config) *gorm.DB {
 	// CONNECT
 	// ======================================================
 
+	// QueryExecModeSimpleProtocol sends values as text instead of binary.
+	// This prevents "cache lookup failed for type OID" errors that occur when
+	// the database is recreated and pgx has stale enum type OIDs cached.
+	pgxCfg, err := pgx.ParseConfig(cfg.DBUrl)
+	if err != nil {
+		log.Fatalf("failed to parse database URL: %v", err)
+	}
+	pgxCfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+	sqlDB := stdlib.OpenDB(*pgxCfg)
+
 	db, err := gorm.Open(
-		postgres.Open(cfg.DBUrl),
+		postgres.New(postgres.Config{Conn: sqlDB}),
 		&gorm.Config{
-			PrepareStmt: true,
+			PrepareStmt: false,
 		},
 	)
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
-	}
-
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Fatalf("failed to get sql.DB: %v", err)
 	}
 
 	// ======================================================

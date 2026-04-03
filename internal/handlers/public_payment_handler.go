@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
@@ -120,7 +121,6 @@ func (h *PublicPaymentHandler) CreatePix(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, idempotency.ErrDuplicateRequest):
-			// concorrência/retry simultâneo (raramente deve escapar)
 			httperr.Write(c, http.StatusConflict, "duplicate_request", "Solicitação repetida. Tente novamente.")
 			return
 
@@ -147,15 +147,14 @@ func (h *PublicPaymentHandler) CreatePix(c *gin.Context) {
 	}
 
 	// --------------------------------------------------
-	// 6) Response
+	// 6) Response padronizada
 	// --------------------------------------------------
-	// Nota: agora o retry deve vir com qr_code também (se você persistiu no DB).
-	c.JSON(http.StatusCreated, gin.H{
-		"payment_id": payment.ID,
-		"pix": gin.H{
-			"txid":       pixCharge.TxID,
-			"qr_code":    pixCharge.QRCode,
-			"expires_at": pixCharge.ExpiresAt,
+	c.JSON(http.StatusCreated, dto.PixResponse{
+		PaymentID: payment.ID,
+		Pix: dto.PixPayload{
+			TxID:      pixCharge.TxID,
+			QRCode:    pixCharge.QRCode,
+			ExpiresAt: pixCharge.ExpiresAt,
 		},
 	})
 }

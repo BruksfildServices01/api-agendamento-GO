@@ -1,0 +1,3555 @@
+
+===== internal/infra/calendar/ics_generator.go =====
+
+package calendar
+
+import (
+	"bytes"
+	"fmt"
+	"time"
+)
+
+type ICSGenerator struct{}
+
+func NewICSGenerator() *ICSGenerator {
+	return &ICSGenerator{}
+}
+
+func (g *ICSGenerator) Generate(
+	uid string,
+	title string,
+	description string,
+	start time.Time,
+	end time.Time,
+	timezone string,
+	cancelled bool,
+) ([]byte, error) {
+
+	status := "CONFIRMED"
+	method := "REQUEST"
+
+	if cancelled {
+		status = "CANCELLED"
+		method = "CANCEL"
+	}
+
+	buf := bytes.NewBuffer(nil)
+
+	fmt.Fprintf(buf, "BEGIN:VCALENDAR\r\n")
+	fmt.Fprintf(buf, "VERSION:2.0\r\n")
+	fmt.Fprintf(buf, "PRODID:-//Barber Scheduler//EN\r\n")
+	fmt.Fprintf(buf, "METHOD:%s\r\n", method)
+
+	fmt.Fprintf(buf, "BEGIN:VEVENT\r\n")
+	fmt.Fprintf(buf, "UID:%s\r\n", uid)
+	fmt.Fprintf(buf, "DTSTAMP:%s\r\n", time.Now().UTC().Format("20060102T150405Z"))
+	fmt.Fprintf(buf, "DTSTART:%s\r\n", start.UTC().Format("20060102T150405Z"))
+	fmt.Fprintf(buf, "DTEND:%s\r\n", end.UTC().Format("20060102T150405Z"))
+	fmt.Fprintf(buf, "SUMMARY:%s\r\n", title)
+	fmt.Fprintf(buf, "DESCRIPTION:%s\r\n", description)
+	fmt.Fprintf(buf, "STATUS:%s\r\n", status)
+	fmt.Fprintf(buf, "END:VEVENT\r\n")
+
+	fmt.Fprintf(buf, "END:VCALENDAR\r\n")
+
+	return buf.Bytes(), nil
+}
+
+
+===== internal/infra/cart/memory_store.go =====
+
+package cart
+
+import (
+	"context"
+	"sync"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/cart"
+)
+
+type MemoryStore struct {
+	mu    sync.RWMutex
+	carts map[string]*domain.Cart
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		carts: make(map[string]*domain.Cart),
+	}
+}
+
+func (s *MemoryStore) Get(
+	_ context.Context,
+	key string,
+	barbershopID uint,
+) (*domain.Cart, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cart, ok := s.carts[key]
+	if !ok {
+		return nil, nil
+	}
+
+	if cart.BarbershopID != barbershopID {
+		return nil, nil
+	}
+
+	return cloneCart(cart), nil
+}
+
+func (s *MemoryStore) Save(
+	_ context.Context,
+	cart *domain.Cart,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.carts[cart.Key] = cloneCart(cart)
+	return nil
+}
+
+func (s *MemoryStore) RemoveItem(
+	_ context.Context,
+	key string,
+	barbershopID uint,
+	productID uint,
+) (*domain.Cart, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cart, ok := s.carts[key]
+	if !ok || cart.BarbershopID != barbershopID {
+		return nil, nil
+	}
+
+	filtered := make([]domain.Item, 0, len(cart.Items))
+	for _, item := range cart.Items {
+		if item.ProductID == productID {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+
+	cart.Items = filtered
+	cart.RecalculateTotals()
+	s.carts[key] = cloneCart(cart)
+
+	return cloneCart(cart), nil
+}
+
+func (s *MemoryStore) Clear(
+	_ context.Context,
+	key string,
+	barbershopID uint,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cart, ok := s.carts[key]
+	if !ok {
+		return nil
+	}
+	if cart.BarbershopID != barbershopID {
+		return nil
+	}
+
+	delete(s.carts, key)
+	return nil
+}
+
+func cloneCart(src *domain.Cart) *domain.Cart {
+	if src == nil {
+		return nil
+	}
+
+	items := make([]domain.Item, len(src.Items))
+	copy(items, src.Items)
+
+	return &domain.Cart{
+		Key:           src.Key,
+		BarbershopID:  src.BarbershopID,
+		Items:         items,
+		SubtotalCents: src.SubtotalCents,
+		TotalCents:    src.TotalCents,
+	}
+}
+
+
+===== internal/infra/email/sender.go =====
+
+package email
+
+import "context"
+
+type Attachment struct {
+	Filename string
+	Content  []byte
+}
+
+type Message struct {
+	To          string
+	Subject     string
+	Body        string
+	Attachments []Attachment
+}
+
+type Sender interface {
+	Send(ctx context.Context, msg Message) error
+}
+
+
+===== internal/infra/email/smtp_sender.go =====
+
+package email
+
+import (
+	"context"
+	"fmt"
+	"net/smtp"
+	"os"
+)
+
+type SMTPSender struct {
+	host string
+	port string
+	user string
+	pass string
+	from string
+}
+
+func NewSMTPSender() *SMTPSender {
+	return &SMTPSender{
+		host: os.Getenv("SMTP_HOST"),
+		port: os.Getenv("SMTP_PORT"),
+		user: os.Getenv("SMTP_USER"),
+		pass: os.Getenv("SMTP_PASS"),
+		from: os.Getenv("MAIL_FROM"),
+	}
+}
+
+func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
+
+	addr := fmt.Sprintf("%s:%s", s.host, s.port)
+	auth := smtp.PlainAuth("", s.user, s.pass, s.host)
+
+	body := fmt.Sprintf(
+		"To: %s\r\nSubject: %s\r\n\r\n%s",
+		msg.To,
+		msg.Subject,
+		msg.Body,
+	)
+
+	return smtp.SendMail(
+		addr,
+		auth,
+		s.from,
+		[]string{msg.To},
+		[]byte(body),
+	)
+}
+
+
+===== internal/infra/idempotency/errors.go =====
+
+package idempotency
+
+import "errors"
+
+var ErrDuplicateRequest = errors.New("duplicate_request")
+
+
+===== internal/infra/idempotency/idempotency_gorm.go =====
+
+package idempotency
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
+)
+
+type IdempotencyKey struct {
+	Key string `gorm:"primaryKey;size:128"`
+}
+
+// GormStore implements Store
+type GormStore struct {
+	db *gorm.DB
+}
+
+func NewGormStore(db *gorm.DB) *GormStore {
+	return &GormStore{db: db}
+}
+
+// Exists checks if the idempotency key already exists
+func (s *GormStore) Exists(
+	ctx context.Context,
+	key string,
+) (bool, error) {
+
+	var count int64
+	err := s.db.WithContext(ctx).
+		Model(&IdempotencyKey{}).
+		Where("key = ?", key).
+		Count(&count).Error
+
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+func (s *GormStore) Save(
+	ctx context.Context,
+	key string,
+) error {
+
+	err := s.db.WithContext(ctx).
+		Create(&IdempotencyKey{Key: key}).
+		Error
+
+	if err == nil {
+		return nil
+	}
+
+	// Duplicate key = idempotent replay
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrDuplicateRequest
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrDuplicateRequest
+	}
+
+	if strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
+		return ErrDuplicateRequest
+	}
+
+	return err
+}
+
+
+===== internal/infra/idempotency/store.go =====
+
+package idempotency
+
+import "context"
+
+type Store interface {
+	Exists(ctx context.Context, key string) (bool, error)
+	Save(ctx context.Context, key string) error
+}
+
+
+===== internal/infra/notification/email_notifier.go =====
+
+package notification
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/smtp"
+	"strings"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/config"
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
+)
+
+type EmailNotifier struct {
+	fromAddress string
+	fromHeader  string
+	addr        string
+	auth        smtp.Auth
+}
+
+func NewEmailNotifier(cfg *config.Config) *EmailNotifier {
+	addr := fmt.Sprintf("%s:%s", cfg.SMTPHost, cfg.SMTPPort)
+
+	auth := smtp.PlainAuth(
+		"",
+		cfg.SMTPUser,
+		cfg.SMTPPass,
+		cfg.SMTPHost,
+	)
+
+	from := cfg.EmailFrom
+	fromHeader := "CorteOn <" + from + ">"
+
+	log.Println("[EMAIL] notifier created")
+	log.Println("[EMAIL] from:", from)
+	log.Println("[EMAIL] smtp:", addr)
+
+	return &EmailNotifier{
+		fromAddress: from,
+		fromHeader:  fromHeader,
+		addr:        addr,
+		auth:        auth,
+	}
+}
+
+func (n *EmailNotifier) Notify(
+	ctx context.Context,
+	input domain.PaymentConfirmedInput,
+) error {
+
+	log.Println("[EMAIL] sending to:", input.ClientEmail)
+
+	subject := "Pagamento confirmado – CorteOn"
+
+	// HTML já pronto
+	html, err := renderPaymentConfirmed(input)
+	if err != nil {
+		return err
+	}
+
+	// MIME boundaries
+	boundaryMixed := "BOUNDARY_MIXED"
+	boundaryAlt := "BOUNDARY_ALT"
+
+	var b strings.Builder
+
+	// =======================
+	// HEADERS
+	// =======================
+	b.WriteString("From: " + n.fromHeader + "\r\n")
+	b.WriteString("To: " + input.ClientEmail + "\r\n")
+	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: multipart/mixed; boundary=" + boundaryMixed + "\r\n\r\n")
+
+	// =======================
+	// multipart/alternative
+	// =======================
+	b.WriteString("--" + boundaryMixed + "\r\n")
+	b.WriteString("Content-Type: multipart/alternative; boundary=" + boundaryAlt + "\r\n\r\n")
+
+	// text/plain fallback
+	b.WriteString("--" + boundaryAlt + "\r\n")
+	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n\r\n")
+	b.WriteString("Seu pagamento foi confirmado com sucesso.\r\n\r\n")
+
+	// text/html
+	b.WriteString("--" + boundaryAlt + "\r\n")
+	b.WriteString("Content-Type: text/html; charset=UTF-8\r\n\r\n")
+	b.WriteString(html + "\r\n")
+
+	b.WriteString("--" + boundaryAlt + "--\r\n")
+
+	b.WriteString("--" + boundaryMixed + "--\r\n")
+
+	// =======================
+	// ICS attachment (sempre gerado aqui)
+	// =======================
+	ics := buildICS(input)
+
+	b.WriteString("--" + boundaryMixed + "\r\n")
+	b.WriteString("Content-Type: text/calendar; charset=UTF-8; method=REQUEST\r\n")
+	b.WriteString("Content-Disposition: attachment; filename=\"agendamento.ics\"\r\n\r\n")
+	b.WriteString(ics)
+	b.WriteString("\r\n")
+
+	// =======================
+	// SMTP SEND
+	// =======================
+	return smtp.SendMail(
+		n.addr,
+		n.auth,
+		n.fromAddress,
+		[]string{input.ClientEmail},
+		[]byte(b.String()),
+	)
+}
+
+
+===== internal/infra/notification/ics.go =====
+
+package notification
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
+)
+
+func buildICS(input domain.PaymentConfirmedInput) string {
+
+	startUTC := input.StartTime.UTC().Format("20060102T150405Z")
+	endUTC := input.EndTime.UTC().Format("20060102T150405Z")
+
+	uid := fmt.Sprintf(
+		"%s-%d@corteon",
+		strings.ReplaceAll(input.ClientEmail, "@", "_"),
+		input.StartTime.Unix(),
+	)
+
+	var b strings.Builder
+
+	b.WriteString("BEGIN:VCALENDAR\r\n")
+	b.WriteString("VERSION:2.0\r\n")
+	b.WriteString("PRODID:-//CorteOn//Agendamento//PT-BR\r\n")
+	b.WriteString("CALSCALE:GREGORIAN\r\n")
+
+	b.WriteString("BEGIN:VEVENT\r\n")
+	b.WriteString("UID:" + uid + "\r\n")
+	b.WriteString("DTSTAMP:" + time.Now().UTC().Format("20060102T150405Z") + "\r\n")
+	b.WriteString("DTSTART:" + startUTC + "\r\n")
+	b.WriteString("DTEND:" + endUTC + "\r\n")
+	b.WriteString("SUMMARY:Agendamento confirmado\r\n")
+	b.WriteString("DESCRIPTION:Pagamento confirmado na barbearia " + input.BarbershopName + "\r\n")
+	b.WriteString("END:VEVENT\r\n")
+
+	b.WriteString("END:VCALENDAR\r\n")
+
+	return b.String()
+}
+
+
+===== internal/infra/notification/noop_notifier.go =====
+
+package notification
+
+import (
+	"context"
+
+	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
+)
+
+type NoopNotifier struct{}
+
+func NewNoopNotifier() *NoopNotifier {
+	return &NoopNotifier{}
+}
+
+// Notify implementa domain/notification.Notifier
+func (n *NoopNotifier) Notify(
+	ctx context.Context,
+	input domainNotification.PaymentConfirmedInput,
+) error {
+	// Sprint 6: não faz nada
+	return nil
+}
+
+
+===== internal/infra/notification/render.go =====
+
+package notification
+
+import (
+	"os"
+	"strings"
+	"time"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
+)
+
+func renderPaymentConfirmed(input domain.PaymentConfirmedInput) (string, error) {
+
+	raw, err := os.ReadFile(
+		"internal/infra/notification/templates/payment_confirmed.html",
+	)
+	if err != nil {
+		return "", err
+	}
+
+	html := string(raw)
+
+	// timezone-safe
+	loc, err := time.LoadLocation(input.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+
+	start := input.StartTime.
+		In(loc).
+		Format("02/01/2006 às 15:04")
+
+	html = strings.ReplaceAll(html, "{{ClientName}}", input.ClientName)
+	html = strings.ReplaceAll(html, "{{AppointmentDate}}", start)
+	html = strings.ReplaceAll(html, "{{BarbershopName}}", input.BarbershopName)
+	html = strings.ReplaceAll(html, "{{BarbershopAddress}}", input.BarbershopAddress)
+	html = strings.ReplaceAll(html, "{{BarbershopPhone}}", input.BarbershopPhone)
+
+	return html, nil
+}
+
+
+===== internal/infra/pix/mock_gateway.go =====
+
+package pix
+
+import (
+	"fmt"
+	"time"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
+)
+
+type MockPixGateway struct{}
+
+func NewMockPixGateway() *MockPixGateway {
+	return &MockPixGateway{}
+}
+
+func (g *MockPixGateway) CreateCharge(
+	amount float64,
+	description string,
+) (*domain.PixCharge, error) {
+
+	now := time.Now().UTC()
+
+	return &domain.PixCharge{
+		TxID:      fmt.Sprintf("tx_%d", now.UnixNano()),
+		QRCode:    fmt.Sprintf("PIX_QR_CODE_%d", now.Unix()),
+		ExpiresAt: now.Add(15 * time.Minute),
+	}, nil
+}
+
+
+===== internal/infra/repository/_category_payment_policy_gorm.go =====
+
+package repository
+
+import (
+	"context"
+
+	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
+	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// ======================================================
+// GORM MODEL
+// ======================================================
+
+type CategoryPaymentPolicyModel struct {
+	BarbershopID uint                             `gorm:"primaryKey"`
+	Category     domainMetrics.ClientCategory     `gorm:"primaryKey;size:32"`
+	Requirement  domainPayment.PaymentRequirement `gorm:"size:16;not null"`
+}
+
+// ======================================================
+// REPOSITORY
+// ======================================================
+
+type CategoryPaymentPolicyGormRepository struct {
+	db *gorm.DB
+}
+
+func NewCategoryPaymentPolicyGormRepository(
+	db *gorm.DB,
+) *CategoryPaymentPolicyGormRepository {
+	return &CategoryPaymentPolicyGormRepository{db: db}
+}
+
+// ======================================================
+// READ
+// ======================================================
+
+func (r *CategoryPaymentPolicyGormRepository) ListByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+) (domainPayment.CategoryPaymentPolicies, error) {
+
+	var rows []CategoryPaymentPolicyModel
+
+	if err := r.db.WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	policies := make(domainPayment.CategoryPaymentPolicies, 0, len(rows))
+	for _, row := range rows {
+		policies = append(policies, domainPayment.CategoryPaymentPolicy{
+			Category:    row.Category,
+			Requirement: row.Requirement,
+		})
+	}
+
+	return policies, nil
+}
+
+// ======================================================
+// UPSERT
+// ======================================================
+
+func (r *CategoryPaymentPolicyGormRepository) Upsert(
+	ctx context.Context,
+	barbershopID uint,
+	policy domainPayment.CategoryPaymentPolicy,
+) error {
+
+	model := CategoryPaymentPolicyModel{
+		BarbershopID: barbershopID,
+		Category:     policy.Category,
+		Requirement:  policy.Requirement,
+	}
+
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "barbershop_id"},
+				{Name: "category"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"requirement",
+			}),
+		}).
+		Create(&model).Error
+}
+
+
+===== internal/infra/repository/appointment_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+type AppointmentGormRepository struct {
+	db *gorm.DB
+}
+
+func NewAppointmentGormRepository(db *gorm.DB) *AppointmentGormRepository {
+	return &AppointmentGormRepository{db: db}
+}
+
+func (r *AppointmentGormRepository) WithTx(tx *gorm.DB) *AppointmentGormRepository {
+	return &AppointmentGormRepository{db: tx}
+}
+
+//
+// ======================================================
+// BARBERSHOP
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetBarbershopByID(
+	ctx context.Context,
+	barbershopID uint,
+) (*models.Barbershop, error) {
+
+	var shop models.Barbershop
+
+	err := r.db.WithContext(ctx).
+		First(&shop, barbershopID).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &shop, err
+}
+
+//
+// ======================================================
+// PRODUCT
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetProduct(
+	ctx context.Context,
+	barbershopID uint,
+	productID uint,
+) (*models.BarbershopService, error) {
+
+	var product models.BarbershopService
+
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", productID, barbershopID).
+		First(&product).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &product, err
+}
+
+//
+// ======================================================
+// CLIENT
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetOrCreateClient(
+	ctx context.Context,
+	barbershopID uint,
+	name string,
+	phone string,
+	email string,
+) (*models.Client, error) {
+
+	var client models.Client
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND phone = ?", barbershopID, phone).
+		First(&client).
+		Error
+
+	if err == nil {
+		if email != "" && client.Email != email {
+			client.Email = email
+			if err := r.db.WithContext(ctx).Save(&client).Error; err != nil {
+				return nil, err
+			}
+		}
+		return &client, nil
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	client = models.Client{
+		BarbershopID: &barbershopID,
+		Name:         name,
+		Phone:        phone,
+		Email:        email,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&client).Error; err != nil {
+		return nil, err
+	}
+
+	return &client, nil
+}
+
+//
+// ======================================================
+// CREATE APPOINTMENT
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) CreateAppointment(
+	ctx context.Context,
+	ap *models.Appointment,
+) error {
+
+	err := r.db.WithContext(ctx).Create(ap).Error
+	if err == nil {
+		return nil
+	}
+
+	if isUniqueBarberSlotActiveViolation(err) {
+		return httperr.ErrBusiness("time_conflict")
+	}
+
+	return err
+}
+
+func isUniqueBarberSlotActiveViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" && pgErr.ConstraintName == "unique_barber_slot_active" {
+			return true
+		}
+	}
+
+	msg := err.Error()
+	return strings.Contains(msg, "unique_barber_slot_active")
+}
+
+//
+// ======================================================
+// STATE CHANGE
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetAppointmentForBarber(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+	barberID uint,
+) (*models.Appointment, error) {
+
+	var ap models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Preload("BarberProduct").
+		Preload("Client").
+		Preload("Barbershop").
+		Where(
+			"id = ? AND barber_id = ? AND barbershop_id = ?",
+			appointmentID,
+			barberID,
+			barbershopID,
+		).
+		First(&ap).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &ap, err
+}
+
+func (r *AppointmentGormRepository) UpdateAppointment(
+	ctx context.Context,
+	ap *models.Appointment,
+) error {
+	return r.db.WithContext(ctx).Save(ap).Error
+}
+
+func (r *AppointmentGormRepository) SaveAppointmentClosure(
+	ctx context.Context,
+	closure *models.AppointmentClosure,
+) error {
+	return r.db.WithContext(ctx).Create(closure).Error
+}
+
+func (r *AppointmentGormRepository) GetAppointmentClosure(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+) (*models.AppointmentClosure, error) {
+
+	var closure models.AppointmentClosure
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND appointment_id = ?", barbershopID, appointmentID).
+		First(&closure).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &closure, nil
+}
+
+//
+// ======================================================
+// TIME CONFLICT
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) AssertNoTimeConflict(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	start time.Time,
+	end time.Time,
+) error {
+
+	var count int64
+
+	statuses := []models.AppointmentStatus{
+		models.AppointmentStatus("scheduled"),
+		models.AppointmentStatus("awaiting_payment"),
+	}
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Where(
+			"barbershop_id = ? AND barber_id = ? AND status IN ? AND start_time < ? AND end_time > ?",
+			barbershopID,
+			barberID,
+			statuses,
+			end,
+			start,
+		).
+		Count(&count).
+		Error
+
+	if err != nil {
+		return err
+	}
+
+	if count > 0 {
+		return httperr.ErrBusiness("time_conflict")
+	}
+
+	return nil
+}
+
+//
+// ======================================================
+// WORKING HOURS
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetWorkingHours(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	weekday int,
+) (*models.WorkingHours, error) {
+
+	var wh models.WorkingHours
+
+	err := r.db.WithContext(ctx).
+		Where(
+			"barbershop_id = ? AND barber_id = ? AND weekday = ?",
+			barbershopID,
+			barberID,
+			weekday,
+		).
+		First(&wh).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &wh, err
+}
+
+// DEPRECATED: timezone-unsafe.
+func (r *AppointmentGormRepository) IsWithinWorkingHours(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	start time.Time,
+	end time.Time,
+) (bool, error) {
+
+	weekday := int(start.Weekday())
+
+	wh, err := r.GetWorkingHours(ctx, barbershopID, barberID, weekday)
+	if err != nil || wh == nil {
+		return false, err
+	}
+
+	if !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
+		return false, nil
+	}
+
+	loc := start.Location()
+
+	parseHM := func(hm string) time.Time {
+		t, _ := time.Parse("15:04", hm)
+		return time.Date(
+			start.Year(), start.Month(), start.Day(),
+			t.Hour(), t.Minute(), 0, 0,
+			loc,
+		)
+	}
+
+	workStart := parseHM(wh.StartTime)
+	workEnd := parseHM(wh.EndTime)
+
+	if start.Before(workStart) || end.After(workEnd) {
+		return false, nil
+	}
+
+	if wh.LunchStart != "" && wh.LunchEnd != "" {
+		lunchStart := parseHM(wh.LunchStart)
+		lunchEnd := parseHM(wh.LunchEnd)
+		if start.Before(lunchEnd) && end.After(lunchStart) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+//
+// ======================================================
+// LIST
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) ListAppointmentsForDay(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	start time.Time,
+	end time.Time,
+) ([]models.Appointment, error) {
+
+	var apps []models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Where(
+			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ?",
+			barbershopID,
+			barberID,
+			start,
+			end,
+		).
+		Order("start_time ASC").
+		Find(&apps).
+		Error
+
+	return apps, err
+}
+
+func (r *AppointmentGormRepository) ListAppointmentsForPeriod(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	start time.Time,
+	end time.Time,
+) ([]models.Appointment, error) {
+
+	var apps []models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Preload("Client").
+		Preload("BarberProduct").
+		Where(
+			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ?",
+			barbershopID,
+			barberID,
+			start,
+			end,
+		).
+		Order("start_time ASC").
+		Find(&apps).
+		Error
+
+	return apps, err
+}
+
+//
+// ======================================================
+// REMINDER
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) ListAppointmentsForReminder(
+	ctx context.Context,
+	barbershopID uint,
+	target time.Time,
+) ([]*models.Appointment, error) {
+
+	start := target.Add(-5 * time.Minute)
+	end := target.Add(5 * time.Minute)
+
+	var apps []*models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Preload("Client").
+		Preload("Barbershop").
+		Where(
+			"barbershop_id = ? AND start_time BETWEEN ? AND ? AND status = ?",
+			barbershopID,
+			start,
+			end,
+			models.AppointmentStatus("scheduled"),
+		).
+		Find(&apps).
+		Error
+
+	return apps, err
+}
+
+func (r *AppointmentGormRepository) GetAppointmentByID(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+) (*models.Appointment, error) {
+
+	var ap models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Preload("Client").
+		Preload("BarberProduct").
+		Preload("Barbershop").
+		Where("id = ? AND barbershop_id = ?", appointmentID, barbershopID).
+		First(&ap).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &ap, err
+}
+
+//
+// ======================================================
+// BARBERSHOP LISTER
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) ListBarbershops(
+	ctx context.Context,
+) ([]domain.BarbershopInfo, error) {
+
+	type result struct {
+		ID       uint
+		Timezone string
+	}
+
+	var rows []result
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Barbershop{}).
+		Select("id, timezone").
+		Find(&rows).
+		Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	shops := make([]domain.BarbershopInfo, 0, len(rows))
+
+	for _, row := range rows {
+		shops = append(shops, domain.BarbershopInfo{
+			ID:       row.ID,
+			Timezone: row.Timezone,
+		})
+	}
+
+	return shops, nil
+}
+
+//
+// ======================================================
+// OPERATIONAL SUMMARY (FINANCE SAFE)
+// ======================================================
+//
+
+func (r *AppointmentGormRepository) GetOperationalSummary(
+	ctx context.Context,
+	barbershopID uint,
+) (*domain.OperationalSummary, error) {
+
+	type resultRow struct {
+		TotalReceived  int64
+		CountCompleted int64
+		CountCancelled int64
+		CountNoShow    int64
+	}
+
+	var row resultRow
+
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			(SELECT COALESCE(SUM(p.amount), 0)
+			 FROM payments p
+			 WHERE p.barbershop_id = ?
+			   AND p.status = 'paid'
+			) AS total_received,
+
+			COUNT(*) FILTER (WHERE a.status = 'completed') AS count_completed,
+			COUNT(*) FILTER (WHERE a.status = 'cancelled') AS count_cancelled,
+			COUNT(*) FILTER (WHERE a.status = 'no_show')   AS count_no_show
+
+		FROM appointments a
+		WHERE a.barbershop_id = ?
+	`, barbershopID, barbershopID).Scan(&row).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.OperationalSummary{
+		TotalReceived:  row.TotalReceived,
+		CountCompleted: int(row.CountCompleted),
+		CountCancelled: int(row.CountCancelled),
+		CountNoShow:    int(row.CountNoShow),
+	}, nil
+}
+
+// ======================================================
+// JOB REPOSITORY (P0.2 - race-safe no-show)
+// ======================================================
+
+func (r *AppointmentGormRepository) ListNoShowCandidates(
+	ctx context.Context,
+	barbershopID uint,
+	cutoffUTC time.Time,
+) ([]*models.Appointment, error) {
+
+	var apps []*models.Appointment
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Select("id, client_id, status").
+		Where(
+			"barbershop_id = ? AND status = ? AND start_time <= ?",
+			barbershopID,
+			models.AppointmentStatusScheduled,
+			cutoffUTC,
+		).
+		Order("start_time ASC").
+		Limit(500).
+		Find(&apps).Error
+
+	return apps, err
+}
+
+func (r *AppointmentGormRepository) MarkNoShowAuto(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+	noShowAt time.Time,
+) (bool, error) {
+
+	res := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Where(
+			"id = ? AND barbershop_id = ? AND status = ?",
+			appointmentID,
+			barbershopID,
+			models.AppointmentStatusScheduled,
+		).
+		Updates(map[string]any{
+			"status":         models.AppointmentStatusNoShow,
+			"no_show_at":     noShowAt,
+			"no_show_source": models.NoShowSourceAuto,
+		})
+
+	if res.Error != nil {
+		return false, res.Error
+	}
+
+	return res.RowsAffected > 0, nil
+}
+
+var _ domain.Repository = (*AppointmentGormRepository)(nil)
+var _ domain.BarbershopLister = (*AppointmentGormRepository)(nil)
+var _ domain.JobRepository = (*AppointmentGormRepository)(nil)
+
+
+===== internal/infra/repository/barbershop_payment_config_repository.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
+	"github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+type BarbershopPaymentConfigGormRepository struct {
+	db *gorm.DB
+}
+
+func NewBarbershopPaymentConfigGormRepository(
+	db *gorm.DB,
+) *BarbershopPaymentConfigGormRepository {
+	return &BarbershopPaymentConfigGormRepository{db: db}
+}
+
+//
+// ======================================================
+// CONFIG (DEFAULT)
+// ======================================================
+//
+
+func (r *BarbershopPaymentConfigGormRepository) GetByBarbershopID(
+	ctx context.Context,
+	barbershopID uint,
+) (*paymentconfig.Config, error) {
+
+	var m models.BarbershopPaymentConfig
+
+	err := r.db.
+		WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		First(&m).
+		Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// fallback seguro para contas antigas
+			return paymentconfig.Default(barbershopID), nil
+		}
+		return nil, err
+	}
+
+	return &paymentconfig.Config{
+		BarbershopID:         m.BarbershopID,
+		DefaultRequirement:   paymentconfig.PaymentRequirement(m.DefaultRequirement),
+		PixExpirationMinutes: m.PixExpirationMinutes,
+	}, nil
+}
+
+func (r *BarbershopPaymentConfigGormRepository) UpsertConfig(
+	ctx context.Context,
+	cfg *paymentconfig.Config,
+) error {
+
+	var m models.BarbershopPaymentConfig
+
+	err := r.db.
+		WithContext(ctx).
+		Where("barbershop_id = ?", cfg.BarbershopID).
+		First(&m).
+		Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// CREATE
+			return r.db.WithContext(ctx).Create(&models.BarbershopPaymentConfig{
+				BarbershopID:         cfg.BarbershopID,
+				DefaultRequirement:   models.PaymentRequirement(cfg.DefaultRequirement),
+				PixExpirationMinutes: cfg.PixExpirationMinutes,
+			}).Error
+		}
+		return err
+	}
+
+	// UPDATE
+	m.DefaultRequirement = models.PaymentRequirement(cfg.DefaultRequirement)
+	m.PixExpirationMinutes = cfg.PixExpirationMinutes
+
+	return r.db.WithContext(ctx).Save(&m).Error
+}
+
+//
+// ======================================================
+// CATEGORY PAYMENT POLICIES
+// ======================================================
+//
+
+func (r *BarbershopPaymentConfigGormRepository) ListCategoryPolicies(
+	ctx context.Context,
+	barbershopID uint,
+) ([]paymentconfig.CategoryPaymentPolicy, error) {
+
+	var rows []models.CategoryPaymentPolicy
+
+	if err := r.db.
+		WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Find(&rows).
+		Error; err != nil {
+		return nil, err
+	}
+
+	policies := make([]paymentconfig.CategoryPaymentPolicy, 0, len(rows))
+
+	for _, row := range rows {
+		policies = append(policies, paymentconfig.CategoryPaymentPolicy{
+			BarbershopID: row.BarbershopID,
+			Category:     domainMetrics.ClientCategory(row.Category),
+			Requirement:  paymentconfig.PaymentRequirement(row.Requirement),
+		})
+	}
+
+	return policies, nil
+}
+
+func (r *BarbershopPaymentConfigGormRepository) UpsertCategoryPolicy(
+	ctx context.Context,
+	barbershopID uint,
+	policy paymentconfig.CategoryPaymentPolicy,
+) error {
+
+	row := models.CategoryPaymentPolicy{
+		BarbershopID: barbershopID,
+		Category:     models.ClientCategory(policy.Category),
+		Requirement:  models.PaymentRequirement(policy.Requirement),
+	}
+
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "barbershop_id"},
+				{Name: "category"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"requirement",
+				"updated_at",
+			}),
+		}).
+		Create(&row).
+		Error
+}
+
+// ✅ Opção B (PUT como fonte da verdade)
+func (r *BarbershopPaymentConfigGormRepository) DeleteCategoryPolicies(
+	ctx context.Context,
+	barbershopID uint,
+) error {
+
+	return r.db.WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Delete(&models.CategoryPaymentPolicy{}).
+		Error
+}
+
+var _ paymentconfig.Repository = (*BarbershopPaymentConfigGormRepository)(nil)
+
+
+===== internal/infra/repository/booking_policy_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/bookingpolicy"
+	"gorm.io/gorm"
+)
+
+type BookingPolicyGormRepository struct {
+	db *gorm.DB
+}
+
+func NewBookingPolicyGormRepository(db *gorm.DB) *BookingPolicyGormRepository {
+	return &BookingPolicyGormRepository{db: db}
+}
+
+func (r *BookingPolicyGormRepository) GetByCategory(
+	ctx context.Context,
+	barbershopID uint,
+	category domain.Category,
+) (*domain.BookingPolicy, error) {
+
+	var p domain.BookingPolicy
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND category = ?", barbershopID, category).
+		First(&p).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &p, err
+}
+
+func (r *BookingPolicyGormRepository) Upsert(
+	ctx context.Context,
+	p *domain.BookingPolicy,
+) error {
+
+	return r.db.WithContext(ctx).
+		Save(p).Error
+}
+
+
+===== internal/infra/repository/client_metrics_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
+	infraModels "github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type ClientMetricsGormRepository struct {
+	db *gorm.DB
+}
+
+func NewClientMetricsGormRepository(db *gorm.DB) *ClientMetricsGormRepository {
+	return &ClientMetricsGormRepository{db: db}
+}
+
+func (r *ClientMetricsGormRepository) GetOrCreate(
+	ctx context.Context,
+	barbershopID uint,
+	clientID uint,
+) (*domain.ClientMetrics, error) {
+
+	var m infraModels.ClientMetrics
+
+	err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("client_id = ? AND barbershop_id = ?", clientID, barbershopID).
+		First(&m).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		m = infraModels.ClientMetrics{
+			ClientID:     clientID,
+			BarbershopID: barbershopID,
+		}
+
+		if err := r.db.WithContext(ctx).Create(&m).Error; err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+
+	return mapToDomain(&m), nil
+}
+
+func (r *ClientMetricsGormRepository) Save(
+	ctx context.Context,
+	m *domain.ClientMetrics,
+) error {
+
+	model := mapToModel(m)
+
+	return r.db.WithContext(ctx).Save(model).Error
+}
+
+func mapToDomain(m *infraModels.ClientMetrics) *domain.ClientMetrics {
+	return &domain.ClientMetrics{
+		ClientID:     m.ClientID,
+		BarbershopID: m.BarbershopID,
+
+		TotalAppointments:           m.TotalAppointments,
+		CompletedAppointments:       m.CompletedAppointments,
+		CancelledAppointments:       m.CancelledAppointments,
+		NoShowAppointments:          m.NoShowAppointments,
+		RescheduledAppointments:     m.RescheduledAppointments,
+		LateCancelledAppointments:   m.LateCancelledAppointments,
+		LateRescheduledAppointments: m.LateRescheduledAppointments,
+
+		TotalSpent: m.TotalSpent,
+
+		FirstAppointmentAt:    m.FirstAppointmentAt,
+		LastAppointmentAt:     m.LastAppointmentAt,
+		LastCompletedAt:       m.LastCompletedAt,
+		LastCanceledAt:        m.LastCanceledAt,
+		LastNoShowAt:          m.LastNoShowAt,
+		LastLateCanceledAt:    m.LastLateCanceledAt,
+		LastLateRescheduledAt: m.LastLateRescheduledAt,
+
+		Category:       domain.ClientCategory(m.Category),
+		CategorySource: domain.CategorySource(m.CategorySource),
+
+		CreatedAt: m.CreatedAt,
+		UpdatedAt: m.UpdatedAt,
+	}
+}
+
+func mapToModel(m *domain.ClientMetrics) *infraModels.ClientMetrics {
+	return &infraModels.ClientMetrics{
+		ClientID:     m.ClientID,
+		BarbershopID: m.BarbershopID,
+
+		TotalAppointments:           m.TotalAppointments,
+		CompletedAppointments:       m.CompletedAppointments,
+		CancelledAppointments:       m.CancelledAppointments,
+		NoShowAppointments:          m.NoShowAppointments,
+		RescheduledAppointments:     m.RescheduledAppointments,
+		LateCancelledAppointments:   m.LateCancelledAppointments,
+		LateRescheduledAppointments: m.LateRescheduledAppointments,
+
+		TotalSpent: m.TotalSpent,
+
+		FirstAppointmentAt:    m.FirstAppointmentAt,
+		LastAppointmentAt:     m.LastAppointmentAt,
+		LastCompletedAt:       m.LastCompletedAt,
+		LastCanceledAt:        m.LastCanceledAt,
+		LastNoShowAt:          m.LastNoShowAt,
+		LastLateCanceledAt:    m.LastLateCanceledAt,
+		LastLateRescheduledAt: m.LastLateRescheduledAt,
+
+		Category:       infraModels.ClientCategory(m.Category),
+		CategorySource: infraModels.CategorySourceType(m.CategorySource),
+	}
+}
+
+func (r *ClientMetricsGormRepository) FindByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+) ([]*domain.ClientMetrics, error) {
+
+	var models []infraModels.ClientMetrics
+
+	if err := r.db.WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Find(&models).Error; err != nil {
+		return nil, err
+	}
+
+	result := make([]*domain.ClientMetrics, 0, len(models))
+	for _, m := range models {
+		result = append(result, mapToDomain(&m))
+	}
+
+	return result, nil
+}
+
+
+===== internal/infra/repository/order_gorm_repository.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
+	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+type OrderGormRepository struct {
+	db *gorm.DB
+}
+
+type ListOrdersAdminParams struct {
+	Status    *string
+	Page      int
+	Limit     int
+	SortBy    string
+	SortOrder string
+}
+
+func NewOrderGormRepository(db *gorm.DB) *OrderGormRepository {
+	return &OrderGormRepository{db: db}
+}
+
+// WithTx retorna um repo amarrado à transação atual.
+func (r *OrderGormRepository) WithTx(tx *gorm.DB) *OrderGormRepository {
+	return &OrderGormRepository{db: tx}
+}
+
+func (r *OrderGormRepository) Create(
+	ctx context.Context,
+	o *domain.Order,
+) error {
+	db := r.db.WithContext(ctx)
+
+	orderModel := &models.Order{
+		ID:             o.ID,
+		BarbershopID:   o.BarbershopID,
+		ClientID:       o.ClientID,
+		Type:           models.OrderType(o.Type),
+		Status:         models.OrderStatus(o.Status),
+		SubtotalAmount: o.SubtotalAmount,
+		DiscountAmount: o.DiscountAmount,
+		TotalAmount:    o.TotalAmount,
+	}
+
+	if err := db.Create(orderModel).Error; err != nil {
+		return err
+	}
+
+	o.ID = orderModel.ID
+
+	if len(o.Items) > 0 {
+		items := make([]models.OrderItem, 0, len(o.Items))
+		for _, it := range o.Items {
+			items = append(items, models.OrderItem{
+				OrderID:             orderModel.ID,
+				ProductID:           it.ProductID,
+				ProductNameSnapshot: it.ProductNameSnapshot,
+				Quantity:            it.Quantity,
+				UnitPrice:           it.UnitPrice,
+				LineTotal:           it.LineTotal,
+			})
+		}
+
+		if err := db.Create(&items).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *OrderGormRepository) GetByID(
+	ctx context.Context,
+	barbershopID uint,
+	id uint,
+) (*domain.Order, error) {
+	var m models.Order
+
+	err := r.db.WithContext(ctx).
+		Preload("Items").
+		Where("id = ? AND barbershop_id = ?", id, barbershopID).
+		First(&m).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return mapOrderToDomain(&m), nil
+}
+
+func (r *OrderGormRepository) ListByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+) ([]domain.Order, error) {
+	var rows []models.Order
+
+	err := r.db.WithContext(ctx).
+		Preload("Items").
+		Where("barbershop_id = ?", barbershopID).
+		Order("id DESC").
+		Find(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]domain.Order, 0, len(rows))
+	for i := range rows {
+		mapped := mapOrderToDomain(&rows[i])
+		out = append(out, *mapped)
+	}
+
+	return out, nil
+}
+
+func (r *OrderGormRepository) ListAdminByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+	params ListOrdersAdminParams,
+) ([]dto.OrderListItemDTO, int, error) {
+	query := r.db.WithContext(ctx).
+		Model(&models.Order{}).
+		Where("orders.barbershop_id = ?", barbershopID)
+
+	if params.Status != nil && *params.Status != "" {
+		query = query.Where("orders.status = ?", *params.Status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	orderBy := buildAdminOrderBy(params.SortBy, params.SortOrder)
+	offset := (params.Page - 1) * params.Limit
+
+	type orderListRow struct {
+		ID            uint      `gorm:"column:id"`
+		Status        string    `gorm:"column:status"`
+		ItemsCount    int       `gorm:"column:items_count"`
+		TotalCents    int64     `gorm:"column:total_cents"`
+		PaymentStatus string    `gorm:"column:payment_status"`
+		CreatedAt     time.Time `gorm:"column:created_at"`
+	}
+
+	var rows []orderListRow
+	err := query.
+		Select(`
+			orders.id,
+			orders.status,
+			COUNT(DISTINCT order_items.id) AS items_count,
+			orders.total_amount AS total_cents,
+			COALESCE(MAX(payments.status::text), '') AS payment_status,
+			orders.created_at
+		`).
+		Joins("LEFT JOIN order_items ON order_items.order_id = orders.id").
+		Joins("LEFT JOIN payments ON payments.order_id = orders.id").
+		Group("orders.id").
+		Order(orderBy).
+		Limit(params.Limit).
+		Offset(offset).
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	out := make([]dto.OrderListItemDTO, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, dto.OrderListItemDTO{
+			ID:            row.ID,
+			Status:        row.Status,
+			ItemsCount:    row.ItemsCount,
+			TotalCents:    row.TotalCents,
+			PaymentStatus: row.PaymentStatus,
+			CreatedAt:     row.CreatedAt,
+		})
+	}
+
+	return out, int(total), nil
+}
+
+func mapOrderToDomain(m *models.Order) *domain.Order {
+	items := make([]domain.OrderItem, 0, len(m.Items))
+
+	for _, i := range m.Items {
+		items = append(items, domain.OrderItem{
+			ID:                  i.ID,
+			OrderID:             i.OrderID,
+			ProductID:           i.ProductID,
+			ProductNameSnapshot: i.ProductNameSnapshot,
+			Quantity:            i.Quantity,
+			UnitPrice:           i.UnitPrice,
+			LineTotal:           i.LineTotal,
+		})
+	}
+
+	return &domain.Order{
+		ID:             m.ID,
+		BarbershopID:   m.BarbershopID,
+		ClientID:       m.ClientID,
+		Type:           domain.OrderType(m.Type),
+		Status:         domain.OrderStatus(m.Status),
+		SubtotalAmount: m.SubtotalAmount,
+		DiscountAmount: m.DiscountAmount,
+		TotalAmount:    m.TotalAmount,
+		Items:          items,
+		CreatedAt:      m.CreatedAt,
+		UpdatedAt:      m.UpdatedAt,
+	}
+}
+
+func buildAdminOrderBy(sortBy, sortOrder string) string {
+	switch sortBy {
+	case "status":
+		return "orders.status " + sortOrder + ", orders.id DESC"
+	case "total_amount":
+		return "orders.total_amount " + sortOrder + ", orders.id DESC"
+	case "created_at":
+		fallthrough
+	default:
+		return "orders.created_at " + sortOrder + ", orders.id DESC"
+	}
+}
+
+
+===== internal/infra/repository/payment_gorm_repository.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+type PaymentGormRepository struct {
+	db *gorm.DB
+}
+
+func NewPaymentGormRepository(db *gorm.DB) *PaymentGormRepository {
+	return &PaymentGormRepository{db: db}
+}
+
+//
+// ======================================================
+// ROOT REPOSITORY
+// ======================================================
+//
+
+func (r *PaymentGormRepository) Create(
+	ctx context.Context,
+	p *models.Payment,
+) error {
+	return r.db.WithContext(ctx).Create(p).Error
+}
+
+func (r *PaymentGormRepository) Update(
+	ctx context.Context,
+	p *models.Payment,
+) error {
+	return r.db.WithContext(ctx).Save(p).Error
+}
+
+func (r *PaymentGormRepository) GetByID(
+	ctx context.Context,
+	barbershopID uint,
+	id uint,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", id, barbershopID).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormRepository) GetByAppointmentID(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND appointment_id = ?", barbershopID, appointmentID).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormRepository) GetByOrderID(
+	ctx context.Context,
+	barbershopID uint,
+	orderID uint,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND order_id = ?", barbershopID, orderID).
+		Order("created_at DESC").
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormRepository) GetByTxID(
+	ctx context.Context,
+	barbershopID uint,
+	txid string,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND txid = ?", barbershopID, txid).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+// GLOBAL lookup (webhook only)
+func (r *PaymentGormRepository) GetByTxIDGlobal(
+	ctx context.Context,
+	txid string,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where("txid = ?", txid).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormRepository) ListExpiredPending(
+	ctx context.Context,
+	barbershopID uint,
+	now time.Time,
+) ([]*models.Payment, error) {
+
+	var payments []*models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where(
+			"barbershop_id = ? AND status = ? AND expires_at < ?",
+			barbershopID,
+			models.PaymentStatus("pending"),
+			now,
+		).
+		Find(&payments).
+		Error
+
+	return payments, err
+}
+
+func (r *PaymentGormRepository) ListForBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+	filter domainPayment.PaymentListFilter,
+) ([]models.Payment, error) {
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	q := r.db.WithContext(ctx).
+		Model(&models.Payment{}).
+		Where("barbershop_id = ?", barbershopID)
+
+	if filter.Status != nil {
+		q = q.Where("status = ?", *filter.Status)
+	}
+	if filter.StartDate != nil {
+		q = q.Where("created_at >= ?", *filter.StartDate)
+	}
+	if filter.EndDate != nil {
+		q = q.Where("created_at < ?", *filter.EndDate)
+	}
+
+	var payments []models.Payment
+
+	err := q.
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&payments).
+		Error
+
+	return payments, err
+}
+
+func (r *PaymentGormRepository) GetSummaryForBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+	from *time.Time,
+	to *time.Time,
+) (*domainPayment.PaymentSummary, error) {
+
+	type row struct {
+		Status string
+		Count  int64
+		Total  int64 // centavos
+	}
+
+	var rows []row
+
+	q := r.db.WithContext(ctx).
+		Model(&models.Payment{}).
+		Select("status, COUNT(*) as count, COALESCE(SUM(amount),0) as total").
+		Where("barbershop_id = ?", barbershopID).
+		Group("status")
+
+	if from != nil {
+		q = q.Where("created_at >= ?", *from)
+	}
+	if to != nil {
+		q = q.Where("created_at < ?", *to)
+	}
+
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	summary := &domainPayment.PaymentSummary{}
+
+	for _, r := range rows {
+		switch r.Status {
+		case "paid":
+			summary.TotalPaid = r.Total
+			summary.CountPaid = r.Count
+		case "pending":
+			summary.TotalPending = r.Total
+			summary.CountPending = r.Count
+		case "expired":
+			summary.TotalExpired = r.Total
+			summary.CountExpired = r.Count
+		}
+	}
+
+	return summary, nil
+}
+
+//
+// ======================================================
+// TX REPOSITORY
+// ======================================================
+//
+
+type PaymentGormTxRepository struct {
+	tx *gorm.DB
+}
+
+func (r *PaymentGormTxRepository) GetByTxIDForUpdate(
+	ctx context.Context,
+	barbershopID uint,
+	txid string,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("barbershop_id = ? AND txid = ?", barbershopID, txid).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormTxRepository) GetAppointmentForUpdate(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+) (*models.Appointment, error) {
+
+	var ap models.Appointment
+
+	err := r.tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND barbershop_id = ?", appointmentID, barbershopID).
+		First(&ap).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &ap, nil
+}
+
+func (r *PaymentGormTxRepository) GetOrderForUpdate(
+	ctx context.Context,
+	barbershopID uint,
+	orderID uint,
+) (*models.Order, error) {
+
+	var order models.Order
+
+	err := r.tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND barbershop_id = ?", orderID, barbershopID).
+		First(&order).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &order, nil
+}
+
+func (r *PaymentGormTxRepository) ListExpiredPendingForUpdate(
+	ctx context.Context,
+	barbershopID uint,
+	now time.Time,
+) ([]*models.Payment, error) {
+
+	var payments []*models.Payment
+
+	err := r.tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(
+			"barbershop_id = ? AND status = ? AND expires_at < ?",
+			barbershopID,
+			models.PaymentStatus("pending"),
+			now,
+		).
+		Find(&payments).
+		Error
+
+	return payments, err
+}
+
+func (r *PaymentGormTxRepository) Create(
+	ctx context.Context,
+	p *models.Payment,
+) error {
+	return r.tx.WithContext(ctx).Create(p).Error
+}
+
+func (r *PaymentGormTxRepository) MarkAsPaid(
+	ctx context.Context,
+	barbershopID uint,
+	p *models.Payment,
+) error {
+
+	return r.tx.WithContext(ctx).
+		Model(&models.Payment{}).
+		Where(
+			"id = ? AND barbershop_id = ? AND status = ?",
+			p.ID,
+			barbershopID,
+			models.PaymentStatus("pending"),
+		).
+		Updates(map[string]any{
+			"status":  p.Status,
+			"paid_at": p.PaidAt,
+		}).
+		Error
+}
+
+func (r *PaymentGormTxRepository) MarkAsExpired(
+	ctx context.Context,
+	barbershopID uint,
+	p *models.Payment,
+) error {
+
+	return r.tx.WithContext(ctx).
+		Model(&models.Payment{}).
+		Where(
+			"id = ? AND barbershop_id = ? AND status = ?",
+			p.ID,
+			barbershopID,
+			models.PaymentStatus("pending"),
+		).
+		Update("status", models.PaymentStatus("expired")).
+		Error
+}
+
+func (r *PaymentGormTxRepository) UpdateAppointmentTx(
+	ctx context.Context,
+	ap *models.Appointment,
+) error {
+	return r.tx.WithContext(ctx).Save(ap).Error
+}
+
+func (r *PaymentGormTxRepository) UpdateOrderTx(
+	ctx context.Context,
+	order *models.Order,
+) error {
+	return r.tx.WithContext(ctx).Save(order).Error
+}
+
+func (r *PaymentGormTxRepository) RegisterEvent(
+	ctx context.Context,
+	txid string,
+	eventType string,
+) error {
+
+	ev := models.PixEvent{
+		TxID:      txid,
+		EventType: eventType,
+	}
+
+	return r.tx.WithContext(ctx).Create(&ev).Error
+}
+
+func (r *PaymentGormTxRepository) HasProcessedEvent(
+	ctx context.Context,
+	txid string,
+	eventType string,
+) (bool, error) {
+
+	var count int64
+
+	err := r.tx.WithContext(ctx).
+		Model(&models.PixEvent{}).
+		Where("tx_id = ? AND event_type = ?", txid, eventType).
+		Count(&count).
+		Error
+
+	return count > 0, err
+}
+
+// ✅ TX lookup por order (exigido pelo TxRepository)
+func (r *PaymentGormTxRepository) GetByOrderID(
+	ctx context.Context,
+	barbershopID uint,
+	orderID uint,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.tx.WithContext(ctx).
+		Where("barbershop_id = ? AND order_id = ?", barbershopID, orderID).
+		Order("created_at DESC").
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormTxRepository) Commit() error {
+	return r.tx.Commit().Error
+}
+
+func (r *PaymentGormTxRepository) Rollback() error {
+	return r.tx.Rollback().Error
+}
+
+func (r *PaymentGormTxRepository) GetByAppointmentIDForUpdate(
+	ctx context.Context,
+	barbershopID uint,
+	appointmentID uint,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("barbershop_id = ? AND appointment_id = ?", barbershopID, appointmentID).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
+func (r *PaymentGormTxRepository) UpdatePaymentTx(
+	ctx context.Context,
+	barbershopID uint,
+	p *models.Payment,
+) error {
+
+	now := time.Now().UTC()
+
+	return r.tx.WithContext(ctx).
+		Model(&models.Payment{}).
+		Where("id = ? AND barbershop_id = ?", p.ID, barbershopID).
+		Updates(map[string]any{
+			"txid":       p.TxID,
+			"qr_code":    p.QRCode,
+			"expires_at": p.ExpiresAt,
+			"updated_at": now,
+		}).
+		Error
+}
+
+func (r *PaymentGormTxRepository) ListOrderItems(
+	ctx context.Context,
+	barbershopID uint,
+	orderID uint,
+) ([]models.OrderItem, error) {
+
+	// tenant-safety: garante que o order é do tenant antes de listar items
+	var count int64
+	if err := r.tx.WithContext(ctx).
+		Model(&models.Order{}).
+		Where("id = ? AND barbershop_id = ?", orderID, barbershopID).
+		Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, nil
+	}
+
+	var items []models.OrderItem
+	err := r.tx.WithContext(ctx).
+		Where("order_id = ?", orderID).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *PaymentGormTxRepository) DecreaseProductStock(
+	ctx context.Context,
+	barbershopID uint,
+	productID uint,
+	quantity int,
+) error {
+	if quantity <= 0 || productID == 0 {
+		return nil
+	}
+
+	result := r.tx.WithContext(ctx).
+		Model(&models.Product{}).
+		Where("id = ? AND barbershop_id = ? AND stock >= ?", productID, barbershopID, quantity).
+		Update("stock", gorm.Expr("stock - ?", quantity))
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("insufficient_stock")
+	}
+
+	return nil
+}
+
+func (r *PaymentGormRepository) BeginTx(
+	ctx context.Context,
+	barbershopID uint,
+) (domainPayment.TxRepository, error) {
+
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+
+	return &PaymentGormTxRepository{tx: tx}, nil
+}
+
+
+===== internal/infra/repository/product_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"gorm.io/gorm"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+type ProductGormRepository struct {
+	db *gorm.DB
+}
+
+func NewProductGormRepository(db *gorm.DB) *ProductGormRepository {
+	return &ProductGormRepository{db: db}
+}
+
+// WithTx retorna um repo “amarrado” à transação atual.
+// Assim, o usecase consegue garantir atomicidade (stock + order) numa única TX.
+func (r *ProductGormRepository) WithTx(tx *gorm.DB) *ProductGormRepository {
+	return &ProductGormRepository{db: tx}
+}
+
+func (r *ProductGormRepository) Create(
+	ctx context.Context,
+	p *domain.Product,
+) error {
+	model := mapProductToModel(p)
+
+	if err := r.db.WithContext(ctx).Create(model).Error; err != nil {
+		return err
+	}
+
+	p.ID = model.ID
+	return nil
+}
+
+func (r *ProductGormRepository) Update(
+	ctx context.Context,
+	p *domain.Product,
+) error {
+	model := mapProductToModel(p)
+
+	return r.db.WithContext(ctx).
+		Model(&models.Product{}).
+		Where("id = ? AND barbershop_id = ?", p.ID, p.BarbershopID).
+		Updates(map[string]any{
+			"name":           model.Name,
+			"description":    model.Description,
+			"category":       model.Category,
+			"price":          model.Price,
+			"stock":          model.Stock,
+			"active":         model.Active,
+			"online_visible": model.OnlineVisible,
+		}).
+		Error
+}
+
+func (r *ProductGormRepository) Delete(
+	ctx context.Context,
+	barbershopID uint,
+	id uint,
+) error {
+	return r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", id, barbershopID).
+		Delete(&models.Product{}).
+		Error
+}
+
+func (r *ProductGormRepository) GetByID(
+	ctx context.Context,
+	barbershopID uint,
+	id uint,
+) (*domain.Product, error) {
+	var m models.Product
+
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", id, barbershopID).
+		First(&m).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return mapProductToDomain(&m), nil
+}
+
+func (r *ProductGormRepository) ListByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+) ([]*domain.Product, error) {
+	var modelsList []models.Product
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Order("created_at DESC, id DESC").
+		Find(&modelsList).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*domain.Product, 0, len(modelsList))
+	for i := range modelsList {
+		result = append(result, mapProductToDomain(&modelsList[i]))
+	}
+
+	return result, nil
+}
+
+func (r *ProductGormRepository) ListPublicProducts(
+	ctx context.Context,
+	barbershopID uint,
+	category string,
+	query string,
+) ([]*domain.Product, error) {
+	var modelsList []models.Product
+
+	category = strings.ToLower(strings.TrimSpace(category))
+	query = strings.ToLower(strings.TrimSpace(query))
+
+	q := r.db.WithContext(ctx).
+		Where(
+			"barbershop_id = ? AND active = ? AND online_visible = ? AND stock > 0",
+			barbershopID,
+			true,
+			true,
+		)
+
+	if category != "" {
+		q = q.Where("LOWER(category) = ?", category)
+	}
+
+	if query != "" {
+		like := "%" + query + "%"
+		q = q.Where(
+			"(LOWER(name) LIKE ? OR LOWER(description) LIKE ?)",
+			like,
+			like,
+		)
+	}
+
+	err := q.
+		Order("created_at DESC, id DESC").
+		Find(&modelsList).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*domain.Product, 0, len(modelsList))
+	for i := range modelsList {
+		result = append(result, mapProductToDomain(&modelsList[i]))
+	}
+
+	return result, nil
+}
+
+// DecreaseStock decrementa estoque de forma atômica e segura.
+// Requer que o repo esteja com a TX correta (use r.WithTx(tx) no usecase).
+func (r *ProductGormRepository) DecreaseStock(
+	ctx context.Context,
+	barbershopID uint,
+	productID uint,
+	quantity int,
+) error {
+	if quantity <= 0 {
+		return errors.New("invalid_quantity")
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&models.Product{}).
+		Where(
+			"id = ? AND barbershop_id = ? AND stock >= ?",
+			productID,
+			barbershopID,
+			quantity,
+		).
+		Update("stock", gorm.Expr("stock - ?", quantity))
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return domain.ErrInsufficientStock
+	}
+
+	return nil
+}
+
+func mapProductToDomain(m *models.Product) *domain.Product {
+	return &domain.Product{
+		ID:            m.ID,
+		BarbershopID:  m.BarbershopID,
+		Name:          m.Name,
+		Description:   m.Description,
+		Category:      m.Category,
+		Price:         m.Price,
+		Stock:         m.Stock,
+		Active:        m.Active,
+		OnlineVisible: m.OnlineVisible,
+	}
+}
+
+func mapProductToModel(p *domain.Product) *models.Product {
+	return &models.Product{
+		ID:            p.ID,
+		BarbershopID:  p.BarbershopID,
+		Name:          p.Name,
+		Description:   p.Description,
+		Category:      p.Category,
+		Price:         p.Price,
+		Stock:         p.Stock,
+		Active:        p.Active,
+		OnlineVisible: p.OnlineVisible,
+	}
+}
+
+var _ domain.Repository = (*ProductGormRepository)(nil)
+
+
+===== internal/infra/repository/service_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+
+	"gorm.io/gorm"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+type ServiceGormRepository struct {
+	db *gorm.DB
+}
+
+func NewServiceGormRepository(db *gorm.DB) *ServiceGormRepository {
+	return &ServiceGormRepository{db: db}
+}
+
+func (r *ServiceGormRepository) Create(
+	ctx context.Context,
+	s *domain.Service,
+) error {
+	model := mapServiceToModel(s)
+
+	if err := r.db.WithContext(ctx).Create(model).Error; err != nil {
+		return err
+	}
+
+	s.ID = model.ID
+	return nil
+}
+
+func (r *ServiceGormRepository) Update(
+	ctx context.Context,
+	s *domain.Service,
+) error {
+	model := mapServiceToModel(s)
+
+	return r.db.WithContext(ctx).
+		Model(&models.BarbershopService{}).
+		Where("id = ? AND barbershop_id = ?", s.ID, s.BarbershopID).
+		Updates(map[string]any{
+			"name":         model.Name,
+			"description":  model.Description,
+			"duration_min": model.DurationMin,
+			"price":        model.Price,
+			"active":       model.Active,
+			"category":     model.Category,
+		}).
+		Error
+}
+
+func (r *ServiceGormRepository) GetByID(
+	ctx context.Context,
+	barbershopID uint,
+	id uint,
+) (*domain.Service, error) {
+	var model models.BarbershopService
+
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", id, barbershopID).
+		First(&model).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return mapServiceToDomain(&model), nil
+}
+
+func (r *ServiceGormRepository) ListByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+) ([]*domain.Service, error) {
+	var modelsList []models.BarbershopService
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Order("created_at DESC").
+		Find(&modelsList).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*domain.Service, 0, len(modelsList))
+	for i := range modelsList {
+		result = append(result, mapServiceToDomain(&modelsList[i]))
+	}
+
+	return result, nil
+}
+
+func (r *ServiceGormRepository) ListActiveByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+) ([]*domain.Service, error) {
+	var modelsList []models.BarbershopService
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND active = ?", barbershopID, true).
+		Order("created_at DESC").
+		Find(&modelsList).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*domain.Service, 0, len(modelsList))
+	for i := range modelsList {
+		result = append(result, mapServiceToDomain(&modelsList[i]))
+	}
+
+	return result, nil
+}
+
+func (r *ServiceGormRepository) ListPublicServices(
+	ctx context.Context,
+	barbershopID uint,
+	category string,
+	query string,
+) ([]*domain.Service, error) {
+	var modelsList []models.BarbershopService
+
+	q := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND active = ?", barbershopID, true)
+
+	if category != "" {
+		q = q.Where("LOWER(category) = ?", category)
+	}
+
+	if query != "" {
+		like := "%" + query + "%"
+		q = q.Where(
+			"(LOWER(name) LIKE ? OR LOWER(description) LIKE ?)",
+			like,
+			like,
+		)
+	}
+
+	err := q.
+		Order("created_at DESC").
+		Find(&modelsList).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*domain.Service, 0, len(modelsList))
+	for i := range modelsList {
+		result = append(result, mapServiceToDomain(&modelsList[i]))
+	}
+
+	return result, nil
+}
+
+func mapServiceToDomain(m *models.BarbershopService) *domain.Service {
+	return &domain.Service{
+		ID:           m.ID,
+		BarbershopID: m.BarbershopID,
+		Name:         m.Name,
+		Description:  m.Description,
+		DurationMin:  m.DurationMin,
+		Price:        m.Price,
+		Active:       m.Active,
+		Category:     m.Category,
+	}
+}
+
+func mapServiceToModel(s *domain.Service) *models.BarbershopService {
+	return &models.BarbershopService{
+		ID:           s.ID,
+		BarbershopID: s.BarbershopID,
+		Name:         s.Name,
+		Description:  s.Description,
+		DurationMin:  s.DurationMin,
+		Price:        s.Price,
+		Active:       s.Active,
+		Category:     s.Category,
+	}
+}
+
+var _ domain.Repository = (*ServiceGormRepository)(nil)
+
+
+===== internal/infra/repository/service_suggestion_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+
+	"gorm.io/gorm"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/servicesuggestion"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+type ServiceSuggestionGormRepository struct {
+	db *gorm.DB
+}
+
+func NewServiceSuggestionGormRepository(db *gorm.DB) *ServiceSuggestionGormRepository {
+	return &ServiceSuggestionGormRepository{db: db}
+}
+
+func (r *ServiceSuggestionGormRepository) SetSuggestion(
+	ctx context.Context,
+	barbershopID uint,
+	serviceID uint,
+	productID uint,
+) error {
+	if barbershopID == 0 || serviceID == 0 || productID == 0 {
+		return domain.ErrInvalidContext
+	}
+
+	// 1) valida serviço no tenant
+	var service models.BarbershopService
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", serviceID, barbershopID).
+		First(&service).Error; err != nil {
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ErrServiceNotFound
+		}
+		return err
+	}
+
+	// 2) valida produto no tenant
+	var product models.Product
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", productID, barbershopID).
+		First(&product).Error; err != nil {
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ErrProductNotFound
+		}
+		return err
+	}
+
+	// 3) produto inválido para sugestão
+	if !product.Active {
+		return domain.ErrInvalidSuggestedProduct
+	}
+	if !product.OnlineVisible {
+		return domain.ErrInvalidSuggestedProduct
+	}
+	if product.Stock <= 0 {
+		return domain.ErrInvalidSuggestedProduct
+	}
+
+	// 4) regra da sprint: 1 sugestão por serviço
+	// se já existir, substitui
+	var current models.ServiceSuggestedProduct
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND service_id = ?", barbershopID, serviceID).
+		First(&current).Error
+
+	if err == nil {
+		current.ProductID = productID
+		current.Active = true
+		return r.db.WithContext(ctx).Save(&current).Error
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	// 5) cria nova associação
+	row := models.ServiceSuggestedProduct{
+		BarbershopID: barbershopID,
+		ServiceID:    serviceID,
+		ProductID:    productID,
+		Active:       true,
+	}
+
+	return r.db.WithContext(ctx).Create(&row).Error
+}
+
+func (r *ServiceSuggestionGormRepository) GetSuggestionByServiceID(
+	ctx context.Context,
+	barbershopID uint,
+	serviceID uint,
+) (*domain.ServiceSuggestion, error) {
+	if barbershopID == 0 || serviceID == 0 {
+		return nil, domain.ErrInvalidContext
+	}
+
+	var row models.ServiceSuggestedProduct
+	err := r.db.WithContext(ctx).
+		Preload("Product").
+		Where("barbershop_id = ? AND service_id = ? AND active = ?", barbershopID, serviceID, true).
+		First(&row).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return mapServiceSuggestionToDomain(&row), nil
+}
+
+func (r *ServiceSuggestionGormRepository) RemoveSuggestion(
+	ctx context.Context,
+	barbershopID uint,
+	serviceID uint,
+) error {
+	if barbershopID == 0 || serviceID == 0 {
+		return domain.ErrInvalidContext
+	}
+
+	res := r.db.WithContext(ctx).
+		Model(&models.ServiceSuggestedProduct{}).
+		Where("barbershop_id = ? AND service_id = ?", barbershopID, serviceID).
+		Update("active", false)
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	return nil
+}
+
+func (r *ServiceSuggestionGormRepository) GetPublicSuggestionByServiceID(
+	ctx context.Context,
+	barbershopID uint,
+	serviceID uint,
+) (*domain.ServiceSuggestion, error) {
+	if barbershopID == 0 || serviceID == 0 {
+		return nil, domain.ErrInvalidContext
+	}
+
+	var row models.ServiceSuggestedProduct
+	err := r.db.WithContext(ctx).
+		Preload("Product").
+		Joins("JOIN products ON products.id = service_suggested_products.product_id").
+		Where("service_suggested_products.barbershop_id = ?", barbershopID).
+		Where("service_suggested_products.service_id = ?", serviceID).
+		Where("service_suggested_products.active = ?", true).
+		Where("products.barbershop_id = ?", barbershopID).
+		Where("products.active = ?", true).
+		Where("products.online_visible = ?", true).
+		Where("products.stock > 0").
+		First(&row).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return mapServiceSuggestionToDomain(&row), nil
+}
+
+func mapServiceSuggestionToDomain(
+	row *models.ServiceSuggestedProduct,
+) *domain.ServiceSuggestion {
+	out := &domain.ServiceSuggestion{
+		ID:           row.ID,
+		BarbershopID: row.BarbershopID,
+		ServiceID:    row.ServiceID,
+		ProductID:    row.ProductID,
+		Active:       row.Active,
+	}
+
+	if row.Product != nil {
+		out.Product = &domain.SuggestedProduct{
+			ID:            row.Product.ID,
+			BarbershopID:  row.Product.BarbershopID,
+			Name:          row.Product.Name,
+			Description:   row.Product.Description,
+			Category:      row.Product.Category,
+			Price:         row.Product.Price,
+			Stock:         row.Product.Stock,
+			Active:        row.Product.Active,
+			OnlineVisible: row.Product.OnlineVisible,
+		}
+	}
+
+	return out
+}
+
+var _ domain.Repository = (*ServiceSuggestionGormRepository)(nil)
+
+
+===== internal/infra/repository/subscription_gorm.go =====
+
+package repository
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+var (
+	errClientAlreadyHasActiveSubscription = errors.New("client_already_has_active_subscription")
+	errActiveSubscriptionNotFound         = errors.New("active_subscription_not_found")
+)
+
+type SubscriptionGormRepository struct {
+	db *gorm.DB
+}
+
+func NewSubscriptionGormRepository(db *gorm.DB) *SubscriptionGormRepository {
+	return &SubscriptionGormRepository{db: db}
+}
+
+func (r *SubscriptionGormRepository) CreatePlan(
+	ctx context.Context,
+	plan *domain.Plan,
+	serviceIDs []uint,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		model := models.Plan{
+			BarbershopID:      plan.BarbershopID,
+			Name:              plan.Name,
+			MonthlyPriceCents: plan.MonthlyPriceCents,
+			DurationDays:      plan.DurationDays,
+			CutsIncluded:      plan.CutsIncluded,
+			DiscountPercent:   plan.DiscountPercent,
+			Active:            true,
+		}
+
+		if err := tx.Create(&model).Error; err != nil {
+			return err
+		}
+
+		for _, serviceID := range serviceIDs {
+			if err := tx.Exec(
+				`INSERT INTO plan_services (plan_id, service_id)
+				 VALUES (?, ?)`,
+				model.ID,
+				serviceID,
+			).Error; err != nil {
+				return err
+			}
+		}
+
+		plan.ID = model.ID
+		return nil
+	})
+}
+
+func (r *SubscriptionGormRepository) ListPlans(
+	ctx context.Context,
+	barbershopID uint,
+) ([]domain.Plan, error) {
+	var modelsPlans []models.Plan
+
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ?", barbershopID).
+		Find(&modelsPlans).Error
+	if err != nil {
+		return nil, err
+	}
+
+	plans := make([]domain.Plan, 0, len(modelsPlans))
+	for _, p := range modelsPlans {
+		serviceIDs, err := r.ListAllowedServiceIDs(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		plans = append(plans, domain.Plan{
+			ID:                p.ID,
+			BarbershopID:      p.BarbershopID,
+			Name:              p.Name,
+			MonthlyPriceCents: p.MonthlyPriceCents,
+			DurationDays:      p.DurationDays,
+			CutsIncluded:      p.CutsIncluded,
+			DiscountPercent:   p.DiscountPercent,
+			Active:            p.Active,
+			ServiceIDs:        serviceIDs,
+		})
+	}
+
+	return plans, nil
+}
+
+func (r *SubscriptionGormRepository) GetPlanByID(
+	ctx context.Context,
+	barbershopID uint,
+	planID uint,
+) (*domain.Plan, error) {
+	var model models.Plan
+
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND barbershop_id = ?", planID, barbershopID).
+		First(&model).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	serviceIDs, err := r.ListAllowedServiceIDs(ctx, model.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.Plan{
+		ID:                model.ID,
+		BarbershopID:      model.BarbershopID,
+		Name:              model.Name,
+		MonthlyPriceCents: model.MonthlyPriceCents,
+		DurationDays:      model.DurationDays,
+		CutsIncluded:      model.CutsIncluded,
+		DiscountPercent:   model.DiscountPercent,
+		Active:            model.Active,
+		ServiceIDs:        serviceIDs,
+	}, nil
+}
+
+func (r *SubscriptionGormRepository) ActivateSubscription(
+	ctx context.Context,
+	sub *domain.Subscription,
+) error {
+	model := models.Subscription{
+		BarbershopID:       sub.BarbershopID,
+		ClientID:           sub.ClientID,
+		PlanID:             sub.PlanID,
+		Status:             string(sub.Status),
+		CurrentPeriodStart: sub.CurrentPeriodStart,
+		CurrentPeriodEnd:   sub.CurrentPeriodEnd,
+		CutsUsedInPeriod:   sub.CutsUsedInPeriod,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
+		if isActiveSubscriptionUniqueViolation(err) {
+			return errClientAlreadyHasActiveSubscription
+		}
+		return err
+	}
+
+	sub.ID = model.ID
+	return nil
+}
+
+func (r *SubscriptionGormRepository) CancelSubscription(
+	ctx context.Context,
+	barbershopID, clientID uint,
+) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where(
+			"barbershop_id = ? AND client_id = ? AND status = ?",
+			barbershopID,
+			clientID,
+			"active",
+		).
+		Update("status", string(domain.StatusCancelled))
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	if res.RowsAffected == 0 {
+		return errActiveSubscriptionNotFound
+	}
+
+	return nil
+}
+
+func (r *SubscriptionGormRepository) GetActiveSubscription(
+	ctx context.Context,
+	barbershopID, clientID uint,
+) (*domain.Subscription, error) {
+	var model models.Subscription
+
+	now := time.Now().UTC()
+
+	err := r.db.WithContext(ctx).
+		Where(
+			`barbershop_id = ?
+			 AND client_id = ?
+			 AND status = ?
+			 AND current_period_start <= ?
+			 AND current_period_end > ?`,
+			barbershopID,
+			clientID,
+			"active",
+			now,
+			now,
+		).
+		Order("current_period_end DESC").
+		First(&model).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var planPtr *domain.Plan
+
+	plan, err := r.GetPlanByID(ctx, barbershopID, model.PlanID)
+	if err != nil {
+		return nil, err
+	}
+	if plan != nil {
+		planPtr = plan
+	}
+
+	return &domain.Subscription{
+		ID:                 model.ID,
+		BarbershopID:       model.BarbershopID,
+		ClientID:           model.ClientID,
+		PlanID:             model.PlanID,
+		Status:             domain.Status(model.Status),
+		CurrentPeriodStart: model.CurrentPeriodStart,
+		CurrentPeriodEnd:   model.CurrentPeriodEnd,
+		CutsUsedInPeriod:   model.CutsUsedInPeriod,
+		Plan:               planPtr,
+	}, nil
+}
+
+func (r *SubscriptionGormRepository) IncrementCutsUsed(
+	ctx context.Context,
+	barbershopID uint,
+	clientID uint,
+) error {
+	now := time.Now().UTC()
+
+	res := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where(
+			`barbershop_id = ?
+			 AND client_id = ?
+			 AND status = ?
+			 AND current_period_start <= ?
+			 AND current_period_end > ?`,
+			barbershopID,
+			clientID,
+			"active",
+			now,
+			now,
+		).
+		UpdateColumn(
+			"cuts_used_in_period",
+			gorm.Expr("cuts_used_in_period + 1"),
+		)
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	if res.RowsAffected == 0 {
+		return errActiveSubscriptionNotFound
+	}
+
+	return nil
+}
+
+func (r *SubscriptionGormRepository) AddServiceToPlan(
+	ctx context.Context,
+	planID,
+	serviceID uint,
+) error {
+	return r.db.WithContext(ctx).
+		Exec(
+			`INSERT INTO plan_services (plan_id, service_id)
+			 VALUES (?, ?)`,
+			planID,
+			serviceID,
+		).Error
+}
+
+func (r *SubscriptionGormRepository) ListAllowedServiceIDs(
+	ctx context.Context,
+	planID uint,
+) ([]uint, error) {
+	var ids []uint
+
+	err := r.db.WithContext(ctx).
+		Raw(
+			`SELECT service_id
+			 FROM plan_services
+			 WHERE plan_id = ?`,
+			planID,
+		).
+		Scan(&ids).Error
+
+	return ids, err
+}
+
+func (r *SubscriptionGormRepository) UpdateCutsUsed(
+	ctx context.Context,
+	subscriptionID uint,
+	newValue int,
+) error {
+	return r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where("id = ?", subscriptionID).
+		Update("cuts_used_in_period", newValue).
+		Error
+}
+
+func isActiveSubscriptionUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" && pgErr.ConstraintName == "uq_subscriptions_one_active_per_client_shop" {
+			return true
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "uq_subscriptions_one_active_per_client_shop")
+}
+
+func (r *SubscriptionGormRepository) CountServicesByBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+	serviceIDs []uint,
+) (int64, error) {
+	return r.CountServicesByIDs(ctx, barbershopID, serviceIDs)
+}
+
+func (r *SubscriptionGormRepository) CountServicesByIDs(
+	ctx context.Context,
+	barbershopID uint,
+	serviceIDs []uint,
+) (int64, error) {
+	if len(serviceIDs) == 0 {
+		return 0, nil
+	}
+
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.BarbershopService{}).
+		Where("barbershop_id = ? AND id IN ?", barbershopID, serviceIDs).
+		Count(&count).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"gorm.io/gorm"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
@@ -38,6 +41,7 @@ type PublicHandler struct {
 	getCartUC        *cartUC.GetCart
 	addCartItemUC    *cartUC.AddItem
 	removeCartItemUC *cartUC.RemoveItem
+	checkoutCartUC   *cartUC.CheckoutCart
 }
 
 func NewPublicHandler(
@@ -49,6 +53,7 @@ func NewPublicHandler(
 	getCartUC *cartUC.GetCart,
 	addCartItemUC *cartUC.AddItem,
 	removeCartItemUC *cartUC.RemoveItem,
+	checkoutCartUC *cartUC.CheckoutCart,
 ) *PublicHandler {
 	return &PublicHandler{
 		db:                  db,
@@ -59,26 +64,8 @@ func NewPublicHandler(
 		getCartUC:           getCartUC,
 		addCartItemUC:       addCartItemUC,
 		removeCartItemUC:    removeCartItemUC,
+		checkoutCartUC:      checkoutCartUC,
 	}
-}
-
-////////////////////////////////////////////////////////
-// DTOs
-////////////////////////////////////////////////////////
-
-type PublicCreateAppointmentRequest struct {
-	ClientName  string `json:"client_name" binding:"required"`
-	ClientPhone string `json:"client_phone" binding:"required"`
-	ClientEmail string `json:"client_email"`
-	ProductID   uint   `json:"product_id" binding:"required"`
-	Date        string `json:"date" binding:"required"` // YYYY-MM-DD
-	Time        string `json:"time" binding:"required"` // HH:mm
-	Notes       string `json:"notes"`
-}
-
-type PublicAddCartItemRequest struct {
-	ProductID uint `json:"product_id" binding:"required"`
-	Quantity  int  `json:"quantity" binding:"required"`
 }
 
 ////////////////////////////////////////////////////////
@@ -86,11 +73,8 @@ type PublicAddCartItemRequest struct {
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) ListServices(c *gin.Context) {
-	slug := c.Param("slug")
-
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
-		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
 		return
 	}
 
@@ -125,11 +109,8 @@ func (h *PublicHandler) ListServices(c *gin.Context) {
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) ListProducts(c *gin.Context) {
-	slug := c.Param("slug")
-
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
-		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
 		return
 	}
 
@@ -203,7 +184,7 @@ func (h *PublicHandler) AddCartItem(c *gin.Context) {
 		return
 	}
 
-	var req PublicAddCartItemRequest
+	var req dto.PublicAddCartItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
@@ -275,22 +256,66 @@ func (h *PublicHandler) RemoveCartItem(c *gin.Context) {
 	httpresp.OK(c, result)
 }
 
+func (h *PublicHandler) CheckoutCart(c *gin.Context) {
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
+		return
+	}
+
+	cartKey := strings.TrimSpace(c.GetHeader("X-Cart-Key"))
+	order, err := h.checkoutCartUC.Execute(
+		c.Request.Context(),
+		cartUC.CheckoutCartInput{
+			CartKey:      cartKey,
+			BarbershopID: shop.ID,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, cartUC.ErrCheckoutInvalidCartKey):
+			httperr.BadRequest(c, "invalid_cart_key", "Carrinho inválido.")
+		case errors.Is(err, cartUC.ErrCheckoutEmptyCart):
+			httperr.BadRequest(c, "empty_cart", "Carrinho vazio.")
+		case errors.Is(err, productDomain.ErrProductNotFound):
+			httperr.BadRequest(c, "product_not_found", "Produto não encontrado.")
+		case errors.Is(err, productDomain.ErrInsufficientStock):
+			httperr.BadRequest(c, "insufficient_stock", "Estoque insuficiente.")
+		default:
+			httperr.Internal(c, "failed_to_checkout_cart", "Erro ao finalizar carrinho.")
+		}
+		return
+	}
+
+	resp := dto.PublicCheckoutResponseDTO{
+		Order: dto.PublicCheckoutOrderDTO{
+			OrderID:    order.ID,
+			Status:     string(order.Status),
+			TotalCents: order.TotalAmount,
+			ItemsCount: len(order.Items),
+		},
+		NextStep: dto.PublicCheckoutNextStepDTO{
+			Action:     "generate_pix",
+			Method:     "POST",
+			PaymentURL: "/api/public/" + shop.Slug + "/orders/" + strconv.FormatUint(uint64(order.ID), 10) + "/payment/pix",
+		},
+	}
+
+	c.JSON(http.StatusCreated, resp)
+}
+
 ////////////////////////////////////////////////////////
 // PUBLIC SERVICE SUGGESTION
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) GetServiceSuggestion(c *gin.Context) {
-	slug := c.Param("slug")
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
+		return
+	}
 
 	serviceID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || serviceID64 == 0 {
 		httperr.BadRequest(c, "invalid_service_id", "Serviço inválido.")
-		return
-	}
-
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
-		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return
 	}
 
@@ -306,17 +331,28 @@ func (h *PublicHandler) GetServiceSuggestion(c *gin.Context) {
 		return
 	}
 
-	if suggestion == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"service_id": serviceID64,
-			"suggestion": nil,
-		})
-		return
+	var suggestionDTO *dto.PublicServiceSuggestionDTO
+	if suggestion != nil {
+		suggestionDTO = &dto.PublicServiceSuggestionDTO{
+			ServiceID: uint(serviceID64),
+			Product: &dto.PublicSuggestedProductDTO{
+				ProductID:   suggestion.Product.ID,
+				Name:        suggestion.Product.Name,
+				Description: suggestion.Product.Description,
+				Category:    suggestion.Product.Category,
+				PriceCents:  suggestion.Product.Price,
+			},
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"barbershop": gin.H{
+			"id":   shop.ID,
+			"name": shop.Name,
+			"slug": shop.Slug,
+		},
 		"service_id": serviceID64,
-		"suggestion": suggestion,
+		"suggestion": suggestionDTO,
 	})
 }
 
@@ -325,7 +361,6 @@ func (h *PublicHandler) GetServiceSuggestion(c *gin.Context) {
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
-	slug := c.Param("slug")
 	dateStr := strings.TrimSpace(c.Query("date"))
 	productIDStr := strings.TrimSpace(c.Query("product_id"))
 
@@ -340,9 +375,8 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 		return
 	}
 
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
-		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
 		return
 	}
 
@@ -430,15 +464,12 @@ func mapPublicCreateErrors(c *gin.Context, err error) {
 ////////////////////////////////////////////////////////
 
 func (h *PublicHandler) CreateAppointment(c *gin.Context) {
-	slug := c.Param("slug")
-
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
-		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
 		return
 	}
 
-	var req PublicCreateAppointmentRequest
+	var req dto.PublicCreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos.")
 		return
@@ -452,7 +483,7 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 		return
 	}
 
-	idempotencyKey := c.GetHeader("X-Idempotency-Key")
+	idempotencyKey := strings.TrimSpace(c.GetHeader("X-Idempotency-Key"))
 
 	ap, err := h.createAppointment.Execute(
 		c.Request.Context(),
@@ -477,14 +508,43 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 	c.JSON(http.StatusCreated, ap)
 }
 
+////////////////////////////////////////////////////////
+// BARBERSHOP RESOLUTION HELPERS
+////////////////////////////////////////////////////////
+
 func (h *PublicHandler) getPublicBarbershop(c *gin.Context) (*models.Barbershop, bool) {
 	slug := c.Param("slug")
-
-	var shop models.Barbershop
-	if err := h.db.Where("slug = ?", slug).First(&shop).Error; err != nil {
+	shop, err := h.getPublicBarbershopBySlug(c.Request.Context(), slug)
+	if err != nil {
+		httperr.Internal(c, "failed_to_load_barbershop", "Erro ao carregar barbearia.")
+		return nil, false
+	}
+	if shop == nil {
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 		return nil, false
 	}
+	return shop, true
+}
 
-	return &shop, true
+func (h *PublicHandler) GetBarbershopIDBySlug(c *gin.Context, slug string) (uint, error) {
+	shop, err := h.getPublicBarbershopBySlug(c.Request.Context(), slug)
+	if err != nil {
+		return 0, err
+	}
+	if shop == nil {
+		return 0, nil
+	}
+	return shop.ID, nil
+}
+
+func (h *PublicHandler) getPublicBarbershopBySlug(ctx context.Context, slug string) (*models.Barbershop, error) {
+	var shop models.Barbershop
+	err := h.db.WithContext(ctx).Where("slug = ?", slug).First(&shop).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &shop, nil
 }

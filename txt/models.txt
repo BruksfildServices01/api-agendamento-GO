@@ -1,0 +1,512 @@
+
+===== internal/models/appointment.go =====
+
+package models
+
+import "time"
+
+//
+// ======================================================
+// ENUM VALUES
+// ======================================================
+//
+
+const (
+	AppointmentStatusScheduled       AppointmentStatus = "scheduled"
+	AppointmentStatusAwaitingPayment AppointmentStatus = "awaiting_payment"
+	AppointmentStatusCompleted       AppointmentStatus = "completed"
+	AppointmentStatusCancelled       AppointmentStatus = "cancelled"
+	AppointmentStatusNoShow          AppointmentStatus = "no_show"
+)
+
+const (
+	CreatedByClient AppointmentCreatedBy = "client"
+	CreatedByBarber AppointmentCreatedBy = "barber"
+)
+
+const (
+	PaymentIntentPayLater PaymentIntentType = "pay_later"
+	PaymentIntentPaid     PaymentIntentType = "paid"
+)
+
+const (
+	NoShowSourceAuto   NoShowSourceType = "auto"
+	NoShowSourceManual NoShowSourceType = "manual"
+)
+
+//
+// ======================================================
+// MODEL
+// ======================================================
+//
+
+type Appointment struct {
+	ID uint `gorm:"primaryKey"`
+
+	BarbershopID *uint       `gorm:"index"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	BarberID *uint `gorm:"index"`
+	Barber   *User `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	ClientID *uint   `gorm:"index"`
+	Client   *Client `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	BarberProductID *uint              `gorm:"index"`
+	BarberProduct   *BarbershopService `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	StartTime time.Time `gorm:"type:timestamptz;not null"`
+	EndTime   time.Time `gorm:"type:timestamptz;not null"`
+
+	Status        AppointmentStatus    `gorm:"type:appointment_status;not null;default:'scheduled'"`
+	CreatedBy     AppointmentCreatedBy `gorm:"type:appointment_created_by;not null;default:'client'"`
+	PaymentIntent PaymentIntentType    `gorm:"type:payment_intent_type;not null;default:'pay_later'"`
+
+	Notes string `gorm:"size:255"`
+
+	CancelledAt  *time.Time
+	CompletedAt  *time.Time
+	NoShowAt     *time.Time
+	NoShowSource *NoShowSourceType `gorm:"type:no_show_source_type"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/appointment_closure.go =====
+
+package models
+
+import "time"
+
+type AppointmentClosure struct {
+	ID uint `gorm:"primaryKey"`
+
+	AppointmentID uint         `gorm:"uniqueIndex;not null"`
+	Appointment   *Appointment `gorm:"constraint:OnDelete:CASCADE;"`
+
+	BarbershopID uint        `gorm:"index;not null"`
+	Barbershop   *Barbershop `gorm:"constraint:OnDelete:CASCADE;"`
+
+	ServiceID   *uint
+	ServiceName string `gorm:"size:150"`
+
+	ReferenceAmountCents int64  `gorm:"type:bigint;not null"`
+	FinalAmountCents     *int64 `gorm:"type:bigint"`
+
+	SubscriptionConsumeStatus *string
+	SubscriptionPlanID        *uint
+
+	SubscriptionCovered    bool `gorm:"not null"`
+	RequiresNormalCharging bool `gorm:"not null"`
+	ConfirmNormalCharging  bool `gorm:"not null"`
+
+	OperationalNote string `gorm:"size:255"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/audit_log.go =====
+
+package models
+
+import "time"
+
+type AuditLog struct {
+	ID uint `gorm:"primaryKey"`
+
+	BarbershopID uint
+	UserID       *uint
+
+	Action   string `gorm:"size:50;not null"`
+	Entity   string `gorm:"size:50"`
+	EntityID *uint
+	Metadata string `gorm:"type:text"`
+
+	CreatedAt time.Time
+}
+
+
+===== internal/models/barber_service.go =====
+
+package models
+
+import "time"
+
+type BarbershopService struct {
+	ID           uint        `gorm:"primaryKey"`
+	BarbershopID uint        `gorm:"index;not null"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	Name        string `gorm:"size:100;not null"`
+	Description string `gorm:"size:255"`
+	DurationMin int
+	Price       int64  `gorm:"type:bigint;not null"`
+	Active      bool   `gorm:"default:true"`
+	Category    string `gorm:"size:50"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/barbershop.go =====
+
+package models
+
+import "time"
+
+type Barbershop struct {
+	ID                uint                     `gorm:"primaryKey"`
+	Name              string                   `gorm:"size:100;not null"`
+	Slug              string                   `gorm:"size:100;uniqueIndex;not null"`
+	Phone             string                   `gorm:"size:20"`
+	Address           string                   `gorm:"size:255"`
+	MinAdvanceMinutes int                      `gorm:"default:120"`
+	Timezone          string                   `gorm:"size:64;not null;default:'America/Sao_Paulo'"`
+	PaymentConfig     *BarbershopPaymentConfig `gorm:"constraint:OnDelete:CASCADE;"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/barbershop_payment_config.go =====
+
+package models
+
+import "time"
+
+type BarbershopPaymentConfig struct {
+	ID           uint `gorm:"primaryKey"`
+	BarbershopID uint `gorm:"uniqueIndex;not null"`
+
+	DefaultRequirement   PaymentRequirement `gorm:"type:payment_requirement;not null"`
+	PixExpirationMinutes int                `gorm:"not null;default:15"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/category_payment_policy.go =====
+
+package models
+
+import "time"
+
+type CategoryPaymentPolicy struct {
+	ID           uint `gorm:"primaryKey"`
+	BarbershopID uint `gorm:"index;not null"`
+
+	Category    ClientCategory     `gorm:"type:client_category;not null"`
+	Requirement PaymentRequirement `gorm:"type:payment_requirement;not null"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/client.go =====
+
+package models
+
+import "time"
+
+type Client struct {
+	ID           uint        `gorm:"primaryKey"`
+	BarbershopID *uint       `gorm:"index"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	Name  string `gorm:"size:100;not null"`
+	Phone string `gorm:"size:20"`
+	Email string `gorm:"size:100"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/client_metrics.go =====
+
+package models
+
+import "time"
+
+type ClientMetrics struct {
+	ClientID     uint `gorm:"primaryKey"`
+	BarbershopID uint `gorm:"primaryKey"`
+
+	TotalAppointments     int `gorm:"not null;default:0"`
+	CompletedAppointments int `gorm:"not null;default:0"`
+	CancelledAppointments int `gorm:"not null;default:0"`
+	NoShowAppointments    int `gorm:"not null;default:0"`
+
+	RescheduledAppointments     int `gorm:"not null;default:0"`
+	LateCancelledAppointments   int `gorm:"not null;default:0"`
+	LateRescheduledAppointments int `gorm:"not null;default:0"`
+
+	TotalSpent int64 `gorm:"type:bigint;not null;default:0"`
+
+	FirstAppointmentAt *time.Time
+	LastAppointmentAt  *time.Time
+	LastCompletedAt    *time.Time
+	LastCanceledAt     *time.Time
+
+	LastNoShowAt          *time.Time
+	LastLateCanceledAt    *time.Time
+	LastLateRescheduledAt *time.Time
+
+	Category       ClientCategory     `gorm:"type:client_category;not null;default:'new'"`
+	CategorySource CategorySourceType `gorm:"type:category_source_type;not null;default:'auto'"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/order.go =====
+
+package models
+
+import "time"
+
+type OrderType string
+
+const (
+	OrderTypeProduct OrderType = "product"
+)
+
+type OrderStatus string
+
+const (
+	OrderStatusPending   OrderStatus = "pending"
+	OrderStatusPaid      OrderStatus = "paid"
+	OrderStatusCancelled OrderStatus = "cancelled"
+)
+
+type Order struct {
+	ID uint `gorm:"primaryKey"`
+
+	BarbershopID uint        `gorm:"index;not null"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	ClientID *uint   `gorm:"index"`
+	Client   *Client `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	Type   OrderType   `gorm:"type:order_type;not null"`
+	Status OrderStatus `gorm:"type:order_status;not null;default:'pending'"`
+
+	SubtotalAmount int64 `gorm:"type:bigint;not null;default:0"`
+	DiscountAmount int64 `gorm:"type:bigint;not null;default:0"`
+	TotalAmount    int64 `gorm:"type:bigint;not null;default:0"`
+
+	Items []OrderItem `gorm:"foreignKey:OrderID"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/order_item.go =====
+
+package models
+
+type OrderItem struct {
+	ID uint `gorm:"primaryKey"`
+
+	OrderID uint `gorm:"index;not null"`
+
+	ProductID           uint   `gorm:"not null;index"`
+	ProductNameSnapshot string `gorm:"size:150;not null"`
+
+	Quantity  int   `gorm:"not null"`
+	UnitPrice int64 `gorm:"type:bigint;not null"`
+	LineTotal int64 `gorm:"type:bigint;not null"`
+}
+
+
+===== internal/models/payment.go =====
+
+package models
+
+import "time"
+
+type Payment struct {
+	ID            uint          `gorm:"primaryKey"`
+	BarbershopID  uint          `gorm:"index;not null"`
+	Barbershop    *Barbershop   `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	AppointmentID *uint         `gorm:"index"`
+	Appointment   *Appointment  `gorm:"constraint:OnDelete:CASCADE;"`
+	OrderID       *uint         `gorm:"index"`
+	Order         *Order        `gorm:"constraint:OnDelete:CASCADE;"`
+	TxID          *string       `gorm:"column:txid;size:100;uniqueIndex"`
+	QRCode        *string       `gorm:"type:text"`
+	Amount        int64         `gorm:"type:bigint;not null"`
+	Status        PaymentStatus `gorm:"type:payment_status;not null"`
+	PaidAt        *time.Time
+	ExpiresAt     *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+
+===== internal/models/pix_event.go =====
+
+package models
+
+import "time"
+
+type PixEvent struct {
+	ID        uint   `gorm:"primaryKey"`
+	TxID      string `gorm:"column:tx_id;size:100;not null"`
+	EventType string `gorm:"size:50;not null"`
+	CreatedAt time.Time
+}
+
+
+===== internal/models/product.go =====
+
+package models
+
+import "time"
+
+type Product struct {
+	ID uint `gorm:"primaryKey"`
+
+	BarbershopID uint        `gorm:"index;not null"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	Name          string `gorm:"size:100;not null"`
+	Description   string `gorm:"size:255"`
+	Category      string `gorm:"size:50"`
+	Price         int64  `gorm:"type:bigint;not null"`
+	Stock         int    `gorm:"not null;default:0"`
+	Active        bool   `gorm:"default:true"`
+	OnlineVisible bool   `gorm:"not null;default:false"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/service_suggested_product.go =====
+
+package models
+
+import "time"
+
+type ServiceSuggestedProduct struct {
+	ID uint `gorm:"primaryKey"`
+
+	BarbershopID uint        `gorm:"index;not null"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	ServiceID uint               `gorm:"index;not null"`
+	Service   *BarbershopService `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	ProductID uint     `gorm:"index;not null"`
+	Product   *Product `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+
+	Active bool `gorm:"not null;default:true"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/subscription.go =====
+
+package models
+
+import "time"
+
+type Plan struct {
+	ID                uint `gorm:"primaryKey"`
+	BarbershopID      uint
+	Name              string
+	MonthlyPriceCents int64
+	DurationDays      int
+	CutsIncluded      int
+	DiscountPercent   int
+	Active            bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type Subscription struct {
+	ID                 uint `gorm:"primaryKey"`
+	BarbershopID       uint
+	ClientID           uint
+	PlanID             uint
+	Status             string
+	CurrentPeriodStart time.Time
+	CurrentPeriodEnd   time.Time
+	CutsUsedInPeriod   int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+
+===== internal/models/types.go =====
+
+package models
+
+type UserRole string
+type AppointmentStatus string
+type AppointmentCreatedBy string
+type PaymentIntentType string
+type NoShowSourceType string
+type PaymentStatus string
+type ClientCategory string
+type CategorySourceType string
+type PaymentRequirement string
+
+
+===== internal/models/user.go =====
+
+package models
+
+import "time"
+
+type User struct {
+	ID           uint        `gorm:"primaryKey" json:"id"`
+	BarbershopID *uint       `json:"barbershop_id"`
+	Barbershop   *Barbershop `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	Name         string   `gorm:"size:100;not null"`
+	Email        string   `gorm:"size:100;uniqueIndex;not null"`
+	PasswordHash string   `gorm:"size:255;not null"`
+	Phone        string   `gorm:"size:20"`
+	Role         UserRole `gorm:"type:user_role;not null;default:'owner'"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+
+===== internal/models/working_hours.go =====
+
+package models
+
+import "time"
+
+type WorkingHours struct {
+	ID           uint `gorm:"primaryKey" json:"id"`
+	BarberID     uint `json:"barber_id"`
+	BarbershopID uint `json:"barbershop_id"`
+	Weekday      int  `json:"weekday"`
+
+	StartTime  string `json:"start_time"`
+	EndTime    string `json:"end_time"`
+	LunchStart string `json:"lunch_start"`
+	LunchEnd   string `json:"lunch_end"`
+	Active     bool   `json:"active"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+

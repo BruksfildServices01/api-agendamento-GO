@@ -1,0 +1,405 @@
+
+===== internal/middleware/auth.go =====
+
+package middleware
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/config"
+)
+
+const (
+	ContextUserID       = "userID"
+	ContextBarbershopID = "barbershopID"
+	ContextUserRole     = "userRole"
+)
+
+func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing_authorization_header"})
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_authorization_header"})
+			return
+		}
+
+		tokenString := parts[1]
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrTokenMalformed
+			}
+			return []byte(cfg.JWTSecret), nil
+		})
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_token_claims"})
+			return
+		}
+
+		userID, ok1 := claims["sub"].(float64)
+		barbershopID, ok2 := claims["barbershopId"].(float64)
+		role, _ := claims["role"].(string)
+		if !ok1 || !ok2 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_token_payload"})
+			return
+		}
+
+		c.Set(ContextUserID, uint(userID))
+		c.Set(ContextBarbershopID, uint(barbershopID))
+		c.Set(ContextUserRole, role)
+
+		c.Next()
+	}
+}
+
+
+===== internal/middleware/client_ip.go =====
+
+package middleware
+
+import (
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Em proxys (Railway/Vercel), Gin costuma respeitar X-Forwarded-For se você configurar TrustedProxies.
+// MVP: usamos c.ClientIP().
+func ClientIPKey(c *gin.Context) string {
+	ip := strings.TrimSpace(c.ClientIP())
+	if ip == "" {
+		ip = "unknown"
+	}
+	return ip
+}
+
+
+===== internal/middleware/cors.go =====
+
+package middleware
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
+
+	return func(c *gin.Context) {
+		origin := strings.TrimSpace(c.GetHeader("Origin"))
+		if origin != "" {
+			if _, ok := allowed[origin]; ok {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				c.Writer.Header().Set("Vary", "Origin")
+				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+				c.Writer.Header().Set(
+					"Access-Control-Allow-Headers",
+					"Content-Type, Authorization, X-Idempotency-Key",
+				)
+				c.Writer.Header().Set(
+					"Access-Control-Allow-Methods",
+					"GET, POST, PUT, PATCH, DELETE, OPTIONS",
+				)
+				// Optional: cache preflight response (seconds)
+				c.Writer.Header().Set("Access-Control-Max-Age", "600")
+			}
+		}
+
+		// Preflight request
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent) // 204
+			return
+		}
+
+		c.Next()
+	}
+}
+
+
+===== internal/middleware/max_body.go =====
+
+package middleware
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// MaxBodySize limita tamanho do body para evitar abuso/memória.
+func MaxBodySize(maxBytes int64) gin.HandlerFunc {
+	if maxBytes <= 0 {
+		maxBytes = 1 << 20 // 1MB default
+	}
+
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
+
+===== internal/middleware/pix_webhook_auth.go =====
+
+package middleware
+
+import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"log"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+//
+// ======================================================
+// PIX WEBHOOK AUTH MIDDLEWARE
+//
+// Responsabilidades:
+// - Validar assinatura HMAC
+// - Garantir integridade do payload
+// - Bloquear chamadas não autorizadas
+//
+// NÃO faz:
+// - parsing de payload
+// - lógica de pagamento
+// - side effects
+// ======================================================
+//
+
+// Header padrão (ajuste se o gateway usar outro nome)
+const PixSignatureHeader = "X-Pix-Signature"
+
+// Algoritmo explícito (evita downgrade attack)
+const PixSignatureAlgo = "sha256"
+
+// NewPixWebhookAuth cria middleware de autenticação do webhook PIX.
+//
+// secret:
+// - Deve vir de ENV (ex: PIX_WEBHOOK_SECRET)
+// - Nunca hardcode
+func NewPixWebhookAuth(secret string) gin.HandlerFunc {
+
+	log.Println("PIX SECRET LOADED:", secret)
+
+	if secret == "" {
+		// Fail fast em boot: webhook sem auth é falha crítica
+		panic("PIX_WEBHOOK_SECRET is required")
+	}
+
+	secretBytes := []byte(secret)
+
+	return func(c *gin.Context) {
+
+		// --------------------------------------------------
+		// 1️⃣ Extrair assinatura
+		// --------------------------------------------------
+		signature := c.GetHeader(PixSignatureHeader)
+		if signature == "" {
+			c.AbortWithStatusJSON(
+				http.StatusUnauthorized,
+				gin.H{"error": "missing_pix_signature"},
+			)
+			return
+		}
+
+		// --------------------------------------------------
+		// 2️⃣ Ler body (precisa ser reusável)
+		// --------------------------------------------------
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.AbortWithStatusJSON(
+				http.StatusBadRequest,
+				gin.H{"error": "invalid_body"},
+			)
+			return
+		}
+
+		// Reinjeta o body para o handler seguinte
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
+
+		// --------------------------------------------------
+		// 3️⃣ Calcular HMAC
+		// --------------------------------------------------
+		mac := hmac.New(sha256.New, secretBytes)
+		mac.Write(body)
+		expectedMAC := mac.Sum(nil)
+		expectedSignature := hex.EncodeToString(expectedMAC)
+
+		// --------------------------------------------------
+		// 4️⃣ Comparação em tempo constante
+		// --------------------------------------------------
+		if !secureCompare(signature, expectedSignature) {
+			c.AbortWithStatusJSON(
+				http.StatusUnauthorized,
+				gin.H{"error": "invalid_pix_signature"},
+			)
+			return
+		}
+
+		// --------------------------------------------------
+		// 5️⃣ OK — segue pipeline
+		// --------------------------------------------------
+		c.Next()
+	}
+}
+
+// secureCompare evita timing attacks
+func secureCompare(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// normaliza (evita bypass por case)
+	a = strings.ToLower(a)
+	b = strings.ToLower(b)
+
+	return hmac.Equal([]byte(a), []byte(b))
+}
+
+
+===== internal/middleware/ratelimit.go =====
+
+package middleware
+
+import (
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Token-bucket simples por chave (in-memory).
+// MVP: suficiente pra bloquear spam; em multi-replica, cada instância tem seu próprio bucket.
+type bucket struct {
+	tokens     float64
+	lastRefill time.Time
+}
+
+type limiter struct {
+	mu       sync.Mutex
+	buckets  map[string]*bucket
+	capacity float64
+	refillPS float64
+	ttl      time.Duration
+}
+
+func newLimiter(capacity int, refillPerSecond float64, ttl time.Duration) *limiter {
+	return &limiter{
+		buckets:  make(map[string]*bucket),
+		capacity: float64(capacity),
+		refillPS: refillPerSecond,
+		ttl:      ttl,
+	}
+}
+
+func (l *limiter) allow(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// cleanup leve (MVP)
+	for k, b := range l.buckets {
+		if now.Sub(b.lastRefill) > l.ttl {
+			delete(l.buckets, k)
+		}
+	}
+
+	b, ok := l.buckets[key]
+	if !ok {
+		b = &bucket{tokens: l.capacity, lastRefill: now}
+		l.buckets[key] = b
+	}
+
+	// refill
+	elapsed := now.Sub(b.lastRefill).Seconds()
+	if elapsed > 0 {
+		b.tokens += elapsed * l.refillPS
+		if b.tokens > l.capacity {
+			b.tokens = l.capacity
+		}
+		b.lastRefill = now
+	}
+
+	if b.tokens < 1 {
+		return false
+	}
+
+	b.tokens -= 1
+	return true
+}
+
+// RateLimitByKey cria um middleware de rate limit.
+func RateLimitByKey(
+	keyFn func(*gin.Context) string,
+	requestsPerMinute int,
+	burst int,
+) gin.HandlerFunc {
+
+	if requestsPerMinute <= 0 {
+		requestsPerMinute = 60
+	}
+	if burst <= 0 {
+		burst = 10
+	}
+
+	refillPS := float64(requestsPerMinute) / 60.0
+	l := newLimiter(burst, refillPS, 10*time.Minute)
+
+	return func(c *gin.Context) {
+		now := time.Now()
+		key := keyFn(c)
+
+		// chave vazia -> bloqueia (defensivo)
+		if strings.TrimSpace(key) == "" {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error_code": "rate_limited",
+				"message":    "Muitas requisições. Tente novamente em instantes.",
+			})
+			return
+		}
+
+		if !l.allow(key, now) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error_code": "rate_limited",
+				"message":    "Muitas requisições. Tente novamente em instantes.",
+			})
+			return
+		}
+
+		c.Next()
+	}
+}
+

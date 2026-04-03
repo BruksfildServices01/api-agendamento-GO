@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
@@ -15,17 +16,20 @@ type SubscriptionHandler struct {
 	activateUC *subscription.ActivateSubscription
 	cancelUC   *subscription.CancelSubscription
 	getUC      *subscription.GetActiveSubscription
+	audit      *audit.Dispatcher
 }
 
 func NewSubscriptionHandler(
 	activateUC *subscription.ActivateSubscription,
 	cancelUC *subscription.CancelSubscription,
 	getUC *subscription.GetActiveSubscription,
+	auditDispatcher *audit.Dispatcher,
 ) *SubscriptionHandler {
 	return &SubscriptionHandler{
 		activateUC: activateUC,
 		cancelUC:   cancelUC,
 		getUC:      getUC,
+		audit:      auditDispatcher,
 	}
 }
 
@@ -75,6 +79,16 @@ func (h *SubscriptionHandler) Activate(c *gin.Context) {
 		return
 	}
 
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		Action:       "subscription_activated",
+		Entity:       "client",
+		EntityID:     &req.ClientID,
+		Metadata: map[string]any{
+			"plan_id": req.PlanID,
+		},
+	})
+
 	c.Status(http.StatusCreated)
 }
 
@@ -92,7 +106,8 @@ func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 		return
 	}
 
-	err = h.cancelUC.Execute(c.Request.Context(), barbershopID, uint(clientID64))
+	clientID := uint(clientID64)
+	err = h.cancelUC.Execute(c.Request.Context(), barbershopID, clientID)
 	if err != nil {
 		switch {
 		case errors.Is(err, subscription.ErrInvalidInput):
@@ -106,6 +121,13 @@ func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 		}
 		return
 	}
+
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		Action:       "subscription_cancelled",
+		Entity:       "client",
+		EntityID:     &clientID,
+	})
 
 	c.Status(http.StatusNoContent)
 }

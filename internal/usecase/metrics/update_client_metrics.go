@@ -34,10 +34,13 @@ type UpdateClientMetricsInput struct {
 type EventType string
 
 const (
-	EventAppointmentCreated   EventType = "appointment_created"
-	EventAppointmentCompleted EventType = "appointment_completed"
-	EventAppointmentCanceled  EventType = "appointment_canceled"
-	EventAppointmentNoShow    EventType = "appointment_no_show"
+	EventAppointmentCreated         EventType = "appointment_created"
+	EventAppointmentCompleted       EventType = "appointment_completed"
+	EventAppointmentCanceled        EventType = "appointment_canceled"
+	EventAppointmentNoShow          EventType = "appointment_no_show"
+	EventAppointmentRescheduled     EventType = "appointment_rescheduled"
+	EventAppointmentLateCanceled    EventType = "appointment_late_canceled"
+	EventAppointmentLateRescheduled EventType = "appointment_late_rescheduled"
 )
 
 // --------------------------------

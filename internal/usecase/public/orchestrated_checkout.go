@@ -3,14 +3,19 @@ package public
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
+	"gorm.io/gorm"
+
 	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
+	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucAppointment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
 	ucCart "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
+	ucTicket "github.com/BruksfildServices01/barber-scheduler/internal/usecase/ticket"
 )
 
 type OrchestratedCheckout struct {
@@ -18,6 +23,9 @@ type OrchestratedCheckout struct {
 	getCartUC           *ucCart.GetCart
 	checkoutCartUC      *ucCart.CheckoutCart
 	serviceRepo         domainService.Repository
+	generateTicketUC    *ucTicket.GenerateTicket
+	db                  *gorm.DB
+	apptNotifier        domainNotification.AppointmentNotifier
 }
 
 func NewOrchestratedCheckout(
@@ -25,12 +33,18 @@ func NewOrchestratedCheckout(
 	getCartUC *ucCart.GetCart,
 	checkoutCartUC *ucCart.CheckoutCart,
 	serviceRepo domainService.Repository,
+	generateTicketUC *ucTicket.GenerateTicket,
+	db *gorm.DB,
+	apptNotifier domainNotification.AppointmentNotifier,
 ) *OrchestratedCheckout {
 	return &OrchestratedCheckout{
 		createAppointmentUC: createAppointmentUC,
 		getCartUC:           getCartUC,
 		checkoutCartUC:      checkoutCartUC,
 		serviceRepo:         serviceRepo,
+		generateTicketUC:    generateTicketUC,
+		db:                  db,
+		apptNotifier:        apptNotifier,
 	}
 }
 
@@ -65,6 +79,51 @@ func (uc *OrchestratedCheckout) Execute(
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	var ticketToken string
+	if uc.generateTicketUC != nil {
+		ticketToken, err = uc.generateTicketUC.Execute(ctx, ucTicket.GenerateTicketInput{
+			AppointmentID: appointment.ID,
+			BarbershopID:  barbershopID,
+			StartTime:     appointment.StartTime,
+		})
+		if err != nil {
+			log.Printf("[OrchestratedCheckout] failed to generate ticket for appointment %d: %v", appointment.ID, err)
+			ticketToken = ""
+		}
+	}
+
+	// Fire async appointment confirmation notification
+	if uc.apptNotifier != nil && input.ClientEmail != "" {
+		type bsRow struct {
+			Name     string `gorm:"column:name"`
+			Phone    string `gorm:"column:phone"`
+			Timezone string `gorm:"column:timezone"`
+		}
+		var bs bsRow
+		if dbErr := uc.db.WithContext(ctx).
+			Raw("SELECT name, phone, timezone FROM barbershops WHERE id = ?", barbershopID).
+			Scan(&bs).Error; dbErr != nil {
+			log.Printf("[OrchestratedCheckout] failed to query barbershop for notification: %v", dbErr)
+		} else {
+			ticketURL := ""
+			if ticketToken != "" {
+				ticketURL = "/api/public/ticket/" + ticketToken
+			}
+			notifyInput := domainNotification.AppointmentConfirmedInput{
+				ClientName:      input.ClientName,
+				ClientEmail:     input.ClientEmail,
+				BarbershopName:  bs.Name,
+				BarbershopPhone: bs.Phone,
+				ServiceName:     service.Name,
+				StartTime:       appointment.StartTime,
+				EndTime:         appointment.EndTime,
+				Timezone:        bs.Timezone,
+				TicketURL:       ticketURL,
+			}
+			_ = uc.apptNotifier.NotifyConfirmed(ctx, notifyInput)
+		}
 	}
 
 	var orderDTO *dto.PublicOrchestratedCheckoutOrderDTO
@@ -146,6 +205,10 @@ func (uc *OrchestratedCheckout) Execute(
 		NextStep: buildNextStep(appointmentPaymentRequired, orderPaymentRequired),
 		NextURLs: dto.PublicOrchestratedCheckoutURLsDTO{},
 		Warning:  warning,
+	}
+
+	if ticketToken != "" {
+		response.NextURLs.TicketURL = "/api/public/ticket/" + ticketToken
 	}
 
 	return response, nil

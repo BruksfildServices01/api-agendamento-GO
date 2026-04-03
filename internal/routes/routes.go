@@ -28,11 +28,15 @@ import (
 	ucProduct "github.com/BruksfildServices01/barber-scheduler/internal/usecase/product"
 	ucPublic "github.com/BruksfildServices01/barber-scheduler/internal/usecase/public"
 	ucService "github.com/BruksfildServices01/barber-scheduler/internal/usecase/service"
+	ucTicket "github.com/BruksfildServices01/barber-scheduler/internal/usecase/ticket"
 	ucServiceSuggestion "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/crm"
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/dashboard"
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/daypanel"
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/financial"
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/impact"
 )
 
 func RegisterRoutes(
@@ -54,6 +58,8 @@ func RegisterRoutes(
 	serviceRepo := infraRepo.NewServiceGormRepository(db)
 	serviceSuggestionRepo := infraRepo.NewServiceSuggestionGormRepository(db)
 	subscriptionRepo := infraRepo.NewSubscriptionGormRepository(db)
+
+	ticketRepo := infraRepo.NewTicketGormRepository(db)
 
 	idemStore := idempotency.NewGormStore(db)
 	cartMemoryStore := cartStore.NewPostgresStore(db)
@@ -88,6 +94,13 @@ func RegisterRoutes(
 		notifier = notification.NewEmailNotifier(cfg)
 	} else {
 		notifier = notification.NewNoopNotifier()
+	}
+
+	var apptNotifier domainNotification.AppointmentNotifier
+	if cfg.EmailEnabled {
+		apptNotifier = notification.NewAsyncAppointmentNotifier(notification.NewEmailNotifier(cfg))
+	} else {
+		apptNotifier = &notification.NoopAppointmentNotifier{}
 	}
 
 	// ======================================================
@@ -233,6 +246,14 @@ func RegisterRoutes(
 	getOperationalSummaryUC := ucAppointment.NewGetOperationalSummary(appointmentRepo)
 
 	// ======================================================
+	// TICKET USE CASES
+	// ======================================================
+	generateTicketUC := ucTicket.NewGenerateTicket(ticketRepo)
+	viewTicketUC := ucTicket.NewViewTicket(db)
+	cancelViaTicketUC := ucTicket.NewCancelViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher)
+	rescheduleViaTicketUC := ucTicket.NewRescheduleViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher)
+
+	// ======================================================
 	// PUBLIC ORCHESTRATION USE CASES
 	// ======================================================
 	orchestratedCheckoutUC := ucPublic.NewOrchestratedCheckout(
@@ -240,6 +261,9 @@ func RegisterRoutes(
 		getCartUC,
 		checkoutCartUC,
 		serviceRepo,
+		generateTicketUC,
+		db,
+		apptNotifier,
 	)
 
 	// ======================================================
@@ -309,7 +333,7 @@ func RegisterRoutes(
 		updateProductUC,
 	)
 
-	workingHoursHandler := handlers.NewWorkingHoursHandler(db)
+	workingHoursHandler := handlers.NewWorkingHoursHandler(db, auditDispatcher)
 	auditLogsHandler := handlers.NewAuditLogsHandler(db)
 
 	clientHandler := handlers.NewClientHandler(
@@ -336,6 +360,7 @@ func RegisterRoutes(
 	paymentPolicyHandler := handlers.NewPaymentPolicyHandler(
 		getPaymentPoliciesUC,
 		updatePaymentPoliciesUC,
+		auditDispatcher,
 	)
 
 	appointmentHandler := handlers.NewAppointmentHandler(
@@ -367,6 +392,8 @@ func RegisterRoutes(
 		publicHandler,
 		orchestratedCheckoutUC,
 	)
+
+	publicTicketHandler := handlers.NewPublicTicketHandler(viewTicketUC, cancelViaTicketUC, rescheduleViaTicketUC)
 
 	publicPaymentHandler := handlers.NewPublicPaymentHandler(
 		db,
@@ -403,6 +430,15 @@ func RegisterRoutes(
 	crmQuery := crm.New(db)
 	crmHandler := handlers.NewCRMHandler(crmQuery)
 
+	dashboardQuery := dashboard.New(db)
+	dashboardHandler := handlers.NewDashboardHandler(dashboardQuery)
+
+	financialQuery := financial.New(db)
+	financialHandler := handlers.NewFinancialHandler(financialQuery)
+
+	impactQuery := impact.New(db)
+	impactHandler := handlers.NewImpactHandler(impactQuery)
+
 	adjustClosureUC := ucAppointment.NewAdjustClosure(db, auditDispatcher)
 	closureAdjustmentHandler := handlers.NewClosureAdjustmentHandler(adjustClosureUC)
 
@@ -410,6 +446,7 @@ func RegisterRoutes(
 		activateSubscriptionUC,
 		cancelSubscriptionUC,
 		getActiveSubscriptionUC,
+		auditDispatcher,
 	)
 
 	// ======================================================
@@ -446,6 +483,10 @@ func RegisterRoutes(
 			}, 30, 10),
 			orderPaymentHandler.CreatePublic,
 		)
+
+		publicAPI.GET("/ticket/:token", publicTicketHandler.View)
+		publicAPI.DELETE("/ticket/:token", publicTicketHandler.Cancel)
+		publicAPI.PATCH("/ticket/:token", publicTicketHandler.Reschedule)
 	}
 
 	api.POST(
@@ -513,7 +554,10 @@ func RegisterRoutes(
 		secured.POST("/me/plans", planHandler.Create)
 		secured.GET("/me/plans", planHandler.List)
 
+		secured.GET("/me/dashboard", dashboardHandler.Get)
+		secured.GET("/me/financial", financialHandler.Get)
 		secured.GET("/me/day-panel", dayPanelHandler.Get)
+		secured.GET("/me/impact", impactHandler.Get)
 
 		secured.POST("/me/subscriptions", subscriptionHandler.Activate)
 		secured.DELETE("/me/subscriptions/:clientID", subscriptionHandler.Cancel)

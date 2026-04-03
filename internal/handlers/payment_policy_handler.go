@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/paymentconfig"
 )
@@ -12,15 +13,18 @@ import (
 type PaymentPolicyHandler struct {
 	getUC    *paymentconfig.GetPaymentPolicies
 	updateUC *paymentconfig.UpdatePaymentPolicies
+	audit    *audit.Dispatcher
 }
 
 func NewPaymentPolicyHandler(
 	getUC *paymentconfig.GetPaymentPolicies,
 	updateUC *paymentconfig.UpdatePaymentPolicies,
+	auditDispatcher *audit.Dispatcher,
 ) *PaymentPolicyHandler {
 	return &PaymentPolicyHandler{
 		getUC:    getUC,
 		updateUC: updateUC,
+		audit:    auditDispatcher,
 	}
 }
 
@@ -49,6 +53,15 @@ func (h *PaymentPolicyHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	userID := c.MustGet(middleware.ContextUserID).(uint)
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		UserID:       &userID,
+		Action:       "payment_policy_updated",
+		Entity:       "barbershop",
+		EntityID:     &barbershopID,
+	})
 
 	c.Status(http.StatusNoContent)
 }

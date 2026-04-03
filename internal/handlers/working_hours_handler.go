@@ -6,16 +6,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
 type WorkingHoursHandler struct {
-	db *gorm.DB
+	db    *gorm.DB
+	audit *audit.Dispatcher
 }
 
-func NewWorkingHoursHandler(db *gorm.DB) *WorkingHoursHandler {
-	return &WorkingHoursHandler{db: db}
+func NewWorkingHoursHandler(db *gorm.DB, auditDispatcher *audit.Dispatcher) *WorkingHoursHandler {
+	return &WorkingHoursHandler{db: db, audit: auditDispatcher}
 }
 
 // Estrutura para configurar os horários de trabalho
@@ -96,6 +98,14 @@ func (h *WorkingHoursHandler) Update(c *gin.Context) {
 			return
 		}
 	}
+
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		UserID:       &barberID,
+		Action:       "working_hours_updated",
+		Entity:       "barber",
+		EntityID:     &barberID,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

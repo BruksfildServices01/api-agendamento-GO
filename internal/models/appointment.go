@@ -59,7 +59,8 @@ type Appointment struct {
 	CreatedBy     AppointmentCreatedBy `gorm:"type:appointment_created_by;not null;default:'client'"`
 	PaymentIntent PaymentIntentType    `gorm:"type:payment_intent_type;not null;default:'pay_later'"`
 
-	Notes string `gorm:"size:255"`
+	Notes          string `gorm:"size:255"`
+	RescheduleCount int    `gorm:"not null;default:0"`
 
 	CancelledAt  *time.Time
 	CompletedAt  *time.Time

@@ -322,6 +322,7 @@ CREATE TABLE appointments (
   completed_at TIMESTAMPTZ,
   no_show_at TIMESTAMPTZ,
   no_show_source no_show_source_type,
+  reschedule_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -645,6 +646,26 @@ ON appointment_closures(barbershop_id);
 CREATE TRIGGER trg_appointment_closures_updated
 BEFORE UPDATE ON appointment_closures
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- ============================================================
+-- APPOINTMENT TICKETS (Sprint 10)
+-- ============================================================
+
+CREATE TABLE appointment_tickets (
+  id             BIGSERIAL    PRIMARY KEY,
+  appointment_id BIGINT       NOT NULL UNIQUE REFERENCES appointments(id) ON DELETE CASCADE,
+  barbershop_id  BIGINT       NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  token          VARCHAR(64)  NOT NULL UNIQUE,
+  expires_at     TIMESTAMPTZ  NOT NULL,
+  created_at     TIMESTAMPTZ  DEFAULT now()
+);
+
+CREATE INDEX idx_appointment_tickets_token ON appointment_tickets(token);
+CREATE INDEX idx_appointment_tickets_barbershop ON appointment_tickets(barbershop_id);
+
+COMMENT ON TABLE appointment_tickets IS
+'Public self-service tokens for clients to view, cancel or reschedule their own appointments.';
 
 -- ============================================================
 -- CLOSURE ADJUSTMENTS (Sprint 7)

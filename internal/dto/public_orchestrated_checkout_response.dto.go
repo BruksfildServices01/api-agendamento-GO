@@ -34,6 +34,7 @@ type PublicOrchestratedCheckoutNextStepDTO struct {
 type PublicOrchestratedCheckoutURLsDTO struct {
 	AppointmentPixURL string `json:"appointment_pix_url,omitempty"`
 	OrderPixURL       string `json:"order_pix_url,omitempty"`
+	TicketURL         string `json:"ticket_url,omitempty"`
 }
 
 type PublicOrchestratedCheckoutPaymentsDTO struct {

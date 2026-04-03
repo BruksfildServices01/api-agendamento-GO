@@ -30,6 +30,8 @@ import (
 	ucService "github.com/BruksfildServices01/barber-scheduler/internal/usecase/service"
 	ucServiceSuggestion "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/daypanel"
 )
 
 func RegisterRoutes(
@@ -53,7 +55,7 @@ func RegisterRoutes(
 	subscriptionRepo := infraRepo.NewSubscriptionGormRepository(db)
 
 	idemStore := idempotency.NewGormStore(db)
-	cartMemoryStore := cartStore.NewMemoryStore()
+	cartMemoryStore := cartStore.NewPostgresStore(db)
 
 	// ======================================================
 	// AUDIT
@@ -64,7 +66,18 @@ func RegisterRoutes(
 	// ======================================================
 	// PIX
 	// ======================================================
+	// TODO: replace MockPixGateway with a real PIX integration (BB/Efí/etc)
+	// before going live. The mock generates fake txid/qrcode for development only.
 	pixGateway := pix.NewMockPixGateway()
+
+	// ======================================================
+	// RATE LIMITER
+	// ======================================================
+	// WARNING: this rate limiter is in-memory and per-instance.
+	// In a multi-replica deployment each replica maintains its own bucket,
+	// so the effective limit is (replicas × configured limit).
+	// Replace with a Redis-backed limiter before scaling horizontally.
+	log.Println("[WARN] rate limiter is in-memory — not suitable for multi-instance deployments")
 
 	// ======================================================
 	// NOTIFICATION
@@ -381,6 +394,9 @@ func RegisterRoutes(
 	)
 	planHandler := handlers.NewPlanHandler(createPlanUC, listPlansUC)
 
+	dayPanelQuery := daypanel.New(db)
+	dayPanelHandler := handlers.NewDayPanelHandler(dayPanelQuery)
+
 	subscriptionHandler := handlers.NewSubscriptionHandler(
 		activateSubscriptionUC,
 		cancelSubscriptionUC,
@@ -485,6 +501,8 @@ func RegisterRoutes(
 
 		secured.POST("/me/plans", planHandler.Create)
 		secured.GET("/me/plans", planHandler.List)
+
+		secured.GET("/me/day-panel", dayPanelHandler.Get)
 
 		secured.POST("/me/subscriptions", subscriptionHandler.Activate)
 		secured.DELETE("/me/subscriptions/:clientID", subscriptionHandler.Cancel)

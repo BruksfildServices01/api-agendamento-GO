@@ -26,8 +26,9 @@ type ClientMetrics struct {
 	LastLateCanceledAt    *time.Time
 	LastLateRescheduledAt *time.Time
 
-	Category       ClientCategory     `gorm:"type:client_category;not null;default:'new'"`
-	CategorySource CategorySourceType `gorm:"type:category_source_type;not null;default:'auto'"`
+	Category                 ClientCategory     `gorm:"type:client_category;not null;default:'new'"`
+	CategorySource           CategorySourceType `gorm:"type:category_source_type;not null;default:'auto'"`
+	ManualCategoryExpiresAt  *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

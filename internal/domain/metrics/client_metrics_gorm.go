@@ -33,8 +33,9 @@ type ClientMetrics struct {
 	LastLateCanceledAt    *time.Time
 	LastLateRescheduledAt *time.Time
 
-	Category       ClientCategory
-	CategorySource CategorySource
+	Category                ClientCategory
+	CategorySource          CategorySource
+	ManualCategoryExpiresAt *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -101,14 +102,21 @@ func (m *ClientMetrics) OnLateCancellation(at time.Time) {
 	m.recalculateCategory()
 }
 
-func (m *ClientMetrics) SetManualCategory(category ClientCategory) {
+func (m *ClientMetrics) SetManualCategory(category ClientCategory, expiresAt *time.Time) {
 	m.Category = category
 	m.CategorySource = CategorySourceManual
+	m.ManualCategoryExpiresAt = expiresAt
 }
 
 func (m *ClientMetrics) recalculateCategory() {
 	if m.CategorySource == CategorySourceManual {
-		return
+		// If the manual override has an expiration and it has passed, revert to auto.
+		if m.ManualCategoryExpiresAt != nil && time.Now().UTC().After(*m.ManualCategoryExpiresAt) {
+			m.CategorySource = CategorySourceAuto
+			m.ManualCategoryExpiresAt = nil
+		} else {
+			return
+		}
 	}
 
 	m.Category = Classify(m)

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,7 +23,8 @@ func NewClientCategoryOverrideHandler(
 }
 
 type setClientCategoryRequest struct {
-	Category domainMetrics.ClientCategory `json:"category" binding:"required"`
+	Category     domainMetrics.ClientCategory `json:"category" binding:"required"`
+	ExpiresInDays *int                        `json:"expires_in_days"` // nil = permanent
 }
 
 func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
@@ -46,12 +48,19 @@ func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var expiresAt *time.Time
+	if req.ExpiresInDays != nil && *req.ExpiresInDays > 0 {
+		t := time.Now().UTC().AddDate(0, 0, *req.ExpiresInDays)
+		expiresAt = &t
+	}
+
 	err = h.uc.Execute(
 		c.Request.Context(),
 		ucMetrics.SetClientCategoryInput{
 			BarbershopID: barbershopID,
 			ClientID:     uint(clientID),
 			Category:     req.Category,
+			ExpiresAt:    expiresAt,
 		},
 	)
 	if err != nil {

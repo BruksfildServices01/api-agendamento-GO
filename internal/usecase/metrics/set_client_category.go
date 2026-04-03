@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"errors"
+	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
 )
@@ -21,6 +22,7 @@ type SetClientCategoryInput struct {
 	BarbershopID uint
 	ClientID     uint
 	Category     domain.ClientCategory
+	ExpiresAt    *time.Time // nil = permanent override
 }
 
 func (uc *SetClientCategory) Execute(
@@ -40,12 +42,13 @@ func (uc *SetClientCategory) Execute(
 	default:
 		return errors.New("invalid_category")
 	}
+
 	m, err := uc.repo.GetOrCreate(ctx, input.BarbershopID, input.ClientID)
 	if err != nil {
 		return err
 	}
 
-	m.SetManualCategory(input.Category)
+	m.SetManualCategory(input.Category, input.ExpiresAt)
 
 	return uc.repo.Save(ctx, m)
 }

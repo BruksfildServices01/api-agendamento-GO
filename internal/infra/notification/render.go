@@ -1,39 +1,47 @@
 package notification
 
 import (
-	"os"
-	"strings"
+	"bytes"
+	_ "embed"
+	"html/template"
 	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 )
 
+//go:embed templates/payment_confirmed.html
+var paymentConfirmedRaw string
+
+var paymentConfirmedTmpl = template.Must(
+	template.New("payment_confirmed").Parse(paymentConfirmedRaw),
+)
+
+type paymentConfirmedData struct {
+	ClientName       string
+	AppointmentDate  string
+	BarbershopName   string
+	BarbershopAddress string
+	BarbershopPhone  string
+}
+
 func renderPaymentConfirmed(input domain.PaymentConfirmedInput) (string, error) {
-
-	raw, err := os.ReadFile(
-		"internal/infra/notification/templates/payment_confirmed.html",
-	)
-	if err != nil {
-		return "", err
-	}
-
-	html := string(raw)
-
-	// timezone-safe
 	loc, err := time.LoadLocation(input.Timezone)
 	if err != nil {
 		loc = time.UTC
 	}
 
-	start := input.StartTime.
-		In(loc).
-		Format("02/01/2006 às 15:04")
+	data := paymentConfirmedData{
+		ClientName:        input.ClientName,
+		AppointmentDate:   input.StartTime.In(loc).Format("02/01/2006 às 15:04"),
+		BarbershopName:    input.BarbershopName,
+		BarbershopAddress: input.BarbershopAddress,
+		BarbershopPhone:   input.BarbershopPhone,
+	}
 
-	html = strings.ReplaceAll(html, "{{ClientName}}", input.ClientName)
-	html = strings.ReplaceAll(html, "{{AppointmentDate}}", start)
-	html = strings.ReplaceAll(html, "{{BarbershopName}}", input.BarbershopName)
-	html = strings.ReplaceAll(html, "{{BarbershopAddress}}", input.BarbershopAddress)
-	html = strings.ReplaceAll(html, "{{BarbershopPhone}}", input.BarbershopPhone)
+	var buf bytes.Buffer
+	if err := paymentConfirmedTmpl.Execute(&buf, data); err != nil {
+		return "", err
+	}
 
-	return html, nil
+	return buf.String(), nil
 }

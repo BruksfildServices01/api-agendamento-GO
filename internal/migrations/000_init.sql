@@ -203,6 +203,7 @@ CREATE TABLE client_metrics (
 
   category client_category NOT NULL DEFAULT 'new',
   category_source category_source_type NOT NULL DEFAULT 'auto',
+  manual_category_expires_at TIMESTAMPTZ DEFAULT NULL,
 
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
@@ -212,6 +213,10 @@ CREATE TABLE client_metrics (
 
 COMMENT ON COLUMN client_metrics.total_spent IS
 'Money stored in CENTS (int64).';
+
+COMMENT ON COLUMN client_metrics.manual_category_expires_at IS
+'When set and category_source is ''manual'', the override expires at this timestamp
+and auto-classification resumes on the next metric update. NULL = permanent override.';
 
 -- ============================================================
 -- BARBER SERVICES
@@ -632,6 +637,31 @@ ON appointment_closures(barbershop_id);
 
 CREATE TRIGGER trg_appointment_closures_updated
 BEFORE UPDATE ON appointment_closures
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- CARTS
+-- ============================================================
+-- Persistent cart store. Replaces the in-memory store to support
+-- multi-instance deployments. Each row is one active cart session
+-- per tenant. Items are stored as JSONB. Rows expire after 24h.
+
+CREATE TABLE carts (
+  key           VARCHAR(128) NOT NULL,
+  barbershop_id BIGINT       NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  items         JSONB        NOT NULL DEFAULT '[]',
+  expires_at    TIMESTAMPTZ  NOT NULL DEFAULT now() + INTERVAL '24 hours',
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+  PRIMARY KEY (key, barbershop_id)
+);
+
+CREATE INDEX idx_carts_barbershop ON carts(barbershop_id);
+CREATE INDEX idx_carts_expires_at ON carts(expires_at);
+
+CREATE TRIGGER trg_carts_updated
+BEFORE UPDATE ON carts
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;

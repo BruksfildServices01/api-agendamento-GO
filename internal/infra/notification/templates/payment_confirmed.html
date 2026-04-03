@@ -13,7 +13,7 @@
             <td>
               <h2>Pagamento confirmado ✅</h2>
 
-              <p>Olá <strong>{{ClientName}}</strong>,</p>
+              <p>Olá <strong>{{.ClientName}}</strong>,</p>
 
               <p>
                 Seu pagamento foi confirmado com sucesso e seu horário está oficialmente reservado.
@@ -21,18 +21,18 @@
 
               <p>
                 <strong>📅 Data e horário</strong><br />
-                {{AppointmentDate}}
+                {{.AppointmentDate}}
               </p>
 
               <p>
                 <strong>💈 Barbearia</strong><br />
-                {{BarbershopName}}<br />
-                {{BarbershopAddress}}<br />
-                📞 {{BarbershopPhone}}
+                {{.BarbershopName}}<br />
+                {{.BarbershopAddress}}<br />
+                📞 {{.BarbershopPhone}}
               </p>
 
               <p>
-                Em anexo, você receberá um convite de agenda (<strong>.ics</strong>).  
+                Em anexo, você receberá um convite de agenda (<strong>.ics</strong>).
                 Ao abrir o arquivo, o compromisso será adicionado ao seu Google Agenda,
                 Apple Calendar ou Outlook.
               </p>

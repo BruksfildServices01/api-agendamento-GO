@@ -339,6 +339,55 @@ func isActiveSubscriptionUniqueViolation(err error) bool {
 	return strings.Contains(msg, "uq_subscriptions_one_active_per_client_shop")
 }
 
+func (r *SubscriptionGormRepository) DeletePlan(
+	ctx context.Context,
+	barbershopID uint,
+	planID uint,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Remove assinaturas não-ativas que referenciam este plano (canceladas/expiradas)
+		if err := tx.
+			Where("plan_id = ? AND status != ?", planID, "active").
+			Delete(&models.Subscription{}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Exec(
+			`DELETE FROM plan_services WHERE plan_id = ?`, planID,
+		).Error; err != nil {
+			return err
+		}
+
+		return tx.
+			Where("id = ? AND barbershop_id = ?", planID, barbershopID).
+			Delete(&models.Plan{}).Error
+	})
+}
+
+func (r *SubscriptionGormRepository) CountActiveSubscriptionsByPlan(
+	ctx context.Context,
+	planID uint,
+) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where("plan_id = ? AND status = ?", planID, "active").
+		Count(&count).Error
+	return count, err
+}
+
+func (r *SubscriptionGormRepository) CountActiveSubscribersByPlan(
+	ctx context.Context,
+	planID uint,
+) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where("plan_id = ? AND status = ?", planID, "active").
+		Count(&count).Error
+	return count, err
+}
+
 func (r *SubscriptionGormRepository) CountServicesByBarbershop(
 	ctx context.Context,
 	barbershopID uint,

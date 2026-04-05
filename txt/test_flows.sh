@@ -284,7 +284,7 @@ if [[ -n "$SVC_ID" ]]; then
   # Quarta-feira da próxima semana
   PUB_DATE="$PUB_DATE_BASE"
   PUB_APPT=$(req POST "/public/$SLUG/appointments" \
-    '{"product_id":'"$SVC_ID"',"date":"'"$PUB_DATE"'","time":"'"$T_PUB"'","client_name":"CI PubAppt","client_phone":"11999990001","client_email":"'"$CLIENT_EMAIL"'"}')
+    '{"service_id":'"$SVC_ID"',"date":"'"$PUB_DATE"'","time":"'"$T_PUB"'","client_name":"CI PubAppt","client_phone":"11999990001","client_email":"'"$CLIENT_EMAIL"'"}')
   PUB_APPT_ID=$(echo "$PUB_APPT" | grep -o '"ID":[0-9]*' | head -1 | grep -o '[0-9]*$')
   assert "POST /public/:slug/appointments cria agendamento" '"ID":' "$PUB_APPT"
 else

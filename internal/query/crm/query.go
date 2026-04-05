@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/shared"
 )
 
 var ErrClientNotFound = errors.New("client not found")
@@ -123,7 +124,7 @@ func (q *Query) Execute(ctx context.Context, barbershopID, clientID uint) (*Resp
 		JOIN plans p ON p.id = s.plan_id
 		WHERE s.barbershop_id = ?
 		  AND s.client_id = ?
-		  AND s.status = 'active'
+		  AND `+shared.ActiveSubscriptionSQL+`
 		LIMIT 1
 	`, barbershopID, clientID).Scan(&subRow).Error
 	if err == nil && subRow.PlanID != 0 {
@@ -163,12 +164,12 @@ func (q *Query) Execute(ctx context.Context, barbershopID, clientID uint) (*Resp
 	flags := FlagsDTO{
 		Premium:   sub != nil,
 		Reliable:  attendanceRate >= 0.9 && metricsDTO.TotalAppointments >= 5,
-		Attention: metricsDTO.TotalAppointments > 0 && attendanceRate < 0.7,
+		Attention: metricsDTO.NoShow >= 2 || (metricsDTO.TotalAppointments >= 5 && attendanceRate < 0.7),
 		AtRisk:    category == domainMetrics.CategoryAtRisk,
 	}
 
 	// 7. Derive booking policy
-	policy := resolvePolicy(category, flags)
+	policy := resolvePolicy(metricsDTO)
 
 	return &ResponseDTO{
 		Identity: IdentityDTO{
@@ -189,19 +190,16 @@ func (q *Query) Execute(ctx context.Context, barbershopID, clientID uint) (*Resp
 }
 
 // resolvePolicy derives the operational booking policy for the client.
-func resolvePolicy(category domainMetrics.ClientCategory, flags FlagsDTO) PolicyDTO {
-	switch {
-	case category == domainMetrics.CategoryAtRisk:
+// Payment upfront is only required when there is concrete no-show evidence,
+// not for inactivity or cancellations.
+func resolvePolicy(metrics MetricsDTO) PolicyDTO {
+	hasHighNoShowRate := metrics.TotalAppointments >= 5 &&
+		float64(metrics.NoShow)/float64(metrics.TotalAppointments) >= 0.20
+	if metrics.NoShow >= 2 || hasHighNoShowRate {
 		return PolicyDTO{
 			RequiresPaymentUpfront: true,
-			Reason:                 "at_risk_client",
+			Reason:                 "no_show",
 		}
-	case flags.Attention:
-		return PolicyDTO{
-			RequiresPaymentUpfront: true,
-			Reason:                 "low_attendance_rate",
-		}
-	default:
-		return PolicyDTO{RequiresPaymentUpfront: false}
 	}
+	return PolicyDTO{RequiresPaymentUpfront: false}
 }

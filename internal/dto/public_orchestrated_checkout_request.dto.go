@@ -1,7 +1,6 @@
 package dto
 
 type PublicOrchestratedCheckoutRequestDTO struct {
-	BarberID       uint    `json:"barber_id" binding:"required"`
 	ServiceID      uint    `json:"service_id" binding:"required"`
 	Date           string  `json:"date" binding:"required"` // YYYY-MM-DD
 	Time           string  `json:"time" binding:"required"` // HH:mm

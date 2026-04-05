@@ -3,20 +3,31 @@ package notification
 import (
 	"context"
 
-	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 )
 
+// NoopNotifier implements both domain.Notifier and domain.AppointmentNotifier.
+// All methods are no-ops — use it when email is disabled.
 type NoopNotifier struct{}
 
-func NewNoopNotifier() *NoopNotifier {
-	return &NoopNotifier{}
+func NewNoopNotifier() *NoopNotifier { return &NoopNotifier{} }
+
+// --- domain.Notifier ---
+
+func (n *NoopNotifier) Notify(_ context.Context, _ domain.PaymentConfirmedInput) error {
+	return nil
 }
 
-// Notify implementa domain/notification.Notifier
-func (n *NoopNotifier) Notify(
-	ctx context.Context,
-	input domainNotification.PaymentConfirmedInput,
-) error {
-	// Sprint 6: não faz nada
+// --- domain.AppointmentNotifier ---
+
+func (n *NoopNotifier) NotifyConfirmed(_ context.Context, _ domain.AppointmentConfirmedInput) error {
+	return nil
+}
+
+func (n *NoopNotifier) NotifyCancelled(_ context.Context, _ domain.AppointmentCancelledInput) error {
+	return nil
+}
+
+func (n *NoopNotifier) NotifyRescheduled(_ context.Context, _ domain.AppointmentRescheduledInput) error {
 	return nil
 }

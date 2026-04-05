@@ -25,7 +25,7 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 				c.Writer.Header().Set(
 					"Access-Control-Allow-Headers",
-					"Content-Type, Authorization, X-Idempotency-Key",
+					"Content-Type, Authorization, X-Idempotency-Key, X-Cart-Key",
 				)
 				c.Writer.Header().Set(
 					"Access-Control-Allow-Methods",

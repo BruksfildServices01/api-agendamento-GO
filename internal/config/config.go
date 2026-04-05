@@ -14,6 +14,7 @@ type Config struct {
 	DBUrl      string
 	JWTSecret  string
 	ServerPort string
+	AppURL     string // frontend base URL, e.g. https://app.seudominio.com
 
 	// =========================
 	// CORS
@@ -37,6 +38,21 @@ type Config struct {
 	// PIX
 	// =========================
 	PixWebhookSecret string
+
+	// =========================
+	// REDIS (rate limiter distribuído)
+	// =========================
+	// RedisURL: "redis://localhost:6379" ou vazio → usa rate limiter in-memory.
+	RedisURL string
+
+	// =========================
+	// PIX REAL (Efí / Gerencianet)
+	// =========================
+	// PixProvider: "mock" (padrão) | "efi"
+	PixProvider     string
+	EfiClientID     string
+	EfiClientSecret string
+	EfiPixKey       string // chave pix (CPF, CNPJ, email, telefone ou aleatória)
 }
 
 func Load() *Config {
@@ -55,6 +71,7 @@ func Load() *Config {
 		DBUrl:      dbURL,
 		JWTSecret:  jwtSecret,
 		ServerPort: getEnv("SERVER_PORT", "8080"),
+		AppURL:     getEnv("APP_URL", "http://localhost:3000"),
 
 		// CORS
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "")),
@@ -70,6 +87,15 @@ func Load() *Config {
 
 		// PIX
 		PixWebhookSecret: getEnv("PIX_WEBHOOK_SECRET", ""),
+
+		// REDIS
+		RedisURL: getEnv("REDIS_URL", ""),
+
+		// PIX REAL
+		PixProvider:     getEnv("PIX_PROVIDER", "mock"),
+		EfiClientID:     getEnv("EFI_CLIENT_ID", ""),
+		EfiClientSecret: getEnv("EFI_CLIENT_SECRET", ""),
+		EfiPixKey:       getEnv("EFI_PIX_KEY", ""),
 	}
 
 	// =========================

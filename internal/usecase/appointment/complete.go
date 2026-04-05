@@ -18,9 +18,16 @@ import (
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
+// txableRepository extends the domain repository with transaction support.
+// Keeping this in the use case avoids leaking gorm into the domain layer.
+type txableRepository interface {
+	domain.Repository
+	WithTx(tx *gorm.DB) domain.Repository
+}
+
 type CompleteAppointment struct {
 	db           *gorm.DB
-	repo         domain.Repository
+	repo         txableRepository
 	paymentRepo  domainPayment.Repository
 	orderRepo    *infraRepo.OrderGormRepository
 	productRepo  *infraRepo.ProductGormRepository
@@ -31,7 +38,7 @@ type CompleteAppointment struct {
 
 func NewCompleteAppointment(
 	db *gorm.DB,
-	repo domain.Repository,
+	repo txableRepository,
 	paymentRepo domainPayment.Repository,
 	orderRepo *infraRepo.OrderGormRepository,
 	productRepo *infraRepo.ProductGormRepository,
@@ -90,11 +97,6 @@ func (uc *CompleteAppointment) Execute(
 	barberID := input.BarberID
 	appointmentID := input.AppointmentID
 
-	appointmentRepoBase, ok := uc.repo.(*infraRepo.AppointmentGormRepository)
-	if !ok {
-		return nil, nil, nil, httperr.ErrBusiness("invalid_repository_impl")
-	}
-
 	var (
 		ap               *models.Appointment
 		closure          *models.AppointmentClosure
@@ -103,7 +105,7 @@ func (uc *CompleteAppointment) Execute(
 	)
 
 	err := uc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		txRepo := appointmentRepoBase.WithTx(tx)
+		txRepo := uc.repo.WithTx(tx)
 
 		apLoaded, err := txRepo.GetAppointmentForBarber(ctx, barbershopID, appointmentID, barberID)
 		if err != nil || apLoaded == nil {

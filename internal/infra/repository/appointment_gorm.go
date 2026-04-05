@@ -22,7 +22,7 @@ func NewAppointmentGormRepository(db *gorm.DB) *AppointmentGormRepository {
 	return &AppointmentGormRepository{db: db}
 }
 
-func (r *AppointmentGormRepository) WithTx(tx *gorm.DB) *AppointmentGormRepository {
+func (r *AppointmentGormRepository) WithTx(tx *gorm.DB) domain.Repository {
 	return &AppointmentGormRepository{db: tx}
 }
 

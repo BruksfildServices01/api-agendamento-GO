@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/paymentconfig"
 )
@@ -33,7 +34,7 @@ func (h *PaymentPolicyHandler) Get(c *gin.Context) {
 
 	out, err := h.getUC.Execute(c.Request.Context(), barbershopID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.Internal(c, "internal_error", err.Error())
 		return
 	}
 
@@ -45,12 +46,12 @@ func (h *PaymentPolicyHandler) Update(c *gin.Context) {
 
 	var in paymentconfig.UpdatePaymentPoliciesInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		httperr.BadRequest(c, "invalid_payload", "invalid_payload")
 		return
 	}
 
 	if err := h.updateUC.Execute(c.Request.Context(), barbershopID, in); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.Internal(c, "internal_error", err.Error())
 		return
 	}
 

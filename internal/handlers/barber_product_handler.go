@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	domainProduct "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	productUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/product"
@@ -70,7 +71,7 @@ type UpdateProductRequest struct {
 func (h *ProductHandler) List(c *gin.Context) {
 	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
 		return
 	}
 	barbershopID := barbershopIDVal.(uint)
@@ -133,7 +134,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 
 	var products []models.Product
 	if err := q.Order("id ASC").Find(&products).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_list_products"})
+		httperr.Internal(c, "failed_to_list_products", "failed_to_list_products")
 		return
 	}
 
@@ -149,17 +150,14 @@ func (h *ProductHandler) List(c *gin.Context) {
 func (h *ProductHandler) Create(c *gin.Context) {
 	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
 		return
 	}
 	barbershopID := barbershopIDVal.(uint)
 
 	var req CreateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		httperr.BadRequest(c, "invalid_request", err.Error())
 		return
 	}
 
@@ -179,17 +177,17 @@ func (h *ProductHandler) Create(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "invalid_barbershop_id":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		case "invalid_name":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name"})
+			httperr.BadRequest(c, "invalid_name", "invalid_name")
 		case "invalid_price":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+			httperr.BadRequest(c, "invalid_price", "invalid_price")
 		case "invalid_stock":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_stock"})
+			httperr.BadRequest(c, "invalid_stock", "invalid_stock")
 		case "invalid_online_visible_without_stock":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_online_visible_without_stock"})
+			httperr.BadRequest(c, "invalid_online_visible_without_stock", "invalid_online_visible_without_stock")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_create_product"})
+			httperr.Internal(c, "failed_to_create_product", "failed_to_create_product")
 		}
 		return
 	}
@@ -203,10 +201,14 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // ======================================================
 //
 
-func (h *ProductHandler) Update(c *gin.Context) {
+// ======================================================
+// DELETE
+// ======================================================
+
+func (h *ProductHandler) Delete(c *gin.Context) {
 	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
 		return
 	}
 	barbershopID := barbershopIDVal.(uint)
@@ -214,16 +216,59 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	idParam := c.Param("id")
 	idUint, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil || idUint == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		httperr.BadRequest(c, "invalid_id", "invalid_id")
+		return
+	}
+
+	// Bloqueia se houver pedidos vinculados (preserva histórico financeiro)
+	var orderCount int64
+	if err := h.db.WithContext(c.Request.Context()).
+		Table("order_items").
+		Where("product_id = ?", idUint).
+		Count(&orderCount).Error; err != nil {
+		httperr.Internal(c, "failed_to_check_orders", "failed_to_check_orders")
+		return
+	}
+
+	if orderCount > 0 {
+		httperr.Write(c, http.StatusConflict, "product_has_orders", "product_has_orders")
+		return
+	}
+
+	result := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND barbershop_id = ?", idUint, barbershopID).
+		Delete(&models.Product{})
+
+	if result.Error != nil {
+		httperr.Internal(c, "failed_to_delete_product", "failed_to_delete_product")
+		return
+	}
+	if result.RowsAffected == 0 {
+		httperr.NotFound(c, "product_not_found", "product_not_found")
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *ProductHandler) Update(c *gin.Context) {
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
+		return
+	}
+	barbershopID := barbershopIDVal.(uint)
+
+	idParam := c.Param("id")
+	idUint, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil || idUint == 0 {
+		httperr.BadRequest(c, "invalid_id", "invalid_id")
 		return
 	}
 
 	var req UpdateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		httperr.BadRequest(c, "invalid_request", err.Error())
 		return
 	}
 
@@ -249,21 +294,21 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "invalid_context":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		case "invalid_name":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name"})
+			httperr.BadRequest(c, "invalid_name", "invalid_name")
 		case "invalid_price":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+			httperr.BadRequest(c, "invalid_price", "invalid_price")
 		case "invalid_stock":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_stock"})
+			httperr.BadRequest(c, "invalid_stock", "invalid_stock")
 		case "invalid_online_visible_without_stock":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_online_visible_without_stock"})
+			httperr.BadRequest(c, "invalid_online_visible_without_stock", "invalid_online_visible_without_stock")
 		default:
 			if err == domainProduct.ErrProductNotFound {
-				c.JSON(http.StatusNotFound, gin.H{"error": "product_not_found"})
+				httperr.NotFound(c, "product_not_found", "product_not_found")
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_product"})
+			httperr.Internal(c, "failed_to_update_product", "failed_to_update_product")
 		}
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
@@ -41,13 +42,13 @@ type ActivateSubscriptionRequest struct {
 func (h *SubscriptionHandler) Activate(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
 		return
 	}
 
 	var req ActivateSubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httperr.BadRequest(c, "invalid_request", "invalid_request")
 		return
 	}
 
@@ -59,22 +60,22 @@ func (h *SubscriptionHandler) Activate(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, subscription.ErrActivateSubscriptionInvalidInput):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input"})
+			httperr.BadRequest(c, "invalid_input", "invalid_input")
 
 		case errors.Is(err, subscription.ErrActivateSubscriptionPlanNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "plan_not_found"})
+			httperr.NotFound(c, "plan_not_found", "plan_not_found")
 
 		case errors.Is(err, subscription.ErrActivateSubscriptionPlanInactive):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "plan_inactive"})
+			httperr.BadRequest(c, "plan_inactive", "plan_inactive")
 
 		case errors.Is(err, subscription.ErrActivateSubscriptionInvalidPlanDuration):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_plan_duration"})
+			httperr.BadRequest(c, "invalid_plan_duration", "invalid_plan_duration")
 
 		case errors.Is(err, subscription.ErrActivateSubscriptionClientAlreadyHasActiveSub):
-			c.JSON(http.StatusConflict, gin.H{"error": "client_already_has_active_subscription"})
+			httperr.Write(c, http.StatusConflict, "client_already_has_active_subscription", "client_already_has_active_subscription")
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_activate_subscription"})
+			httperr.Internal(c, "failed_to_activate_subscription", "failed_to_activate_subscription")
 		}
 		return
 	}
@@ -95,14 +96,14 @@ func (h *SubscriptionHandler) Activate(c *gin.Context) {
 func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
 		return
 	}
 
 	clientIDParam := c.Param("clientID")
 	clientID64, err := strconv.ParseUint(clientIDParam, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
+		httperr.BadRequest(c, "invalid_client_id", "invalid_client_id")
 		return
 	}
 
@@ -111,13 +112,13 @@ func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, subscription.ErrInvalidInput):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input"})
+			httperr.BadRequest(c, "invalid_input", "invalid_input")
 
 		case errors.Is(err, subscription.ErrActiveSubscriptionNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "active_subscription_not_found"})
+			httperr.NotFound(c, "active_subscription_not_found", "active_subscription_not_found")
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_cancel_subscription"})
+			httperr.Internal(c, "failed_to_cancel_subscription", "failed_to_cancel_subscription")
 		}
 		return
 	}
@@ -135,20 +136,20 @@ func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 func (h *SubscriptionHandler) GetActive(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
 		return
 	}
 
 	clientIDParam := c.Param("clientID")
 	clientID64, err := strconv.ParseUint(clientIDParam, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
+		httperr.BadRequest(c, "invalid_client_id", "invalid_client_id")
 		return
 	}
 
 	sub, err := h.getUC.Execute(c.Request.Context(), barbershopID, uint(clientID64))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_fetch"})
+		httperr.Internal(c, "failed_to_fetch", "failed_to_fetch")
 		return
 	}
 

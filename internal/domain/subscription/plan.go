@@ -10,4 +10,5 @@ type Plan struct {
 	DiscountPercent   int
 	ServiceIDs        []uint
 	Active            bool
+	ActiveSubscribers int
 }

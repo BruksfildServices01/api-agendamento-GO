@@ -4,6 +4,7 @@ import "errors"
 
 var (
 	ErrInvalidInput                       = errors.New("invalid_input")
+	ErrPlanHasActiveSubscriptions         = errors.New("plan_has_active_subscriptions")
 	ErrPlanNotFound                       = errors.New("plan_not_found")
 	ErrPlanInactive                       = errors.New("plan_inactive")
 	ErrInvalidPlanDuration                = errors.New("invalid_plan_duration")

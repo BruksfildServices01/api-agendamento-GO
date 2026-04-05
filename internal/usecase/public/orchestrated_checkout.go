@@ -26,6 +26,7 @@ type OrchestratedCheckout struct {
 	generateTicketUC    *ucTicket.GenerateTicket
 	db                  *gorm.DB
 	apptNotifier        domainNotification.AppointmentNotifier
+	appURL              string
 }
 
 func NewOrchestratedCheckout(
@@ -36,6 +37,7 @@ func NewOrchestratedCheckout(
 	generateTicketUC *ucTicket.GenerateTicket,
 	db *gorm.DB,
 	apptNotifier domainNotification.AppointmentNotifier,
+	appURL string,
 ) *OrchestratedCheckout {
 	return &OrchestratedCheckout{
 		createAppointmentUC: createAppointmentUC,
@@ -45,6 +47,7 @@ func NewOrchestratedCheckout(
 		generateTicketUC:    generateTicketUC,
 		db:                  db,
 		apptNotifier:        apptNotifier,
+		appURL:              appURL,
 	}
 }
 
@@ -53,6 +56,15 @@ func (uc *OrchestratedCheckout) Execute(
 	barbershopID uint,
 	input dto.PublicOrchestratedCheckoutRequestDTO,
 ) (*dto.PublicOrchestratedCheckoutResponseDTO, error) {
+
+	var barber struct {
+		ID uint `gorm:"column:id"`
+	}
+	if err := uc.db.WithContext(ctx).
+		Raw("SELECT id FROM users WHERE barbershop_id = ? AND role = 'owner' LIMIT 1", barbershopID).
+		Scan(&barber).Error; err != nil || barber.ID == 0 {
+		return nil, fmt.Errorf("barber not found for barbershop %d", barbershopID)
+	}
 
 	service, err := uc.serviceRepo.GetByID(ctx, barbershopID, input.ServiceID)
 	if err != nil {
@@ -66,7 +78,7 @@ func (uc *OrchestratedCheckout) Execute(
 		ctx,
 		ucAppointment.CreatePrivateAppointmentInput{
 			BarbershopID:   barbershopID,
-			BarberID:       input.BarberID,
+			BarberID:       barber.ID,
 			ClientName:     input.ClientName,
 			ClientPhone:    input.ClientPhone,
 			ClientEmail:    input.ClientEmail,
@@ -109,7 +121,7 @@ func (uc *OrchestratedCheckout) Execute(
 		} else {
 			ticketURL := ""
 			if ticketToken != "" {
-				ticketURL = "/api/public/ticket/" + ticketToken
+				ticketURL = uc.appURL + "/ticket/" + ticketToken
 			}
 			notifyInput := domainNotification.AppointmentConfirmedInput{
 				ClientName:      input.ClientName,
@@ -208,7 +220,7 @@ func (uc *OrchestratedCheckout) Execute(
 	}
 
 	if ticketToken != "" {
-		response.NextURLs.TicketURL = "/api/public/ticket/" + ticketToken
+		response.NextURLs.TicketURL = "/api/public/ticket/" + ticketToken // API path for frontend routing
 	}
 
 	return response, nil

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/servicesuggestion"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	uc "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
 )
@@ -37,19 +38,19 @@ type SetServiceSuggestionRequest struct {
 func (h *ServiceSuggestionHandler) Set(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
 		return
 	}
 
 	serviceID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || serviceID64 == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_service_id"})
+		httperr.BadRequest(c, "invalid_service_id", "invalid_service_id")
 		return
 	}
 
 	var req SetServiceSuggestionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httperr.BadRequest(c, "invalid_request", "invalid_request")
 		return
 	}
 
@@ -64,15 +65,15 @@ func (h *ServiceSuggestionHandler) Set(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidContext):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		case errors.Is(err, domain.ErrServiceNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "service_not_found"})
+			httperr.NotFound(c, "service_not_found", "service_not_found")
 		case errors.Is(err, domain.ErrProductNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "product_not_found"})
+			httperr.NotFound(c, "product_not_found", "product_not_found")
 		case errors.Is(err, domain.ErrInvalidSuggestedProduct):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_suggested_product"})
+			httperr.BadRequest(c, "invalid_suggested_product", "invalid_suggested_product")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_set_service_suggestion"})
+			httperr.Internal(c, "failed_to_set_service_suggestion", "failed_to_set_service_suggestion")
 		}
 		return
 	}
@@ -83,13 +84,13 @@ func (h *ServiceSuggestionHandler) Set(c *gin.Context) {
 func (h *ServiceSuggestionHandler) Get(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
 		return
 	}
 
 	serviceID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || serviceID64 == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_service_id"})
+		httperr.BadRequest(c, "invalid_service_id", "invalid_service_id")
 		return
 	}
 
@@ -103,9 +104,9 @@ func (h *ServiceSuggestionHandler) Get(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidContext):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_get_service_suggestion"})
+			httperr.Internal(c, "failed_to_get_service_suggestion", "failed_to_get_service_suggestion")
 		}
 		return
 	}
@@ -121,13 +122,13 @@ func (h *ServiceSuggestionHandler) Get(c *gin.Context) {
 func (h *ServiceSuggestionHandler) Remove(c *gin.Context) {
 	barbershopID := c.GetUint(middleware.ContextBarbershopID)
 	if barbershopID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_barbershop"})
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
 		return
 	}
 
 	serviceID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || serviceID64 == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_service_id"})
+		httperr.BadRequest(c, "invalid_service_id", "invalid_service_id")
 		return
 	}
 
@@ -141,9 +142,9 @@ func (h *ServiceSuggestionHandler) Remove(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidContext):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_remove_service_suggestion"})
+			httperr.Internal(c, "failed_to_remove_service_suggestion", "failed_to_remove_service_suggestion")
 		}
 		return
 	}

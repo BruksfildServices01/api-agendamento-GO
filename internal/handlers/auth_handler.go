@@ -13,6 +13,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/validators"
 )
@@ -54,7 +55,7 @@ type LoginRequest struct {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httperr.BadRequest(c, "invalid_request", "invalid_request")
 		return
 	}
 
@@ -67,12 +68,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err := h.db.Model(&models.Barbershop{}).
 		Where("slug = ?", slug).
 		Count(&count).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_check_slug"})
+		httperr.Internal(c, "failed_to_check_slug", "failed_to_check_slug")
 		return
 	}
 
 	if count > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "slug_already_exists"})
+		httperr.BadRequest(c, "slug_already_exists", "slug_already_exists")
 		return
 	}
 
@@ -203,13 +204,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrInvalidData) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email_domain"})
+			httperr.BadRequest(c, "invalid_email_domain", "invalid_email_domain")
 			return
 		}
 
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_register",
-		})
+		httperr.Internal(c, "failed_to_register", "failed_to_register")
 		return
 	}
 
@@ -256,7 +255,7 @@ func (h *AuthHandler) generateToken(user *models.User) (string, error) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httperr.BadRequest(c, "invalid_request", "invalid_request")
 		return
 	}
 
@@ -268,11 +267,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		First(&user).Error; err != nil {
 
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
+			httperr.Unauthorized(c, "invalid_credentials", "invalid_credentials")
 			return
 		}
 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		httperr.Internal(c, "internal_error", "internal_error")
 		return
 	}
 
@@ -280,13 +279,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		[]byte(user.PasswordHash),
 		[]byte(req.Password),
 	); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
+		httperr.Unauthorized(c, "invalid_credentials", "invalid_credentials")
 		return
 	}
 
 	token, err := h.generateToken(&user)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_generate_token"})
+		httperr.Internal(c, "failed_to_generate_token", "failed_to_generate_token")
 		return
 	}
 

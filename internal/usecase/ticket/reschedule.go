@@ -29,6 +29,7 @@ type RescheduleViaTicket struct {
 	notifier domainNotification.AppointmentNotifier
 	metrics  *ucMetrics.UpdateClientMetrics
 	audit    *audit.Dispatcher
+	appURL   string
 }
 
 func NewRescheduleViaTicket(
@@ -37,6 +38,7 @@ func NewRescheduleViaTicket(
 	notifier domainNotification.AppointmentNotifier,
 	metrics *ucMetrics.UpdateClientMetrics,
 	auditDispatcher *audit.Dispatcher,
+	appURL string,
 ) *RescheduleViaTicket {
 	return &RescheduleViaTicket{
 		db:       db,
@@ -44,6 +46,7 @@ func NewRescheduleViaTicket(
 		notifier: notifier,
 		metrics:  metrics,
 		audit:    auditDispatcher,
+		appURL:   appURL,
 	}
 }
 
@@ -291,7 +294,7 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 				NewStartTime:    newStartUTC,
 				NewEndTime:      newEnd,
 				Timezone:        notifyData.Timezone,
-				NewTicketURL:    "/api/public/ticket/" + newToken,
+				NewTicketURL:    uc.appURL + "/ticket/" + newToken,
 			})
 		}
 	}

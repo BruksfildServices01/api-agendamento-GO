@@ -8,21 +8,6 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 )
 
-// NoopAppointmentNotifier implements AppointmentNotifier and does nothing.
-type NoopAppointmentNotifier struct{}
-
-func (n *NoopAppointmentNotifier) NotifyConfirmed(_ context.Context, _ domain.AppointmentConfirmedInput) error {
-	return nil
-}
-
-func (n *NoopAppointmentNotifier) NotifyCancelled(_ context.Context, _ domain.AppointmentCancelledInput) error {
-	return nil
-}
-
-func (n *NoopAppointmentNotifier) NotifyRescheduled(_ context.Context, _ domain.AppointmentRescheduledInput) error {
-	return nil
-}
-
 // AsyncAppointmentNotifier wraps an AppointmentNotifier and fires all methods
 // in a goroutine with a 30-second background timeout, always returning nil immediately.
 type AsyncAppointmentNotifier struct {

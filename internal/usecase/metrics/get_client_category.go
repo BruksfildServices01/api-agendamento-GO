@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"time"
 
 	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
 )
@@ -29,9 +30,11 @@ func (uc *GetClientCategory) Execute(
 		return "", err
 	}
 
-	// 1) override manual continua tendo prioridade
+	// 1) override manual tem prioridade se ainda não expirou
 	if m.CategorySource == domainMetrics.CategorySourceManual && m.Category != "" {
-		return m.Category, nil
+		if m.ManualCategoryExpiresAt == nil || time.Now().UTC().Before(*m.ManualCategoryExpiresAt) {
+			return m.Category, nil
+		}
 	}
 
 	// 2) fallback para classificação comportamental

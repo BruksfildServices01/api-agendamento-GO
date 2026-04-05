@@ -33,8 +33,13 @@ func (uc *ListPlans) Execute(
 		if err != nil {
 			return nil, err
 		}
-
 		plans[i].ServiceIDs = serviceIDs
+
+		count, err := uc.repo.CountActiveSubscribersByPlan(ctx, plans[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		plans[i].ActiveSubscribers = int(count)
 	}
 
 	return plans, nil

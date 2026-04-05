@@ -34,13 +34,13 @@ func (h *ClosureAdjustmentHandler) Create(c *gin.Context) {
 
 	appointmentID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid appointment id"})
+		httperr.BadRequest(c, "bad_request", "invalid appointment id")
 		return
 	}
 
 	var req closureAdjustmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httperr.BadRequest(c, "invalid_request", "invalid_request")
 		return
 	}
 
@@ -56,15 +56,15 @@ func (h *ClosureAdjustmentHandler) Create(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ucAppointment.ErrClosureNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "closure_not_found"})
+			httperr.NotFound(c, "closure_not_found", "closure_not_found")
 		case errors.Is(err, ucAppointment.ErrAdjustmentWindowExpired):
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "adjustment_window_expired"})
+			httperr.Write(c, http.StatusUnprocessableEntity, "adjustment_window_expired", "adjustment_window_expired")
 		case errors.Is(err, ucAppointment.ErrNoAdjustmentFields):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "no_adjustment_fields"})
+			httperr.BadRequest(c, "no_adjustment_fields", "no_adjustment_fields")
 		case httperr.IsBusiness(err, "invalid_final_amount"):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_final_amount"})
+			httperr.BadRequest(c, "invalid_final_amount", "invalid_final_amount")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			httperr.Internal(c, "internal_error", "internal server error")
 		}
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 )
@@ -30,13 +31,13 @@ type setClientCategoryRequest struct {
 func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
 	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
+		httperr.BadRequest(c, "invalid_client_id", "invalid_client_id")
 		return
 	}
 
 	raw, exists := c.Get(middleware.ContextBarbershopID)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "barbershop_context_not_found"})
+		httperr.Unauthorized(c, "barbershop_context_not_found", "barbershop_context_not_found")
 		return
 	}
 
@@ -44,7 +45,7 @@ func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
 
 	var req setClientCategoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		httperr.BadRequest(c, "invalid_payload", "invalid_payload")
 		return
 	}
 
@@ -66,11 +67,11 @@ func (h *ClientCategoryOverrideHandler) Update(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "invalid_context":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		case "invalid_category":
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_category"})
+			httperr.BadRequest(c, "invalid_category", "invalid_category")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_category"})
+			httperr.Internal(c, "failed_to_update_category", "failed_to_update_category")
 		}
 		return
 	}

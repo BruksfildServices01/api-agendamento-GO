@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/query/shared"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
@@ -236,8 +237,8 @@ func (q *Query) loadSubscriptions(ctx context.Context, barbershopID uint, client
 		JOIN plans p ON p.id = s.plan_id
 		WHERE s.barbershop_id = ?
 		  AND s.client_id = ANY(`+pgIntArray(clientIDs)+`)
-		  AND s.status = 'active'
-	`, barbershopID).Scan(&rows).Error
+		  AND `+shared.ActiveSubscriptionSQL,
+		barbershopID).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

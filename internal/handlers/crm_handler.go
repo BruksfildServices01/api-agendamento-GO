@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/crm"
 )
@@ -25,17 +26,17 @@ func (h *CRMHandler) Get(c *gin.Context) {
 
 	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid client id"})
+		httperr.BadRequest(c, "bad_request", "invalid client id")
 		return
 	}
 
 	resp, err := h.query.Execute(c.Request.Context(), barbershopID, uint(clientID))
 	if err != nil {
 		if errors.Is(err, crm.ErrClientNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "client not found"})
+			httperr.NotFound(c, "client_not_found", "client not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		httperr.Internal(c, "internal_error", "internal server error")
 		return
 	}
 

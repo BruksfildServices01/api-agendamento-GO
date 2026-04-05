@@ -10,6 +10,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
+	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/handlers"
 	cartStore "github.com/BruksfildServices01/barber-scheduler/internal/infra/cart"
@@ -73,18 +74,24 @@ func RegisterRoutes(
 	// ======================================================
 	// PIX
 	// ======================================================
-	// TODO: replace MockPixGateway with a real PIX integration (BB/Efí/etc)
-	// before going live. The mock generates fake txid/qrcode for development only.
-	pixGateway := pix.NewMockPixGateway()
+	// Seleciona o gateway via PIX_PROVIDER:
+	//   "efi"  → integração real Efí (requer EFI_CLIENT_ID, EFI_CLIENT_SECRET, EFI_PIX_KEY)
+	//   "mock" → gateway falso para desenvolvimento (padrão)
+	var pixGateway domainPayment.PixGateway
+	if cfg.PixProvider == "efi" {
+		sandbox := cfg.EfiClientID == "" // usa sandbox se credenciais de produção ausentes
+		pixGateway = pix.NewEfiGateway(cfg.EfiClientID, cfg.EfiClientSecret, cfg.EfiPixKey, sandbox)
+		log.Println("[PIX] usando gateway Efí (sandbox=", sandbox, ")")
+	} else {
+		pixGateway = pix.NewMockPixGateway()
+		log.Println("[PIX] usando MockPixGateway — NÃO use em produção")
+	}
 
 	// ======================================================
 	// RATE LIMITER
 	// ======================================================
-	// WARNING: this rate limiter is in-memory and per-instance.
-	// In a multi-replica deployment each replica maintains its own bucket,
-	// so the effective limit is (replicas × configured limit).
-	// Replace with a Redis-backed limiter before scaling horizontally.
-	log.Println("[WARN] rate limiter is in-memory — not suitable for multi-instance deployments")
+	// Usa Redis (distribuído) se REDIS_URL estiver configurada;
+	// caso contrário usa in-memory por instância (desenvolvimento).
 
 	// ======================================================
 	// NOTIFICATION
@@ -100,7 +107,7 @@ func RegisterRoutes(
 	if cfg.EmailEnabled {
 		apptNotifier = notification.NewAsyncAppointmentNotifier(notification.NewEmailNotifier(cfg))
 	} else {
-		apptNotifier = &notification.NoopAppointmentNotifier{}
+		apptNotifier = notification.NewNoopNotifier()
 	}
 
 	// ======================================================
@@ -156,6 +163,7 @@ func RegisterRoutes(
 	consumeCutUC := ucSubscription.NewConsumeCut(subscriptionRepo)
 	createPlanUC := ucSubscription.NewCreatePlan(subscriptionRepo)
 	listPlansUC := ucSubscription.NewListPlans(subscriptionRepo)
+	deletePlanUC := ucSubscription.NewDeletePlan(subscriptionRepo)
 	activateSubscriptionUC := ucSubscription.NewActivateSubscription(subscriptionRepo)
 	cancelSubscriptionUC := ucSubscription.NewCancelSubscription(subscriptionRepo)
 	getActiveSubscriptionUC := ucSubscription.NewGetActiveSubscription(subscriptionRepo)
@@ -251,7 +259,7 @@ func RegisterRoutes(
 	generateTicketUC := ucTicket.NewGenerateTicket(ticketRepo)
 	viewTicketUC := ucTicket.NewViewTicket(db)
 	cancelViaTicketUC := ucTicket.NewCancelViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher)
-	rescheduleViaTicketUC := ucTicket.NewRescheduleViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher)
+	rescheduleViaTicketUC := ucTicket.NewRescheduleViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher, cfg.AppURL)
 
 	// ======================================================
 	// PUBLIC ORCHESTRATION USE CASES
@@ -264,6 +272,7 @@ func RegisterRoutes(
 		generateTicketUC,
 		db,
 		apptNotifier,
+		cfg.AppURL,
 	)
 
 	// ======================================================
@@ -422,7 +431,7 @@ func RegisterRoutes(
 	operationalSummaryHandler := handlers.NewOperationalSummaryHandler(
 		getOperationalSummaryUC,
 	)
-	planHandler := handlers.NewPlanHandler(createPlanUC, listPlansUC)
+	planHandler := handlers.NewPlanHandler(createPlanUC, listPlansUC, deletePlanUC)
 
 	dayPanelQuery := daypanel.New(db)
 	dayPanelHandler := handlers.NewDayPanelHandler(dayPanelQuery)
@@ -456,6 +465,7 @@ func RegisterRoutes(
 
 	publicAPI := api.Group("/public")
 	{
+		publicAPI.GET("/:slug/info", publicHandler.GetInfo)
 		publicAPI.GET("/:slug/services", publicHandler.ListServices)
 		publicAPI.GET("/:slug/products", publicHandler.ListProducts)
 
@@ -471,16 +481,16 @@ func RegisterRoutes(
 
 		publicAPI.POST(
 			"/:slug/appointments/:id/payment/pix",
-			middleware.RateLimitByKey(func(c *gin.Context) string {
+			middleware.NewRateLimitByKey(func(c *gin.Context) string {
 				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 30, 10),
+			}, 30, 10, cfg.RedisURL),
 			publicPaymentHandler.CreatePix,
 		)
 		publicAPI.POST(
 			"/:slug/orders/:id/payment/pix",
-			middleware.RateLimitByKey(func(c *gin.Context) string {
+			middleware.NewRateLimitByKey(func(c *gin.Context) string {
 				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 30, 10),
+			}, 30, 10, cfg.RedisURL),
 			orderPaymentHandler.CreatePublic,
 		)
 
@@ -509,6 +519,7 @@ func RegisterRoutes(
 		secured.GET("/me/services", serviceHandler.List)
 		secured.POST("/me/services", serviceHandler.Create)
 		secured.PUT("/me/services/:id", serviceHandler.Update)
+		secured.DELETE("/me/services/:id", serviceHandler.Delete)
 
 		secured.GET("/me/services/:id/suggestion", serviceSuggestionHandler.Get)
 		secured.PUT("/me/services/:id/suggestion", serviceSuggestionHandler.Set)
@@ -517,6 +528,7 @@ func RegisterRoutes(
 		secured.GET("/me/products", productHandler.List)
 		secured.POST("/me/products", productHandler.Create)
 		secured.PUT("/me/products/:id", productHandler.Update)
+		secured.DELETE("/me/products/:id", productHandler.Delete)
 
 		secured.GET("/me/working-hours", workingHoursHandler.Get)
 		secured.PUT("/me/working-hours", workingHoursHandler.Update)
@@ -553,6 +565,7 @@ func RegisterRoutes(
 
 		secured.POST("/me/plans", planHandler.Create)
 		secured.GET("/me/plans", planHandler.List)
+		secured.DELETE("/me/plans/:id", planHandler.Delete)
 
 		secured.GET("/me/dashboard", dashboardHandler.Get)
 		secured.GET("/me/financial", financialHandler.Get)

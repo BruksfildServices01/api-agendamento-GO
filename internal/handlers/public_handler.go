@@ -105,6 +105,54 @@ func (h *PublicHandler) ListServices(c *gin.Context) {
 }
 
 ////////////////////////////////////////////////////////
+// PUBLIC INFO
+////////////////////////////////////////////////////////
+
+func (h *PublicHandler) GetInfo(c *gin.Context) {
+	shop, ok := h.getPublicBarbershop(c)
+	if !ok {
+		return
+	}
+
+	var workingHours []models.WorkingHours
+	h.db.WithContext(c.Request.Context()).
+		Where("barbershop_id = ? AND barber_id = 0", shop.ID).
+		Order("weekday asc").
+		Find(&workingHours)
+
+	type whDto struct {
+		Weekday    int    `json:"weekday"`
+		StartTime  string `json:"start_time"`
+		EndTime    string `json:"end_time"`
+		LunchStart string `json:"lunch_start"`
+		LunchEnd   string `json:"lunch_end"`
+		Active     bool   `json:"active"`
+	}
+
+	wh := make([]whDto, len(workingHours))
+	for i, w := range workingHours {
+		wh[i] = whDto{
+			Weekday:    w.Weekday,
+			StartTime:  w.StartTime,
+			EndTime:    w.EndTime,
+			LunchStart: w.LunchStart,
+			LunchEnd:   w.LunchEnd,
+			Active:     w.Active,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":       shop.ID,
+		"name":     shop.Name,
+		"slug":     shop.Slug,
+		"phone":    shop.Phone,
+		"address":  shop.Address,
+		"timezone": shop.Timezone,
+		"working_hours": wh,
+	})
+}
+
+////////////////////////////////////////////////////////
 // PUBLIC PRODUCTS
 ////////////////////////////////////////////////////////
 
@@ -294,7 +342,7 @@ func (h *PublicHandler) CheckoutCart(c *gin.Context) {
 			ItemsCount: len(order.Items),
 		},
 		NextStep: dto.PublicCheckoutNextStepDTO{
-			Action:     "generate_pix",
+			Action:     "order_payment_required",
 			Method:     "POST",
 			PaymentURL: "/api/public/" + shop.Slug + "/orders/" + strconv.FormatUint(uint64(order.ID), 10) + "/payment/pix",
 		},
@@ -493,7 +541,7 @@ func (h *PublicHandler) CreateAppointment(c *gin.Context) {
 			ClientName:     req.ClientName,
 			ClientPhone:    req.ClientPhone,
 			ClientEmail:    req.ClientEmail,
-			ProductID:      req.ProductID,
+			ProductID:      req.ServiceID,
 			Date:           req.Date,
 			Time:           req.Time,
 			Notes:          req.Notes,

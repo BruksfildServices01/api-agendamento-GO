@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
@@ -29,15 +30,13 @@ func NewClientCategoryHandler(
 func (h *ClientCategoryHandler) Get(c *gin.Context) {
 	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
+		httperr.BadRequest(c, "invalid_client_id", "invalid_client_id")
 		return
 	}
 
 	raw, exists := c.Get(middleware.ContextBarbershopID)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "barbershop_context_not_found",
-		})
+		httperr.Unauthorized(c, "barbershop_context_not_found", "barbershop_context_not_found")
 		return
 	}
 
@@ -50,9 +49,7 @@ func (h *ClientCategoryHandler) Get(c *gin.Context) {
 	case int64:
 		barbershopID = uint(v)
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "invalid_barbershop_context_type",
-		})
+		httperr.Internal(c, "invalid_barbershop_context_type", "invalid_barbershop_context_type")
 		return
 	}
 
@@ -62,9 +59,7 @@ func (h *ClientCategoryHandler) Get(c *gin.Context) {
 		uint(clientID),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_load_client_category",
-		})
+		httperr.Internal(c, "failed_to_load_client_category", "failed_to_load_client_category")
 		return
 	}
 
@@ -76,9 +71,7 @@ func (h *ClientCategoryHandler) Get(c *gin.Context) {
 		uint(clientID),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed_to_load_client_subscription",
-		})
+		httperr.Internal(c, "failed_to_load_client_subscription", "failed_to_load_client_subscription")
 		return
 	}
 

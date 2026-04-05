@@ -16,7 +16,7 @@ import (
 type cartRow struct {
 	Key          string    `gorm:"primaryKey;column:key"`
 	BarbershopID uint      `gorm:"primaryKey;column:barbershop_id"`
-	Items        []byte    `gorm:"column:items;type:jsonb"`
+	Items        string    `gorm:"column:items;type:jsonb"`
 	ExpiresAt    time.Time `gorm:"column:expires_at"`
 	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt    time.Time `gorm:"column:updated_at;autoUpdateTime"`
@@ -62,7 +62,7 @@ func (s *PostgresStore) Save(ctx context.Context, cart *domain.Cart) error {
 	row := cartRow{
 		Key:          cart.Key,
 		BarbershopID: cart.BarbershopID,
-		Items:        itemsJSON,
+		Items:        string(itemsJSON),
 		ExpiresAt:    time.Now().UTC().Add(cartTTL),
 	}
 
@@ -107,7 +107,7 @@ func (s *PostgresStore) Clear(ctx context.Context, key string, barbershopID uint
 
 func rowToCart(row cartRow) (*domain.Cart, error) {
 	var items []domain.Item
-	if err := json.Unmarshal(row.Items, &items); err != nil {
+	if err := json.Unmarshal([]byte(row.Items), &items); err != nil {
 		return nil, err
 	}
 

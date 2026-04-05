@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	serviceUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/service"
@@ -67,7 +68,7 @@ type UpdateServiceRequest struct {
 func (h *ServiceHandler) List(c *gin.Context) {
 	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
 		return
 	}
 	barbershopID := barbershopIDVal.(uint)
@@ -122,7 +123,7 @@ func (h *ServiceHandler) List(c *gin.Context) {
 
 	var services []models.BarbershopService
 	if err := q.Order("id ASC").Find(&services).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_list_services"})
+		httperr.Internal(c, "failed_to_list_services", "failed_to_list_services")
 		return
 	}
 
@@ -138,22 +139,19 @@ func (h *ServiceHandler) List(c *gin.Context) {
 func (h *ServiceHandler) Create(c *gin.Context) {
 	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
 		return
 	}
 	barbershopID := barbershopIDVal.(uint)
 
 	var req CreateServiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		httperr.BadRequest(c, "invalid_request", err.Error())
 		return
 	}
 
 	if req.Price <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+		httperr.BadRequest(c, "invalid_price", "invalid_price")
 		return
 	}
 
@@ -172,15 +170,15 @@ func (h *ServiceHandler) Create(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case domainService.ErrInvalidContext:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		case domainService.ErrInvalidName:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name"})
+			httperr.BadRequest(c, "invalid_name", "invalid_name")
 		case domainService.ErrInvalidDuration:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_duration"})
+			httperr.BadRequest(c, "invalid_duration", "invalid_duration")
 		case domainService.ErrInvalidPrice:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+			httperr.BadRequest(c, "invalid_price", "invalid_price")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_create_service"})
+			httperr.Internal(c, "failed_to_create_service", "failed_to_create_service")
 		}
 		return
 	}
@@ -194,10 +192,14 @@ func (h *ServiceHandler) Create(c *gin.Context) {
 // ======================================================
 //
 
-func (h *ServiceHandler) Update(c *gin.Context) {
+// ======================================================
+// DELETE
+// ======================================================
+
+func (h *ServiceHandler) Delete(c *gin.Context) {
 	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_context"})
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
 		return
 	}
 	barbershopID := barbershopIDVal.(uint)
@@ -205,21 +207,64 @@ func (h *ServiceHandler) Update(c *gin.Context) {
 	idParam := c.Param("id")
 	idUint, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil || idUint == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		httperr.BadRequest(c, "invalid_id", "invalid_id")
+		return
+	}
+
+	// Bloqueia se houver agendamentos ativos (scheduled ou awaiting_payment)
+	var activeCount int64
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&models.Appointment{}).
+		Where("barber_product_id = ? AND barbershop_id = ? AND status IN ('scheduled','awaiting_payment')", idUint, barbershopID).
+		Count(&activeCount).Error; err != nil {
+		httperr.Internal(c, "failed_to_check_appointments", "failed_to_check_appointments")
+		return
+	}
+
+	if activeCount > 0 {
+		httperr.Write(c, http.StatusConflict, "service_has_active_appointments", "service_has_active_appointments")
+		return
+	}
+
+	result := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND barbershop_id = ?", idUint, barbershopID).
+		Delete(&models.BarbershopService{})
+
+	if result.Error != nil {
+		httperr.Internal(c, "failed_to_delete_service", "failed_to_delete_service")
+		return
+	}
+	if result.RowsAffected == 0 {
+		httperr.NotFound(c, "service_not_found", "service_not_found")
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *ServiceHandler) Update(c *gin.Context) {
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
+		return
+	}
+	barbershopID := barbershopIDVal.(uint)
+
+	idParam := c.Param("id")
+	idUint, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil || idUint == 0 {
+		httperr.BadRequest(c, "invalid_id", "invalid_id")
 		return
 	}
 
 	var req UpdateServiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		httperr.BadRequest(c, "invalid_request", err.Error())
 		return
 	}
 
 	if req.Price != nil && *req.Price <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+		httperr.BadRequest(c, "invalid_price", "invalid_price")
 		return
 	}
 
@@ -244,17 +289,17 @@ func (h *ServiceHandler) Update(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case domainService.ErrInvalidContext:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_context"})
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
 		case domainService.ErrServiceNotFound:
-			c.JSON(http.StatusNotFound, gin.H{"error": "service_not_found"})
+			httperr.NotFound(c, "service_not_found", "service_not_found")
 		case domainService.ErrInvalidName:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name"})
+			httperr.BadRequest(c, "invalid_name", "invalid_name")
 		case domainService.ErrInvalidDuration:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_duration"})
+			httperr.BadRequest(c, "invalid_duration", "invalid_duration")
 		case domainService.ErrInvalidPrice:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_price"})
+			httperr.BadRequest(c, "invalid_price", "invalid_price")
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_service"})
+			httperr.Internal(c, "failed_to_update_service", "failed_to_update_service")
 		}
 		return
 	}

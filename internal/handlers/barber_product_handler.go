@@ -8,50 +8,86 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	domainProduct "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	productUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/product"
 )
 
-type BarberProductHandler struct {
-	db *gorm.DB
+type ProductHandler struct {
+	db       *gorm.DB
+	createUC *productUC.CreateProduct
+	updateUC *productUC.UpdateProduct
 }
 
-func NewBarberProductHandler(db *gorm.DB) *BarberProductHandler {
-	return &BarberProductHandler{db: db}
+func NewProductHandler(
+	db *gorm.DB,
+	createUC *productUC.CreateProduct,
+	updateUC *productUC.UpdateProduct,
+) *ProductHandler {
+	return &ProductHandler{
+		db:       db,
+		createUC: createUC,
+		updateUC: updateUC,
+	}
 }
 
-// --------- Requests ---------
+//
+// ======================================================
+// REQUEST DTOs
+// ======================================================
+//
 
-type CreateBarberProductRequest struct {
-	Name        string  `json:"name" binding:"required"`
-	Description string  `json:"description"`
-	DurationMin int     `json:"duration_min" binding:"required,min=1"`
-	Price       float64 `json:"price" binding:"required"`
-	Category    string  `json:"category"`
+type CreateProductRequest struct {
+	Name          string `json:"name" binding:"required"`
+	Description   string `json:"description"`
+	Category      string `json:"category"`
+	Price         int64  `json:"price" binding:"required"`
+	Stock         int    `json:"stock"`
+	Active        bool   `json:"active"`
+	OnlineVisible bool   `json:"online_visible"`
 }
 
-type UpdateBarberProductRequest struct {
-	Name        *string  `json:"name,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	DurationMin *int     `json:"duration_min,omitempty"`
-	Price       *float64 `json:"price,omitempty"`
-	Active      *bool    `json:"active,omitempty"`
+type UpdateProductRequest struct {
+	Name          *string `json:"name,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Category      *string `json:"category,omitempty"`
+	Price         *int64  `json:"price,omitempty"`
+	Stock         *int    `json:"stock,omitempty"`
+	Active        *bool   `json:"active,omitempty"`
+	OnlineVisible *bool   `json:"online_visible,omitempty"`
 }
 
-// --------- Handlers ---------
-func (h *BarberProductHandler) List(c *gin.Context) {
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
+//
+// ======================================================
+// LIST
+// ======================================================
+//
+// Conservador: mantém listagem via GORM para preservar filtros.
+// Depois migramos para use case/query dedicada se quiser.
+//
+
+func (h *ProductHandler) List(c *gin.Context) {
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
+		return
+	}
 	barbershopID := barbershopIDVal.(uint)
 
 	category := strings.ToLower(strings.TrimSpace(c.Query("category")))
 	activeStr := strings.TrimSpace(c.Query("active"))
+	onlineVisibleStr := strings.TrimSpace(c.Query("online_visible"))
 	query := strings.ToLower(strings.TrimSpace(c.Query("query")))
-	minPriceStr := c.Query("min_price")
-	maxPriceStr := c.Query("max_price")
-	minDurationStr := c.Query("min_duration")
-	maxDurationStr := c.Query("max_duration")
+	minPriceStr := strings.TrimSpace(c.Query("min_price"))
+	maxPriceStr := strings.TrimSpace(c.Query("max_price"))
+	minStockStr := strings.TrimSpace(c.Query("min_stock"))
+	maxStockStr := strings.TrimSpace(c.Query("max_stock"))
 
-	q := h.db.Where("barbershop_id = ?", barbershopID)
+	q := h.db.WithContext(c.Request.Context()).
+		Model(&models.Product{}).
+		Where("barbershop_id = ?", barbershopID)
 
 	if category != "" {
 		q = q.Where("LOWER(category) = ?", category)
@@ -64,121 +100,216 @@ func (h *BarberProductHandler) List(c *gin.Context) {
 		q = q.Where("active = ?", false)
 	}
 
+	switch onlineVisibleStr {
+	case "true":
+		q = q.Where("online_visible = ?", true)
+	case "false":
+		q = q.Where("online_visible = ?", false)
+	}
+
 	if query != "" {
 		like := "%" + query + "%"
-		q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
+		q = q.Where(
+			"(LOWER(name) LIKE ? OR LOWER(description) LIKE ?)",
+			like,
+			like,
+		)
 	}
 
-	if minPriceStr != "" {
-		if minPrice, err := strconv.ParseFloat(minPriceStr, 64); err == nil {
-			q = q.Where("price >= ?", minPrice)
-		}
+	if v, err := strconv.ParseInt(minPriceStr, 10, 64); err == nil {
+		q = q.Where("price >= ?", v)
 	}
 
-	if maxPriceStr != "" {
-		if maxPrice, err := strconv.ParseFloat(maxPriceStr, 64); err == nil {
-			q = q.Where("price <= ?", maxPrice)
-		}
+	if v, err := strconv.ParseInt(maxPriceStr, 10, 64); err == nil {
+		q = q.Where("price <= ?", v)
 	}
 
-	if minDurationStr != "" {
-		if minDuration, err := strconv.Atoi(minDurationStr); err == nil {
-			q = q.Where("duration_min >= ?", minDuration)
-		}
+	if v, err := strconv.Atoi(minStockStr); err == nil {
+		q = q.Where("stock >= ?", v)
 	}
 
-	if maxDurationStr != "" {
-		if maxDuration, err := strconv.Atoi(maxDurationStr); err == nil {
-			q = q.Where("duration_min <= ?", maxDuration)
-		}
+	if v, err := strconv.Atoi(maxStockStr); err == nil {
+		q = q.Where("stock <= ?", v)
 	}
 
-	var products []models.BarberProduct
+	var products []models.Product
 	if err := q.Order("id ASC").Find(&products).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_list_products"})
+		httperr.Internal(c, "failed_to_list_products", "failed_to_list_products")
 		return
 	}
 
 	c.JSON(http.StatusOK, products)
 }
 
-func (h *BarberProductHandler) Create(c *gin.Context) {
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
+//
+// ======================================================
+// CREATE
+// ======================================================
+//
+
+func (h *ProductHandler) Create(c *gin.Context) {
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
+		return
+	}
 	barbershopID := barbershopIDVal.(uint)
 
-	var req CreateBarberProductRequest
+	var req CreateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		httperr.BadRequest(c, "invalid_request", err.Error())
 		return
 	}
 
-	product := models.BarberProduct{
-		BarbershopID: barbershopID,
-		Name:         req.Name,
-		Description:  req.Description,
-		DurationMin:  req.DurationMin,
-		Price:        req.Price,
-		Active:       true,
-		Category:     strings.ToLower(req.Category),
-	}
-
-	if err := h.db.Create(&product).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_create_product"})
+	product, err := h.createUC.Execute(
+		c.Request.Context(),
+		productUC.CreateProductInput{
+			BarbershopID:  barbershopID,
+			Name:          req.Name,
+			Description:   req.Description,
+			Category:      strings.ToLower(strings.TrimSpace(req.Category)),
+			Price:         req.Price,
+			Stock:         req.Stock,
+			Active:        req.Active,
+			OnlineVisible: req.OnlineVisible,
+		},
+	)
+	if err != nil {
+		switch err.Error() {
+		case "invalid_barbershop_id":
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
+		case "invalid_name":
+			httperr.BadRequest(c, "invalid_name", "invalid_name")
+		case "invalid_price":
+			httperr.BadRequest(c, "invalid_price", "invalid_price")
+		case "invalid_stock":
+			httperr.BadRequest(c, "invalid_stock", "invalid_stock")
+		case "invalid_online_visible_without_stock":
+			httperr.BadRequest(c, "invalid_online_visible_without_stock", "invalid_online_visible_without_stock")
+		default:
+			httperr.Internal(c, "failed_to_create_product", "failed_to_create_product")
+		}
 		return
 	}
 
 	c.JSON(http.StatusCreated, product)
 }
 
-func (h *BarberProductHandler) Update(c *gin.Context) {
-	barbershopIDVal, _ := c.Get(middleware.ContextBarbershopID)
+//
+// ======================================================
+// UPDATE
+// ======================================================
+//
+
+// ======================================================
+// DELETE
+// ======================================================
+
+func (h *ProductHandler) Delete(c *gin.Context) {
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
+		return
+	}
 	barbershopID := barbershopIDVal.(uint)
 
-	id := c.Param("id")
-
-	var product models.BarberProduct
-	if err := h.db.
-		Where("id = ? AND barbershop_id = ?", id, barbershopID).
-		First(&product).Error; err != nil {
-
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "product_not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_get_product"})
+	idParam := c.Param("id")
+	idUint, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil || idUint == 0 {
+		httperr.BadRequest(c, "invalid_id", "invalid_id")
 		return
 	}
 
-	var req UpdateBarberProductRequest
+	// Bloqueia se houver pedidos vinculados (preserva histórico financeiro)
+	var orderCount int64
+	if err := h.db.WithContext(c.Request.Context()).
+		Table("order_items").
+		Where("product_id = ?", idUint).
+		Count(&orderCount).Error; err != nil {
+		httperr.Internal(c, "failed_to_check_orders", "failed_to_check_orders")
+		return
+	}
+
+	if orderCount > 0 {
+		httperr.Write(c, http.StatusConflict, "product_has_orders", "product_has_orders")
+		return
+	}
+
+	result := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND barbershop_id = ?", idUint, barbershopID).
+		Delete(&models.Product{})
+
+	if result.Error != nil {
+		httperr.Internal(c, "failed_to_delete_product", "failed_to_delete_product")
+		return
+	}
+	if result.RowsAffected == 0 {
+		httperr.NotFound(c, "product_not_found", "product_not_found")
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *ProductHandler) Update(c *gin.Context) {
+	barbershopIDVal, ok := c.Get(middleware.ContextBarbershopID)
+	if !ok {
+		httperr.Unauthorized(c, "invalid_context", "invalid_context")
+		return
+	}
+	barbershopID := barbershopIDVal.(uint)
+
+	idParam := c.Param("id")
+	idUint, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil || idUint == 0 {
+		httperr.BadRequest(c, "invalid_id", "invalid_id")
+		return
+	}
+
+	var req UpdateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"details": err.Error(),
-		})
+		httperr.BadRequest(c, "invalid_request", err.Error())
 		return
 	}
 
-	if req.Name != nil {
-		product.Name = *req.Name
-	}
-	if req.Description != nil {
-		product.Description = *req.Description
-	}
-	if req.DurationMin != nil {
-		product.DurationMin = *req.DurationMin
-	}
-	if req.Price != nil {
-		product.Price = *req.Price
-	}
-	if req.Active != nil {
-		product.Active = *req.Active
+	if req.Category != nil {
+		category := strings.ToLower(strings.TrimSpace(*req.Category))
+		req.Category = &category
 	}
 
-	if err := h.db.Save(&product).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_update_product"})
+	product, err := h.updateUC.Execute(
+		c.Request.Context(),
+		productUC.UpdateProductInput{
+			BarbershopID:  barbershopID,
+			ProductID:     uint(idUint),
+			Name:          req.Name,
+			Description:   req.Description,
+			Category:      req.Category,
+			Price:         req.Price,
+			Stock:         req.Stock,
+			Active:        req.Active,
+			OnlineVisible: req.OnlineVisible,
+		},
+	)
+	if err != nil {
+		switch err.Error() {
+		case "invalid_context":
+			httperr.BadRequest(c, "invalid_context", "invalid_context")
+		case "invalid_name":
+			httperr.BadRequest(c, "invalid_name", "invalid_name")
+		case "invalid_price":
+			httperr.BadRequest(c, "invalid_price", "invalid_price")
+		case "invalid_stock":
+			httperr.BadRequest(c, "invalid_stock", "invalid_stock")
+		case "invalid_online_visible_without_stock":
+			httperr.BadRequest(c, "invalid_online_visible_without_stock", "invalid_online_visible_without_stock")
+		default:
+			if err == domainProduct.ErrProductNotFound {
+				httperr.NotFound(c, "product_not_found", "product_not_found")
+				return
+			}
+			httperr.Internal(c, "failed_to_update_product", "failed_to_update_product")
+		}
 		return
 	}
 

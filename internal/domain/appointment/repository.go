@@ -8,20 +8,30 @@ import (
 )
 
 type Repository interface {
-	// -------- Barbershop --------
+
+	// ==================================================
+	// BARBERSHOP
+	// ==================================================
+
 	GetBarbershopByID(
 		ctx context.Context,
-		id uint,
+		barbershopID uint,
 	) (*models.Barbershop, error)
 
-	// -------- Product --------
+	// ==================================================
+	// PRODUCT
+	// ==================================================
+
 	GetProduct(
 		ctx context.Context,
 		barbershopID uint,
 		productID uint,
-	) (*models.BarberProduct, error)
+	) (*models.BarbershopService, error)
 
-	// -------- Client --------
+	// ==================================================
+	// CLIENT
+	// ==================================================
+
 	GetOrCreateClient(
 		ctx context.Context,
 		barbershopID uint,
@@ -30,22 +40,34 @@ type Repository interface {
 		email string,
 	) (*models.Client, error)
 
-	// -------- Appointment (create / conflict) --------
+	// ==================================================
+	// APPOINTMENT - CREATE
+	// ==================================================
+
 	CreateAppointment(
 		ctx context.Context,
 		ap *models.Appointment,
 	) error
 
+	// ==================================================
+	// TIME CONFLICT
+	// ==================================================
+
 	AssertNoTimeConflict(
 		ctx context.Context,
+		barbershopID uint,
 		barberID uint,
 		start time.Time,
 		end time.Time,
 	) error
 
-	// -------- Appointment (state change) --------
+	// ==================================================
+	// APPOINTMENT - STATE CHANGE (OWNER FLOW)
+	// ==================================================
+
 	GetAppointmentForBarber(
 		ctx context.Context,
+		barbershopID uint,
 		appointmentID uint,
 		barberID uint,
 	) (*models.Appointment, error)
@@ -55,15 +77,30 @@ type Repository interface {
 		ap *models.Appointment,
 	) error
 
-	// -------- Availability --------
+	SaveAppointmentClosure(
+		ctx context.Context,
+		closure *models.AppointmentClosure,
+	) error
+
+	GetAppointmentClosure(
+		ctx context.Context,
+		barbershopID uint,
+		appointmentID uint,
+	) (*models.AppointmentClosure, error)
+	// ==================================================
+	// AVAILABILITY
+	// ==================================================
+
 	GetWorkingHours(
 		ctx context.Context,
+		barbershopID uint,
 		barberID uint,
 		weekday int,
 	) (*models.WorkingHours, error)
 
 	ListAppointmentsForDay(
 		ctx context.Context,
+		barbershopID uint,
 		barberID uint,
 		start time.Time,
 		end time.Time,
@@ -71,6 +108,7 @@ type Repository interface {
 
 	IsWithinWorkingHours(
 		ctx context.Context,
+		barbershopID uint,
 		barberID uint,
 		start time.Time,
 		end time.Time,
@@ -78,8 +116,30 @@ type Repository interface {
 
 	ListAppointmentsForPeriod(
 		ctx context.Context,
+		barbershopID uint,
 		barberID uint,
 		start time.Time,
 		end time.Time,
 	) ([]models.Appointment, error)
+
+	// ==================================================
+	// REMINDER / JOB (legado - não usar para no-show)
+	// ==================================================
+
+	ListAppointmentsForReminder(
+		ctx context.Context,
+		barbershopID uint,
+		target time.Time,
+	) ([]*models.Appointment, error)
+
+	GetAppointmentByID(
+		ctx context.Context,
+		barbershopID uint,
+		appointmentID uint,
+	) (*models.Appointment, error)
+
+	GetOperationalSummary(
+		ctx context.Context,
+		barbershopID uint,
+	) (*OperationalSummary, error)
 }

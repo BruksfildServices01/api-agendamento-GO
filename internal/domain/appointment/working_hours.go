@@ -8,8 +8,6 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
-// IsWithinWorkingHours valida se um horário está dentro do expediente
-// incluindo pausa de almoço (regra de domínio)
 func IsWithinWorkingHours(
 	db *gorm.DB,
 	shop *models.Barbershop,

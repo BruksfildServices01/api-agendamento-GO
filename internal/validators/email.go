@@ -1,8 +1,11 @@
+// internal/validators/email.go
 package validators
 
 import (
+	"context"
 	"net"
 	"strings"
+	"time"
 )
 
 func IsEmailDomainValid(email string) bool {
@@ -10,14 +13,23 @@ func IsEmailDomainValid(email string) bool {
 	if at < 0 || at == len(email)-1 {
 		return false
 	}
-
 	domain := email[at+1:]
 
-	if mx, err := net.LookupMX(domain); err == nil && len(mx) > 0 {
+	// ✅ timeout curto (register não pode travar)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Resolver com ctx
+	if mx, err := net.DefaultResolver.LookupMX(ctx, domain); err == nil && len(mx) > 0 {
+		return true
+	}
+	if ips, err := net.DefaultResolver.LookupIP(ctx, "ip", domain); err == nil && len(ips) > 0 {
 		return true
 	}
 
-	if ips, err := net.LookupIP(domain); err == nil && len(ips) > 0 {
+	// ✅ decisão de produto: NÃO bloquear cadastro por DNS instável
+	// Se quiser bloquear, retorne false aqui.
+	if ctx.Err() != nil { // timeout
 		return true
 	}
 

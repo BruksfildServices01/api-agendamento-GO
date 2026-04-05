@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
@@ -21,19 +22,19 @@ func NewMeHandler(db *gorm.DB) *MeHandler {
 func (h *MeHandler) GetMe(c *gin.Context) {
 	userIDVal, exists := c.Get(middleware.ContextUserID)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user_not_in_context"})
+		httperr.Unauthorized(c, "user_not_in_context", "user_not_in_context")
 		return
 	}
 
 	userID, ok := userIDVal.(uint)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_user_id_type"})
+		httperr.Unauthorized(c, "invalid_user_id_type", "invalid_user_id_type")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Preload("Barbershop").First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_not_found"})
+		httperr.Internal(c, "user_not_found", "user_not_found")
 		return
 	}
 

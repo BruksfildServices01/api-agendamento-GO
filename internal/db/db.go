@@ -4,47 +4,51 @@ import (
 	"log"
 	"time"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/config"
-	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 )
 
 func NewDB(cfg *config.Config) *gorm.DB {
-	db, err := gorm.Open(postgres.Open(cfg.DBUrl), &gorm.Config{
-		PrepareStmt: true,
-	})
+
+	// ======================================================
+	// CONNECT
+	// ======================================================
+
+	// QueryExecModeSimpleProtocol sends values as text instead of binary.
+	// This prevents "cache lookup failed for type OID" errors that occur when
+	// the database is recreated and pgx has stale enum type OIDs cached.
+	pgxCfg, err := pgx.ParseConfig(cfg.DBUrl)
+	if err != nil {
+		log.Fatalf("failed to parse database URL: %v", err)
+	}
+	pgxCfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+	sqlDB := stdlib.OpenDB(*pgxCfg)
+
+	db, err := gorm.Open(
+		postgres.New(postgres.Config{Conn: sqlDB}),
+		&gorm.Config{
+			PrepareStmt: false,
+		},
+	)
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
 	}
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Fatalf("failed to get sql.DB: %v", err)
-	}
+	// ======================================================
+	// CONNECTION POOL
+	// ======================================================
 
-	sqlDB.SetMaxOpenConns(10)
-	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
 
-	if err := db.AutoMigrate(
-		&models.Barbershop{},
-		&models.User{},
-		&models.BarberProduct{},
-		&models.WorkingHours{},
-		&models.Client{},
-		&models.Appointment{},
-		&models.AuditLog{},
-	); err != nil {
-		log.Fatalf("failed to migrate: %v", err)
-	}
-
-	db.Exec(`
-        UPDATE barbershops
-        SET timezone = 'America/Sao_Paulo'
-        WHERE timezone IS NULL OR timezone = ''
-    `)
+	log.Println("[DB] connected successfully (schema controlled by SQL migrations)")
 
 	return db
 }

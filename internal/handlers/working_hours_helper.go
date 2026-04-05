@@ -8,7 +8,9 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
-// 🔁 FUNÇÃO COMPARTILHADA (PUBLIC + PRIVATE)
+// DEPRECATED: timezone-unsafe + tenant-unsafe.
+// Do not use. Working-hours validation must be done in the usecase using shop.Timezone
+// (ex: CreatePrivateAppointment) or via a timezone-safe domain helper.
 func IsWithinWorkingHours(
 	db *gorm.DB,
 	shop *models.Barbershop,
@@ -16,6 +18,8 @@ func IsWithinWorkingHours(
 	start time.Time,
 	end time.Time,
 ) (bool, error) {
+
+	_ = shop // explicit: this helper must not be used for tenant/timezone-sensitive validation
 
 	weekday := int(start.Weekday())
 	loc := start.Location()

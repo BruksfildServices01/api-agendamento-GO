@@ -23,18 +23,27 @@ func NewListAppointmentsByDate(
 
 func (uc *ListAppointmentsByDate) Execute(
 	ctx context.Context,
-	barberID uint,
 	barbershopID uint,
+	barberID uint,
 	date time.Time,
 ) ([]dto.AppointmentListDTO, error) {
 
+	// --------------------------------------------------
+	// 1️⃣ Carrega barbearia
+	// --------------------------------------------------
 	shop, err := uc.repo.GetBarbershopByID(ctx, barbershopID)
 	if err != nil {
 		return nil, err
 	}
+	if shop == nil {
+		return nil, nil
+	}
 
 	loc := timezone.Location(shop.Timezone)
 
+	// --------------------------------------------------
+	// 2️⃣ Intervalo do dia na timezone da barbearia
+	// --------------------------------------------------
 	start := time.Date(
 		date.Year(),
 		date.Month(),
@@ -44,8 +53,12 @@ func (uc *ListAppointmentsByDate) Execute(
 	)
 	end := start.Add(24 * time.Hour)
 
+	// --------------------------------------------------
+	// 3️⃣ Buscar appointments
+	// --------------------------------------------------
 	appointments, err := uc.repo.ListAppointmentsForPeriod(
 		ctx,
+		barbershopID,
 		barberID,
 		start,
 		end,
@@ -54,15 +67,30 @@ func (uc *ListAppointmentsByDate) Execute(
 		return nil, err
 	}
 
+	// --------------------------------------------------
+	// 4️⃣ Mapear DTO com segurança (nil-safe)
+	// --------------------------------------------------
 	out := make([]dto.AppointmentListDTO, 0, len(appointments))
+
 	for _, ap := range appointments {
+
+		var clientName string
+		if ap.Client != nil {
+			clientName = ap.Client.Name
+		}
+
+		var productName string
+		if ap.BarberProduct != nil {
+			productName = ap.BarberProduct.Name
+		}
+
 		out = append(out, dto.AppointmentListDTO{
 			ID:          ap.ID,
 			StartTime:   ap.StartTime,
 			EndTime:     ap.EndTime,
-			Status:      ap.Status,
-			ClientName:  ap.Client.Name,
-			ProductName: ap.BarberProduct.Name,
+			Status:      string(ap.Status), // DTO normalmente é string
+			ClientName:  clientName,
+			ProductName: productName,
 		})
 	}
 

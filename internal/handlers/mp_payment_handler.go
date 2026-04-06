@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -109,6 +110,7 @@ func (h *MPPaymentHandler) CreatePreference(c *gin.Context) {
 		case httperr.IsBusiness(err, "payment_not_pending"):
 			httperr.BadRequest(c, "payment_not_pending", "Pagamento não está pendente.")
 		default:
+			log.Printf("[MP] CreatePreference error slug=%s appointment=%d: %v", slug, appointmentID, err)
 			httperr.Internal(c, "mp_preference_failed", "Erro ao criar preferência de pagamento.")
 		}
 		return

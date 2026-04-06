@@ -17,7 +17,6 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/pix"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
@@ -73,22 +72,6 @@ func RegisterRoutes(
 	auditDispatcher := audit.NewDispatcher(auditLogger)
 
 	// ======================================================
-	// PIX
-	// ======================================================
-	// Seleciona o gateway via PIX_PROVIDER:
-	//   "efi"  → integração real Efí (requer EFI_CLIENT_ID, EFI_CLIENT_SECRET, EFI_PIX_KEY)
-	//   "mock" → gateway falso para desenvolvimento (padrão)
-	var pixGateway domainPayment.PixGateway
-	if cfg.PixProvider == "efi" {
-		sandbox := cfg.EfiClientID == "" // usa sandbox se credenciais de produção ausentes
-		pixGateway = pix.NewEfiGateway(cfg.EfiClientID, cfg.EfiClientSecret, cfg.EfiPixKey, sandbox)
-		log.Println("[PIX] usando gateway Efí (sandbox=", sandbox, ")")
-	} else {
-		pixGateway = pix.NewMockPixGateway()
-		log.Println("[PIX] usando MockPixGateway — NÃO use em produção")
-	}
-
-	// ======================================================
 	// MERCADO PAGO
 	// ======================================================
 	// Seleciona o gateway via MP_PROVIDER:
@@ -133,26 +116,6 @@ func RegisterRoutes(
 	// ======================================================
 	// PAYMENT USE CASES
 	// ======================================================
-	createPixPaymentUC := ucPayment.NewCreatePixPayment(
-		paymentRepo,
-		pixGateway,
-		auditDispatcher,
-		idemStore,
-	)
-
-	createPixForOrderUC := ucPayment.NewCreatePixPaymentForOrder(
-		paymentRepo,
-		pixGateway,
-		auditDispatcher,
-	)
-
-	markPaymentAsPaidUC := ucPayment.NewMarkPaymentAsPaid(
-		paymentRepo,
-		auditDispatcher,
-		notifier,
-		idemStore,
-	)
-
 	createMPPreferenceUC := ucPayment.NewCreateMPPreference(
 		paymentRepo,
 		mpGateway,
@@ -439,14 +402,6 @@ func RegisterRoutes(
 
 	publicTicketHandler := handlers.NewPublicTicketHandler(viewTicketUC, cancelViaTicketUC, rescheduleViaTicketUC)
 
-	publicPaymentHandler := handlers.NewPublicPaymentHandler(
-		db,
-		createPaymentForAppointmentUC,
-		createPixPaymentUC,
-	)
-
-	pixWebhookHandler := handlers.NewPixWebhookHandler(markPaymentAsPaidUC)
-
 	mpPaymentHandler := handlers.NewMPPaymentHandler(
 		db,
 		createPaymentForAppointmentUC,
@@ -459,11 +414,6 @@ func RegisterRoutes(
 		createOrderUC,
 		getOrderUC,
 		listOrdersAdminUC,
-	)
-	orderPaymentHandler := handlers.NewOrderPaymentHandler(
-		db,
-		createPixForOrderUC,
-		orderRepo,
 	)
 
 	paymentHandler := handlers.NewPaymentHandler(db, listPaymentsUC)
@@ -523,21 +473,6 @@ func RegisterRoutes(
 		publicAPI.POST("/:slug/appointments", publicHandler.CreateAppointment)
 
 		publicAPI.POST(
-			"/:slug/appointments/:id/payment/pix",
-			middleware.NewRateLimitByKey(func(c *gin.Context) string {
-				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 30, 10, cfg.RedisURL),
-			publicPaymentHandler.CreatePix,
-		)
-		publicAPI.POST(
-			"/:slug/orders/:id/payment/pix",
-			middleware.NewRateLimitByKey(func(c *gin.Context) string {
-				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 30, 10, cfg.RedisURL),
-			orderPaymentHandler.CreatePublic,
-		)
-
-		publicAPI.POST(
 			"/:slug/appointments/:id/payment/mp",
 			middleware.NewRateLimitByKey(func(c *gin.Context) string {
 				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
@@ -549,13 +484,6 @@ func RegisterRoutes(
 		publicAPI.DELETE("/ticket/:token", publicTicketHandler.Cancel)
 		publicAPI.PATCH("/ticket/:token", publicTicketHandler.Reschedule)
 	}
-
-	api.POST(
-		"/webhooks/pix",
-		middleware.MaxBodySize(64*1024),
-		middleware.NewPixWebhookAuth(cfg.PixWebhookSecret),
-		pixWebhookHandler.Handle,
-	)
 
 	api.POST(
 		"/webhooks/mp",
@@ -616,7 +544,6 @@ func RegisterRoutes(
 		secured.POST("/me/orders", orderHandler.Create)
 		secured.GET("/me/orders", orderHandler.List)
 		secured.GET("/me/orders/:id", orderHandler.GetByID)
-		secured.POST("/me/orders/:id/payment/pix", orderPaymentHandler.Create)
 
 		secured.GET("/me/audit-logs", auditLogsHandler.List)
 

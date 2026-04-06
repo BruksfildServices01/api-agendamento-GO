@@ -35,24 +35,10 @@ type Config struct {
 	SMTPPass string
 
 	// =========================
-	// PIX
-	// =========================
-	PixWebhookSecret string
-
-	// =========================
 	// REDIS (rate limiter distribuído)
 	// =========================
 	// RedisURL: "redis://localhost:6379" ou vazio → usa rate limiter in-memory.
 	RedisURL string
-
-	// =========================
-	// PIX REAL (Efí / Gerencianet)
-	// =========================
-	// PixProvider: "mock" (padrão) | "efi"
-	PixProvider     string
-	EfiClientID     string
-	EfiClientSecret string
-	EfiPixKey       string // chave pix (CPF, CNPJ, email, telefone ou aleatória)
 
 	// =========================
 	// MERCADO PAGO
@@ -95,17 +81,8 @@ func Load() *Config {
 		SMTPUser: getEnv("SMTP_USER", ""),
 		SMTPPass: getEnv("SMTP_PASS", ""),
 
-		// PIX
-		PixWebhookSecret: getEnv("PIX_WEBHOOK_SECRET", ""),
-
 		// REDIS
 		RedisURL: getEnv("REDIS_URL", ""),
-
-		// PIX REAL
-		PixProvider:     getEnv("PIX_PROVIDER", "mock"),
-		EfiClientID:     getEnv("EFI_CLIENT_ID", ""),
-		EfiClientSecret: getEnv("EFI_CLIENT_SECRET", ""),
-		EfiPixKey:       getEnv("EFI_PIX_KEY", ""),
 
 		// MERCADO PAGO
 		MPProvider:    getEnv("MP_PROVIDER", "mock"),

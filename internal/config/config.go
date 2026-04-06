@@ -53,6 +53,16 @@ type Config struct {
 	EfiClientID     string
 	EfiClientSecret string
 	EfiPixKey       string // chave pix (CPF, CNPJ, email, telefone ou aleatória)
+
+	// =========================
+	// MERCADO PAGO
+	// =========================
+	// MPProvider: "mock" (padrão) | "mp"
+	MPProvider    string
+	MPAccessToken string
+	// BackendURL é usado para montar a notification_url enviada ao Mercado Pago.
+	// Ex: https://api.seudominio.com
+	BackendURL string
 }
 
 func Load() *Config {
@@ -96,6 +106,11 @@ func Load() *Config {
 		EfiClientID:     getEnv("EFI_CLIENT_ID", ""),
 		EfiClientSecret: getEnv("EFI_CLIENT_SECRET", ""),
 		EfiPixKey:       getEnv("EFI_PIX_KEY", ""),
+
+		// MERCADO PAGO
+		MPProvider:    getEnv("MP_PROVIDER", "mock"),
+		MPAccessToken: getEnv("MP_ACCESS_TOKEN", ""),
+		BackendURL:    getEnv("BACKEND_URL", "http://localhost:8080"),
 	}
 
 	// =========================

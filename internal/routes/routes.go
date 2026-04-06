@@ -16,6 +16,7 @@ import (
 	cartStore "github.com/BruksfildServices01/barber-scheduler/internal/infra/cart"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/pix"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
@@ -88,6 +89,25 @@ func RegisterRoutes(
 	}
 
 	// ======================================================
+	// MERCADO PAGO
+	// ======================================================
+	// Seleciona o gateway via MP_PROVIDER:
+	//   "mp"   → integração real Mercado Pago (requer MP_ACCESS_TOKEN)
+	//   "mock" → gateway falso para desenvolvimento (padrão)
+	var mpGateway domainPayment.MPGateway
+	if cfg.MPProvider == "mp" && cfg.MPAccessToken != "" {
+		gw, err := mp.New(cfg.MPAccessToken)
+		if err != nil {
+			log.Fatal("[MP] falha ao inicializar gateway:", err)
+		}
+		mpGateway = gw
+		log.Println("[MP] usando gateway Mercado Pago real")
+	} else {
+		mpGateway = mp.NewMockGateway()
+		log.Println("[MP] usando MockGateway — NÃO use em produção")
+	}
+
+	// ======================================================
 	// RATE LIMITER
 	// ======================================================
 	// Usa Redis (distribuído) se REDIS_URL estiver configurada;
@@ -127,6 +147,21 @@ func RegisterRoutes(
 	)
 
 	markPaymentAsPaidUC := ucPayment.NewMarkPaymentAsPaid(
+		paymentRepo,
+		auditDispatcher,
+		notifier,
+		idemStore,
+	)
+
+	createMPPreferenceUC := ucPayment.NewCreateMPPreference(
+		paymentRepo,
+		mpGateway,
+		auditDispatcher,
+		cfg.AppURL,
+		cfg.BackendURL,
+	)
+
+	markMPPaymentAsPaidUC := ucPayment.NewMarkMPPaymentAsPaid(
 		paymentRepo,
 		auditDispatcher,
 		notifier,
@@ -412,6 +447,14 @@ func RegisterRoutes(
 
 	pixWebhookHandler := handlers.NewPixWebhookHandler(markPaymentAsPaidUC)
 
+	mpPaymentHandler := handlers.NewMPPaymentHandler(
+		db,
+		createPaymentForAppointmentUC,
+		createMPPreferenceUC,
+	)
+
+	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken)
+
 	orderHandler := handlers.NewOrderHandler(
 		createOrderUC,
 		getOrderUC,
@@ -494,6 +537,14 @@ func RegisterRoutes(
 			orderPaymentHandler.CreatePublic,
 		)
 
+		publicAPI.POST(
+			"/:slug/appointments/:id/payment/mp",
+			middleware.NewRateLimitByKey(func(c *gin.Context) string {
+				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
+			}, 30, 10, cfg.RedisURL),
+			mpPaymentHandler.CreatePreference,
+		)
+
 		publicAPI.GET("/ticket/:token", publicTicketHandler.View)
 		publicAPI.DELETE("/ticket/:token", publicTicketHandler.Cancel)
 		publicAPI.PATCH("/ticket/:token", publicTicketHandler.Reschedule)
@@ -504,6 +555,12 @@ func RegisterRoutes(
 		middleware.MaxBodySize(64*1024),
 		middleware.NewPixWebhookAuth(cfg.PixWebhookSecret),
 		pixWebhookHandler.Handle,
+	)
+
+	api.POST(
+		"/webhooks/mp",
+		middleware.MaxBodySize(64*1024),
+		mpWebhookHandler.Handle,
 	)
 
 	api.POST("/auth/register", authHandler.Register)

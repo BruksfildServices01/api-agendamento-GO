@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	_ "time/tzdata" // embeds timezone database for Alpine containers
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"

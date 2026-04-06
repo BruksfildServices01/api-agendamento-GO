@@ -78,15 +78,19 @@ func RegisterRoutes(
 	//   "mp"   → integração real Mercado Pago (requer MP_ACCESS_TOKEN)
 	//   "mock" → gateway falso para desenvolvimento (padrão)
 	var mpGateway domainPayment.MPGateway
+	var transparentGateway domainPayment.TransparentGateway
 	if cfg.MPProvider == "mp" && cfg.MPAccessToken != "" {
 		gw, err := mp.New(cfg.MPAccessToken)
 		if err != nil {
 			log.Fatal("[MP] falha ao inicializar gateway:", err)
 		}
 		mpGateway = gw
+		transparentGateway = gw
 		log.Println("[MP] usando gateway Mercado Pago real")
 	} else {
-		mpGateway = mp.NewMockGateway()
+		mock := mp.NewMockGateway()
+		mpGateway = mock
+		transparentGateway = mock
 		log.Println("[MP] usando MockGateway — NÃO use em produção")
 	}
 
@@ -121,6 +125,13 @@ func RegisterRoutes(
 		mpGateway,
 		auditDispatcher,
 		cfg.AppURL,
+		cfg.BackendURL,
+	)
+
+	createTransparentPaymentUC := ucPayment.NewCreateTransparentPayment(
+		paymentRepo,
+		transparentGateway,
+		auditDispatcher,
 		cfg.BackendURL,
 	)
 
@@ -408,6 +419,12 @@ func RegisterRoutes(
 		createMPPreferenceUC,
 	)
 
+	transparentPaymentHandler := handlers.NewTransparentPaymentHandler(
+		db,
+		createPaymentForAppointmentUC,
+		createTransparentPaymentUC,
+	)
+
 	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken)
 
 	orderHandler := handlers.NewOrderHandler(
@@ -478,6 +495,14 @@ func RegisterRoutes(
 				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
 			}, 30, 10, cfg.RedisURL),
 			mpPaymentHandler.CreatePreference,
+		)
+
+		publicAPI.POST(
+			"/:slug/appointments/:id/payment/transparent",
+			middleware.NewRateLimitByKey(func(c *gin.Context) string {
+				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
+			}, 30, 10, cfg.RedisURL),
+			transparentPaymentHandler.CreatePayment,
 		)
 
 		publicAPI.GET("/ticket/:token", publicTicketHandler.View)

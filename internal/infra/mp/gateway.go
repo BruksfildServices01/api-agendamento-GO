@@ -5,15 +5,16 @@ import (
 	"fmt"
 
 	"github.com/mercadopago/sdk-go/pkg/config"
+	"github.com/mercadopago/sdk-go/pkg/payment"
 	"github.com/mercadopago/sdk-go/pkg/preference"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 )
 
-// Gateway integra com a API de preferências do Mercado Pago (Checkout Pro).
-// Documentação: https://www.mercadopago.com.br/developers/pt/reference/preferences/_checkout_preferences/post
+// Gateway integra com as APIs do Mercado Pago (Checkout Pro e Checkout Transparente).
 type Gateway struct {
-	client preference.Client
+	preferenceClient preference.Client
+	paymentClient    payment.Client
 }
 
 // New cria o gateway MP com o access token fornecido.
@@ -23,12 +24,12 @@ func New(accessToken string) (*Gateway, error) {
 		return nil, fmt.Errorf("mp config: %w", err)
 	}
 	return &Gateway{
-		client: preference.NewClient(cfg),
+		preferenceClient: preference.NewClient(cfg),
+		paymentClient:    payment.NewClient(cfg),
 	}, nil
 }
 
-// CreatePreference cria uma preferência de pagamento no Mercado Pago
-// e retorna os dados necessários para iniciar o checkout.
+// CreatePreference cria uma preferência de pagamento no Mercado Pago (Checkout Pro).
 func (g *Gateway) CreatePreference(
 	amountCents int64,
 	description string,
@@ -58,7 +59,7 @@ func (g *Gateway) CreatePreference(
 		NotificationURL:   notificationURL,
 	}
 
-	resp, err := g.client.Create(context.Background(), req)
+	resp, err := g.preferenceClient.Create(context.Background(), req)
 	if err != nil {
 		return nil, fmt.Errorf("mp create preference: %w", err)
 	}
@@ -67,5 +68,41 @@ func (g *Gateway) CreatePreference(
 		PreferenceID: resp.ID,
 		InitPoint:    resp.InitPoint,
 		SandboxPoint: resp.SandboxInitPoint,
+	}, nil
+}
+
+// CreatePayment cria um pagamento via Checkout Transparente (PIX, cartão crédito/débito).
+func (g *Gateway) CreatePayment(input domain.TransparentPaymentInput) (*domain.TransparentPaymentResult, error) {
+	amountFloat := float64(input.AmountCents) / 100
+
+	req := payment.Request{
+		TransactionAmount: amountFloat,
+		Description:       input.Description,
+		ExternalReference: input.ExternalReference,
+		NotificationURL:   input.NotificationURL,
+		PaymentMethodID:   input.PaymentMethodID,
+		Token:             input.Token,
+		Installments:      input.Installments,
+		Payer: &payment.PayerRequest{
+			Email: input.PayerEmail,
+			Identification: &payment.IdentificationRequest{
+				Type:   "CPF",
+				Number: input.PayerCPF,
+			},
+		},
+	}
+
+	resp, err := g.paymentClient.Create(context.Background(), req)
+	if err != nil {
+		return nil, fmt.Errorf("mp create payment: %w", err)
+	}
+
+	return &domain.TransparentPaymentResult{
+		MPPaymentID:  int64(resp.ID),
+		Status:       resp.Status,
+		StatusDetail: resp.StatusDetail,
+		QRCode:       resp.PointOfInteraction.TransactionData.QRCode,
+		QRCodeBase64: resp.PointOfInteraction.TransactionData.QRCodeBase64,
+		TicketURL:    resp.PointOfInteraction.TransactionData.TicketURL,
 	}, nil
 }

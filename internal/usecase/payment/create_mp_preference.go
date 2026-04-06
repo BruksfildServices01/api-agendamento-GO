@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
@@ -101,7 +102,12 @@ func (uc *CreateMPPreference) Execute(
 		Pending: fmt.Sprintf("%s/%s/checkout/pagamento/mp/pendente", uc.appURL, slug),
 		Failure: fmt.Sprintf("%s/%s/checkout/pagamento/mp/erro", uc.appURL, slug),
 	}
-	notificationURL := fmt.Sprintf("%s/api/webhooks/mp", uc.backURL)
+
+	// Notification URL só é enviada quando a URL do backend é pública (não localhost).
+	notificationURL := ""
+	if !strings.Contains(uc.backURL, "localhost") && !strings.Contains(uc.backURL, "127.0.0.1") {
+		notificationURL = fmt.Sprintf("%s/api/webhooks/mp", uc.backURL)
+	}
 	externalReference := strconv.FormatUint(uint64(payment.ID), 10)
 	description := fmt.Sprintf("Agendamento #%d", appointmentID)
 

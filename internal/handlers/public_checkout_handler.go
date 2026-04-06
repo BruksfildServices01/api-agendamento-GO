@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -87,14 +86,6 @@ func (h *PublicCheckoutHandler) Checkout(c *gin.Context) {
 			httperr.Internal(c, "public_orchestrated_checkout_failed", "Erro ao finalizar checkout.")
 		}
 		return
-	}
-
-	if out.Payments.AppointmentPaymentRequired && out.Appointment != nil {
-		out.NextURLs.AppointmentPixURL = "/api/public/" + slug + "/appointments/" + strconv.FormatUint(uint64(out.Appointment.ID), 10) + "/payment/pix"
-	}
-
-	if out.Payments.OrderPaymentRequired && out.Order != nil {
-		out.NextURLs.OrderPixURL = "/api/public/" + slug + "/orders/" + strconv.FormatUint(uint64(out.Order.ID), 10) + "/payment/pix"
 	}
 
 	c.JSON(http.StatusCreated, out)

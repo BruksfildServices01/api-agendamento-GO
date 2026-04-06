@@ -190,7 +190,7 @@ func (uc *OrchestratedCheckout) Execute(
 
 	warning := ""
 	if multiplePaymentsRequired {
-		warning = "Existem dois pagamentos PIX pendentes: um do agendamento e outro do pedido."
+		warning = "Existem dois pagamentos pendentes: um do agendamento e outro do pedido."
 	}
 
 	response := &dto.PublicOrchestratedCheckoutResponseDTO{
@@ -231,22 +231,22 @@ func buildNextStep(appointmentPaymentRequired, orderPaymentRequired bool) dto.Pu
 	case appointmentPaymentRequired && orderPaymentRequired:
 		return dto.PublicOrchestratedCheckoutNextStepDTO{
 			Action:   "multiple_payments_required",
-			Method:   "pix",
-			Guidance: "O agendamento e o pedido foram criados e ambos possuem pagamento PIX pendente.",
+			Method:   "mp",
+			Guidance: "O agendamento e o pedido foram criados e ambos possuem pagamento pendente.",
 		}
 
 	case appointmentPaymentRequired:
 		return dto.PublicOrchestratedCheckoutNextStepDTO{
 			Action:   "appointment_payment_required",
-			Method:   "pix",
-			Guidance: "O agendamento foi criado e exige pagamento PIX para confirmação.",
+			Method:   "mp",
+			Guidance: "O agendamento foi criado e exige pagamento para confirmação.",
 		}
 
 	case orderPaymentRequired:
 		return dto.PublicOrchestratedCheckoutNextStepDTO{
 			Action:   "order_payment_required",
-			Method:   "pix",
-			Guidance: "O pedido foi criado e está pendente de pagamento PIX.",
+			Method:   "mp",
+			Guidance: "O pedido foi criado e está pendente de pagamento.",
 		}
 
 	default:

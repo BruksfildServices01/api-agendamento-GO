@@ -87,8 +87,10 @@ func Load() *Config {
 		// MERCADO PAGO
 		MPProvider:    getEnv("MP_PROVIDER", "mock"),
 		MPAccessToken: getEnv("MP_ACCESS_TOKEN", ""),
-		BackendURL:    getEnv("BACKEND_URL", "http://localhost:8080"),
+		BackendURL:    strings.TrimRight(getEnv("BACKEND_URL", "http://localhost:8080"), "/"),
 	}
+
+	cfg.AppURL = strings.TrimRight(cfg.AppURL, "/")
 
 	// =========================
 	// VALIDAÇÃO DE EMAIL

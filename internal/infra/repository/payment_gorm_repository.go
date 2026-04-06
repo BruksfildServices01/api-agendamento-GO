@@ -156,6 +156,29 @@ func (r *PaymentGormRepository) GetByTxIDGlobal(
 	return &p, nil
 }
 
+// GLOBAL lookup by ID (MP webhook only)
+func (r *PaymentGormRepository) GetByIDGlobal(
+	ctx context.Context,
+	id uint,
+) (*models.Payment, error) {
+
+	var p models.Payment
+
+	err := r.db.WithContext(ctx).
+		Where("id = ?", id).
+		First(&p).
+		Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
+}
+
 func (r *PaymentGormRepository) ListExpiredPending(
 	ctx context.Context,
 	barbershopID uint,

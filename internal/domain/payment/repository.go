@@ -13,6 +13,11 @@ type Repository interface {
 		txid string,
 	) (*models.Payment, error)
 
+	GetByIDGlobal(
+		ctx context.Context,
+		id uint,
+	) (*models.Payment, error)
+
 	BeginTx(
 		ctx context.Context,
 		barbershopID uint,

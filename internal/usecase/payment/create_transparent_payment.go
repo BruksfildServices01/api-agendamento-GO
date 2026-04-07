@@ -101,7 +101,7 @@ func (uc *CreateTransparentPayment) Execute(
 	if domain.Status(payment.Status) != domain.StatusPending {
 		return nil, nil, httperr.ErrBusiness("payment_not_pending")
 	}
-	if payment.Amount <= 100 {
+	if payment.Amount < 100 {
 		return nil, nil, httperr.ErrBusiness("invalid_amount")
 	}
 	if input.PayerEmail == "" {

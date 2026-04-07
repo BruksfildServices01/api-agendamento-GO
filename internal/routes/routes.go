@@ -516,6 +516,13 @@ func RegisterRoutes(
 		mpWebhookHandler.Handle,
 	)
 
+	// Rota alternativa sem prefixo /api — o painel do MP envia para /webhooks/mp
+	r.POST(
+		"/webhooks/mp",
+		middleware.MaxBodySize(64*1024),
+		mpWebhookHandler.Handle,
+	)
+
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/login", authHandler.Login)
 

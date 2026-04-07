@@ -90,7 +90,7 @@ func (uc *CreatePaymentForAppointment) Execute(
 	}
 
 	amountCents := product.Price
-	if amountCents <= 100 {
+	if amountCents < 100 {
 		return nil, domain.ErrInvalidAmount()
 	}
 

@@ -60,7 +60,7 @@ func (uc *CreatePaymentForAppointment) Execute(
 
 	expMinutes := cfg.PixExpirationMinutes
 	if expMinutes <= 0 {
-		expMinutes = 15
+		expMinutes = 4
 	}
 
 	now := time.Now().UTC()

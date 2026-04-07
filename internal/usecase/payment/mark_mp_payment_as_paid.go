@@ -80,6 +80,12 @@ func (uc *MarkMPPaymentAsPaid) Execute(
 
 	barbershopID := paymentBase.BarbershopID
 
+	// Se já está em estado final, o pagamento foi processado (aprovação imediata via
+	// create_transparent_payment). O webhook chegou tarde — não há nada a fazer.
+	if domainPayment.Status(paymentBase.Status).IsFinal() {
+		return nil
+	}
+
 	tx, err := uc.paymentRepo.BeginTx(ctx, barbershopID)
 	if err != nil {
 		return fmt.Errorf("begin tx failed: %w", err)

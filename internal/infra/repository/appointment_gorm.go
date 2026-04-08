@@ -381,11 +381,12 @@ func (r *AppointmentGormRepository) ListAppointmentsForDay(
 
 	err := r.db.WithContext(ctx).
 		Where(
-			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ?",
+			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ? AND status NOT IN ?",
 			barbershopID,
 			barberID,
 			start,
 			end,
+			[]string{"cancelled", "no_show"},
 		).
 		Order("start_time ASC").
 		Find(&apps).

@@ -26,17 +26,21 @@ func CanCancel(current Status) error {
 }
 
 func CanComplete(current Status) error {
-	if current != StatusScheduled {
+	switch current {
+	case StatusScheduled, StatusAwaitingPayment:
+		return nil
+	default:
 		return httperr.ErrBusiness("invalid_state")
 	}
-	return nil
 }
 
 func CanMarkNoShow(current Status) error {
-	if current != StatusScheduled {
+	switch current {
+	case StatusScheduled, StatusAwaitingPayment:
+		return nil
+	default:
 		return httperr.ErrBusiness("invalid_state")
 	}
-	return nil
 }
 
 // --------------------------------------

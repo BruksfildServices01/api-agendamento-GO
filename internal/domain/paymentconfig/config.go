@@ -6,4 +6,7 @@ type Config struct {
 	RequirePixOnBooking  bool
 	PixExpirationMinutes int
 	DefaultRequirement   PaymentRequirement
+
+	MPAccessToken string
+	MPPublicKey   string
 }

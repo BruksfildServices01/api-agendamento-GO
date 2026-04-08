@@ -425,7 +425,7 @@ func RegisterRoutes(
 		createTransparentPaymentUC,
 	)
 
-	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken)
+	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken, db)
 
 	orderHandler := handlers.NewOrderHandler(
 		createOrderUC,

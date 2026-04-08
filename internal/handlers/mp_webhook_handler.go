@@ -2,15 +2,19 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mercadopago/sdk-go/pkg/config"
 	"github.com/mercadopago/sdk-go/pkg/payment"
+	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
 
@@ -18,24 +22,20 @@ import (
 // O MP envia apenas o tipo e o ID do pagamento; o handler busca
 // os detalhes via API para extrair o external_reference e o status.
 type MPWebhookHandler struct {
-	markMPPaid    *ucPayment.MarkMPPaymentAsPaid
-	paymentClient payment.Client
+	markMPPaid        *ucPayment.MarkMPPaymentAsPaid
+	globalAccessToken string
+	db                *gorm.DB
 }
 
 func NewMPWebhookHandler(
 	markMPPaid *ucPayment.MarkMPPaymentAsPaid,
-	accessToken string,
+	globalAccessToken string,
+	db *gorm.DB,
 ) *MPWebhookHandler {
-	var paymentClient payment.Client
-	if accessToken != "" {
-		cfg, err := config.New(accessToken)
-		if err == nil {
-			paymentClient = payment.NewClient(cfg)
-		}
-	}
 	return &MPWebhookHandler{
-		markMPPaid:    markMPPaid,
-		paymentClient: paymentClient,
+		markMPPaid:        markMPPaid,
+		globalAccessToken: globalAccessToken,
+		db:                db,
 	}
 }
 
@@ -49,11 +49,11 @@ type mpNotification struct {
 }
 
 // Handle processa a notificação IPN do MP.
-// POST /api/webhooks/mp
+// POST /api/webhooks/mp  ou  POST /webhooks/mp
 func (h *MPWebhookHandler) Handle(c *gin.Context) {
 	var notif mpNotification
 	if err := c.ShouldBindJSON(&notif); err != nil {
-		c.Status(http.StatusOK) // webhook nunca retorna erro
+		c.Status(http.StatusOK)
 		return
 	}
 
@@ -73,17 +73,56 @@ func (h *MPWebhookHandler) Handle(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (h *MPWebhookHandler) processPayment(ctx context.Context, mpPaymentIDStr string) error {
-	if h.paymentClient == nil {
-		return fmt.Errorf("MP payment client not configured")
+// resolveAccessToken descobre qual access token usar para buscar o pagamento no MP.
+// Primeiro tenta encontrar o pagamento no banco pelo TxID e pegar o token da barbearia.
+// Se não achar ou a barbearia não tiver token próprio, usa o token global.
+func (h *MPWebhookHandler) resolveAccessToken(ctx context.Context, mpPaymentIDStr string) string {
+	txid := "mp_pay:" + mpPaymentIDStr
+
+	var p models.Payment
+	err := h.db.WithContext(ctx).
+		Where("tx_id = ?", txid).
+		Select("barbershop_id").
+		First(&p).Error
+
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[MP WEBHOOK] resolveAccessToken DB error: %v", err)
+		}
+		return h.globalAccessToken
 	}
+
+	var cfg models.BarbershopPaymentConfig
+	err = h.db.WithContext(ctx).
+		Where("barbershop_id = ?", p.BarbershopID).
+		Select("mp_access_token").
+		First(&cfg).Error
+
+	if err != nil || strings.TrimSpace(cfg.MPAccessToken) == "" {
+		return h.globalAccessToken
+	}
+
+	return cfg.MPAccessToken
+}
+
+func (h *MPWebhookHandler) processPayment(ctx context.Context, mpPaymentIDStr string) error {
+	accessToken := h.resolveAccessToken(ctx, mpPaymentIDStr)
+	if accessToken == "" {
+		return fmt.Errorf("no MP access token available")
+	}
+
+	cfg, err := config.New(accessToken)
+	if err != nil {
+		return fmt.Errorf("mp config error: %w", err)
+	}
+	paymentClient := payment.NewClient(cfg)
 
 	mpPaymentID, err := strconv.Atoi(mpPaymentIDStr)
 	if err != nil {
 		return fmt.Errorf("invalid payment id %q: %w", mpPaymentIDStr, err)
 	}
 
-	resp, err := h.paymentClient.Get(ctx, mpPaymentID)
+	resp, err := paymentClient.Get(ctx, mpPaymentID)
 	if err != nil {
 		return fmt.Errorf("failed to get MP payment: %w", err)
 	}

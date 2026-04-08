@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
@@ -51,6 +52,22 @@ type transparentPaymentResponse struct {
 	QRCode       string `json:"qr_code,omitempty"`
 	QRCodeBase64 string `json:"qr_code_base64,omitempty"`
 	TicketURL    string `json:"ticket_url,omitempty"`
+}
+
+func mapTransparentPaymentError(c *gin.Context, slug string, appointmentID int, err error) {
+	switch {
+	case httperr.IsBusiness(err, "payment_not_found"):
+		httperr.BadRequest(c, "payment_not_found", "Pagamento não encontrado.")
+	case httperr.IsBusiness(err, "payment_not_pending"):
+		httperr.BadRequest(c, "payment_not_pending", "Pagamento não está pendente.")
+	case httperr.IsBusiness(err, "invalid_amount"):
+		httperr.BadRequest(c, "invalid_amount", "Valor inválido para pagamento.")
+	case httperr.IsBusiness(err, "payer_email_required"):
+		httperr.BadRequest(c, "payer_email_required", "E-mail do pagador é obrigatório.")
+	default:
+		log.Printf("[TRANSPARENT] CreatePayment error slug=%s appointment=%d: %v", slug, appointmentID, err)
+		httperr.Internal(c, "payment_creation_failed", "Erro ao criar pagamento.")
+	}
 }
 
 // POST /api/public/:slug/appointments/:id/payment/transparent
@@ -112,6 +129,39 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		}
 	}
 
+	// Tenta usar o gateway da própria barbearia se ela tiver token configurado
+	var paymentCfg models.BarbershopPaymentConfig
+	if dbErr := h.db.WithContext(ctx).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error; dbErr == nil {
+		if paymentCfg.MPAccessToken != "" {
+			if g, err := mp.New(paymentCfg.MPAccessToken); err == nil {
+				defer func() {}()
+				payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
+					BarbershopID:    shop.ID,
+					AppointmentID:   uint(appointmentID),
+					PayerEmail:      req.PayerEmail,
+					PayerCPF:        req.PayerCPF,
+					PaymentMethodID: req.PaymentMethodID,
+					Token:           req.Token,
+					Installments:    req.Installments,
+				}, g)
+				if err != nil {
+					mapTransparentPaymentError(c, slug, appointmentID, err)
+					return
+				}
+				c.JSON(http.StatusCreated, transparentPaymentResponse{
+					PaymentID:    payment.ID,
+					MPPaymentID:  result.MPPaymentID,
+					Status:       result.Status,
+					StatusDetail: result.StatusDetail,
+					QRCode:       result.QRCode,
+					QRCodeBase64: result.QRCodeBase64,
+					TicketURL:    result.TicketURL,
+				})
+				return
+			}
+		}
+	}
+
 	payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
 		BarbershopID:    shop.ID,
 		AppointmentID:   uint(appointmentID),
@@ -122,19 +172,7 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		Installments:    req.Installments,
 	})
 	if err != nil {
-		switch {
-		case httperr.IsBusiness(err, "payment_not_found"):
-			httperr.BadRequest(c, "payment_not_found", "Pagamento não encontrado.")
-		case httperr.IsBusiness(err, "payment_not_pending"):
-			httperr.BadRequest(c, "payment_not_pending", "Pagamento não está pendente.")
-		case httperr.IsBusiness(err, "invalid_amount"):
-			httperr.BadRequest(c, "invalid_amount", "Valor inválido para pagamento.")
-		case httperr.IsBusiness(err, "payer_email_required"):
-			httperr.BadRequest(c, "payer_email_required", "E-mail do pagador é obrigatório.")
-		default:
-			log.Printf("[TRANSPARENT] CreatePayment error slug=%s appointment=%d: %v", slug, appointmentID, err)
-			httperr.Internal(c, "payment_creation_failed", "Erro ao criar pagamento.")
-		}
+		mapTransparentPaymentError(c, slug, appointmentID, err)
 		return
 	}
 

@@ -528,10 +528,9 @@ func (r *AppointmentGormRepository) GetOperationalSummary(
 ) (*domain.OperationalSummary, error) {
 
 	type resultRow struct {
-		TotalReceived  int64
-		CountCompleted int64
-		CountCancelled int64
-		CountNoShow    int64
+		TotalReceived     int64
+		CountCompleted    int64
+		CountProductsSold int64
 	}
 
 	var row resultRow
@@ -545,22 +544,26 @@ func (r *AppointmentGormRepository) GetOperationalSummary(
 			) AS total_received,
 
 			COUNT(*) FILTER (WHERE a.status = 'completed') AS count_completed,
-			COUNT(*) FILTER (WHERE a.status = 'cancelled') AS count_cancelled,
-			COUNT(*) FILTER (WHERE a.status = 'no_show')   AS count_no_show
+
+			(SELECT COALESCE(SUM(oi.quantity), 0)
+			 FROM order_items oi
+			 JOIN orders o ON o.id = oi.order_id
+			 WHERE o.barbershop_id = ?
+			   AND o.status = 'paid'
+			) AS count_products_sold
 
 		FROM appointments a
 		WHERE a.barbershop_id = ?
-	`, barbershopID, barbershopID).Scan(&row).Error
+	`, barbershopID, barbershopID, barbershopID).Scan(&row).Error
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &domain.OperationalSummary{
-		TotalReceived:  row.TotalReceived,
-		CountCompleted: int(row.CountCompleted),
-		CountCancelled: int(row.CountCancelled),
-		CountNoShow:    int(row.CountNoShow),
+		TotalReceived:     row.TotalReceived,
+		CountCompleted:    int(row.CountCompleted),
+		CountProductsSold: int(row.CountProductsSold),
 	}, nil
 }
 

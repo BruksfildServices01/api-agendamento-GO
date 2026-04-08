@@ -20,6 +20,8 @@ type UpdatePaymentPoliciesInput struct {
 	DefaultRequirement   domain.PaymentRequirement      `json:"default_requirement"`
 	PixExpirationMinutes *int                           `json:"pix_expiration_minutes,omitempty"`
 	Categories           []domain.CategoryPaymentPolicy `json:"categories"`
+	MPAccessToken        *string                        `json:"mp_access_token,omitempty"`
+	MPPublicKey          *string                        `json:"mp_public_key,omitempty"`
 }
 
 func (uc *UpdatePaymentPolicies) Execute(
@@ -37,6 +39,12 @@ func (uc *UpdatePaymentPolicies) Execute(
 	cfg.DefaultRequirement = in.DefaultRequirement
 	if in.PixExpirationMinutes != nil {
 		cfg.PixExpirationMinutes = *in.PixExpirationMinutes
+	}
+	if in.MPAccessToken != nil {
+		cfg.MPAccessToken = *in.MPAccessToken
+	}
+	if in.MPPublicKey != nil {
+		cfg.MPPublicKey = *in.MPPublicKey
 	}
 
 	// 2) Valida invariantes do config

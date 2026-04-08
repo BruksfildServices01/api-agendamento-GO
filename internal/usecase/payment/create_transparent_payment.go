@@ -54,7 +54,12 @@ type TransparentPaymentInput struct {
 func (uc *CreateTransparentPayment) Execute(
 	ctx context.Context,
 	input TransparentPaymentInput,
+	gatewayOverride ...domain.TransparentGateway,
 ) (*models.Payment, *domain.TransparentPaymentResult, error) {
+	gateway := uc.gateway
+	if len(gatewayOverride) > 0 && gatewayOverride[0] != nil {
+		gateway = gatewayOverride[0]
+	}
 
 	// ==================================================
 	// 1) BEGIN TX
@@ -126,7 +131,7 @@ func (uc *CreateTransparentPayment) Execute(
 		notificationURL = fmt.Sprintf("%s/api/webhooks/mp", uc.backURL)
 	}
 
-	result, err := uc.gateway.CreatePayment(domain.TransparentPaymentInput{
+	result, err := gateway.CreatePayment(domain.TransparentPaymentInput{
 		AmountCents:       payment.Amount,
 		Description:       description,
 		ExternalReference: externalReference,

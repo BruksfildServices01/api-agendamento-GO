@@ -121,18 +121,9 @@ func (uc *CompleteAppointment) Execute(
 			return httperr.ErrBusiness("invalid_final_amount")
 		}
 
-		if ap.Status == models.AppointmentStatus(domain.StatusAwaitingPayment) {
-			payment, err := uc.paymentRepo.GetByAppointmentID(ctx, barbershopID, ap.ID)
-			if err != nil {
-				return err
-			}
-			if payment == nil {
-				return httperr.ErrBusiness("appointment_payment_not_found")
-			}
-			if payment.Status != models.PaymentStatus(domainPayment.StatusPaid) {
-				return httperr.ErrBusiness("appointment_payment_not_paid")
-			}
-		}
+		// Quando o barbeiro conclui manualmente um agendamento awaiting_payment,
+		// significa que recebeu o pagamento por outro meio (dinheiro, cartão, etc.).
+		// Não bloqueia — o método de pagamento selecionado no modal é registrado normalmente.
 
 		// Resolves the actual service: use ActualServiceID if provided, else the scheduled one.
 		actualServiceID := ap.BarberProductID
@@ -176,7 +167,7 @@ func (uc *CompleteAppointment) Execute(
 		}
 
 		subscriptionCovered := false
-		requiresNormalCharging := true
+		requiresNormalCharging := false
 
 		var subscriptionConsumeStatus *string
 		var subscriptionPlanID *uint
@@ -190,6 +181,12 @@ func (uc *CompleteAppointment) Execute(
 			case ucSubscription.ConsumeCutStatusConsumed:
 				subscriptionCovered = true
 				requiresNormalCharging = false
+			case ucSubscription.ConsumeCutStatusNoActiveSubscription:
+				// Cliente não tem assinatura — cobrança normal, sem confirmação necessária.
+				requiresNormalCharging = false
+			default:
+				// Assinatura existe mas não cobriu (limite esgotado, serviço não permitido, etc.)
+				requiresNormalCharging = true
 			}
 		}
 

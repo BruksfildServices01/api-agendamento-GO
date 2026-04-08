@@ -20,6 +20,8 @@ type PaymentPoliciesOutput struct {
 	DefaultRequirement   domain.PaymentRequirement      `json:"default_requirement"`
 	PixExpirationMinutes int                            `json:"pix_expiration_minutes"`
 	Categories           []domain.CategoryPaymentPolicy `json:"categories"`
+	MPPublicKey          string                         `json:"mp_public_key"`
+	MPAccessTokenSet     bool                           `json:"mp_access_token_set"`
 }
 
 func (uc *GetPaymentPolicies) Execute(
@@ -41,5 +43,7 @@ func (uc *GetPaymentPolicies) Execute(
 		DefaultRequirement:   cfg.DefaultRequirement,
 		PixExpirationMinutes: cfg.PixExpirationMinutes,
 		Categories:           categories,
+		MPPublicKey:          cfg.MPPublicKey,
+		MPAccessTokenSet:     cfg.MPAccessToken != "",
 	}, nil
 }

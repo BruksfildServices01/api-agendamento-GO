@@ -53,6 +53,8 @@ func (r *BarbershopPaymentConfigGormRepository) GetByBarbershopID(
 		BarbershopID:         m.BarbershopID,
 		DefaultRequirement:   paymentconfig.PaymentRequirement(m.DefaultRequirement),
 		PixExpirationMinutes: m.PixExpirationMinutes,
+		MPAccessToken:        m.MPAccessToken,
+		MPPublicKey:          m.MPPublicKey,
 	}, nil
 }
 
@@ -76,6 +78,8 @@ func (r *BarbershopPaymentConfigGormRepository) UpsertConfig(
 				BarbershopID:         cfg.BarbershopID,
 				DefaultRequirement:   models.PaymentRequirement(cfg.DefaultRequirement),
 				PixExpirationMinutes: cfg.PixExpirationMinutes,
+				MPAccessToken:        cfg.MPAccessToken,
+				MPPublicKey:          cfg.MPPublicKey,
 			}).Error
 		}
 		return err
@@ -84,6 +88,8 @@ func (r *BarbershopPaymentConfigGormRepository) UpsertConfig(
 	// UPDATE
 	m.DefaultRequirement = models.PaymentRequirement(cfg.DefaultRequirement)
 	m.PixExpirationMinutes = cfg.PixExpirationMinutes
+	m.MPAccessToken = cfg.MPAccessToken
+	m.MPPublicKey = cfg.MPPublicKey
 
 	return r.db.WithContext(ctx).Save(&m).Error
 }

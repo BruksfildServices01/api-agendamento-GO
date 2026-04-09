@@ -23,6 +23,7 @@ type CreatePlanInput struct {
 	CutsIncluded      int
 	DiscountPercent   int
 	ServiceIDs        []uint
+	CategoryIDs       []uint
 }
 
 func (uc *CreatePlan) Execute(
@@ -54,7 +55,7 @@ func (uc *CreatePlan) Execute(
 		return ErrInvalidDiscount
 	}
 
-	if len(input.ServiceIDs) == 0 {
+	if len(input.ServiceIDs) == 0 && len(input.CategoryIDs) == 0 {
 		return ErrServiceIDsRequired
 	}
 
@@ -64,17 +65,34 @@ func (uc *CreatePlan) Execute(
 		}
 	}
 
-	count, err := uc.repo.CountServicesByIDs(
-		ctx,
-		input.BarbershopID,
-		input.ServiceIDs,
-	)
-	if err != nil {
-		return err
+	if len(input.ServiceIDs) > 0 {
+		count, err := uc.repo.CountServicesByIDs(
+			ctx,
+			input.BarbershopID,
+			input.ServiceIDs,
+		)
+		if err != nil {
+			return err
+		}
+
+		if count != int64(len(input.ServiceIDs)) {
+			return ErrInvalidServiceIDs
+		}
 	}
 
-	if count != int64(len(input.ServiceIDs)) {
-		return ErrInvalidServiceIDs
+	if len(input.CategoryIDs) > 0 {
+		for _, catID := range input.CategoryIDs {
+			if catID == 0 {
+				return ErrInvalidServiceID
+			}
+		}
+		count, err := uc.repo.CountCategoriesByIDs(ctx, input.BarbershopID, input.CategoryIDs)
+		if err != nil {
+			return err
+		}
+		if count != int64(len(input.CategoryIDs)) {
+			return ErrInvalidServiceIDs
+		}
 	}
 
 	plan := &domain.Plan{
@@ -87,5 +105,5 @@ func (uc *CreatePlan) Execute(
 		Active:            true,
 	}
 
-	return uc.repo.CreatePlan(ctx, plan, input.ServiceIDs)
+	return uc.repo.CreatePlan(ctx, plan, input.ServiceIDs, input.CategoryIDs)
 }

@@ -79,7 +79,14 @@ func (uc *GetAvailability) Execute(
 		return nil, err
 	}
 
-	// 5) Slots
+	// 5) Antecedência mínima — mesmo critério do checkout
+	minAdvance := shop.MinAdvanceMinutes
+	if minAdvance <= 0 {
+		minAdvance = 120
+	}
+	earliest := time.Now().In(loc).Add(time.Duration(minAdvance) * time.Minute)
+
+	// 6) Slots
 	slotDuration := time.Duration(product.DurationMin) * time.Minute
 	slots := make([]domain.TimeSlot, 0)
 
@@ -88,6 +95,11 @@ func (uc *GetAvailability) Execute(
 	for cur := dayStart; cur.Add(slotDuration).Before(dayEnd) || cur.Add(slotDuration).Equal(dayEnd); cur = cur.Add(slotDuration) {
 		slotStart := cur
 		slotEnd := cur.Add(slotDuration)
+
+		// Oculta slots que o checkout rejeitaria por antecedência insuficiente
+		if slotStart.Before(earliest) {
+			continue
+		}
 
 		if hasLunch && slotStart.Before(lunchEnd) && slotEnd.After(lunchStart) {
 			continue

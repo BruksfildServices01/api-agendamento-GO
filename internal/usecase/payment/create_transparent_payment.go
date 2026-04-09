@@ -7,9 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domainAppointment "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
+	domainTicket "github.com/BruksfildServices01/barber-scheduler/internal/domain/ticket"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
@@ -20,10 +24,14 @@ const mpPayPrefix = "mp_pay:"
 // Suporta PIX, cartão de crédito e cartão de débito.
 // É idempotente: se já existir um pagamento MP criado para este agendamento, reutiliza.
 type CreateTransparentPayment struct {
-	repo    domain.Repository
-	gateway domain.TransparentGateway
-	audit   *audit.Dispatcher
-	backURL string
+	repo         domain.Repository
+	gateway      domain.TransparentGateway
+	audit        *audit.Dispatcher
+	backURL      string
+	db           *gorm.DB
+	apptNotifier domainNotification.AppointmentNotifier
+	ticketRepo   domainTicket.Repository
+	appURL       string
 }
 
 func NewCreateTransparentPayment(
@@ -31,12 +39,20 @@ func NewCreateTransparentPayment(
 	gateway domain.TransparentGateway,
 	audit *audit.Dispatcher,
 	backURL string,
+	db *gorm.DB,
+	apptNotifier domainNotification.AppointmentNotifier,
+	ticketRepo domainTicket.Repository,
+	appURL string,
 ) *CreateTransparentPayment {
 	return &CreateTransparentPayment{
-		repo:    repo,
-		gateway: gateway,
-		audit:   audit,
-		backURL: backURL,
+		repo:         repo,
+		gateway:      gateway,
+		audit:        audit,
+		backURL:      backURL,
+		db:           db,
+		apptNotifier: apptNotifier,
+		ticketRepo:   ticketRepo,
+		appURL:       appURL,
 	}
 }
 
@@ -49,6 +65,10 @@ type TransparentPaymentInput struct {
 	PaymentMethodID string // "pix", "visa", "master", "elo", "amex", "debelo"
 	Token           string // token do cartão (vazio para PIX)
 	Installments    int    // 1 para PIX e débito
+	// Opcional: quando há um pedido (produtos) associado ao agendamento.
+	// O valor do pedido é somado ao valor do agendamento no pagamento.
+	OrderID          *uint
+	OrderAmountCents int64
 }
 
 func (uc *CreateTransparentPayment) Execute(
@@ -101,16 +121,27 @@ func (uc *CreateTransparentPayment) Execute(
 	}
 
 	// ==================================================
-	// 4) Validações
+	// 4) Validações + ajuste de valor combinado (serviço + pedido)
 	// ==================================================
 	if domain.Status(payment.Status) != domain.StatusPending {
 		return nil, nil, httperr.ErrBusiness("payment_not_pending")
 	}
-	if payment.Amount < 100 {
-		return nil, nil, httperr.ErrBusiness("invalid_amount")
-	}
 	if input.PayerEmail == "" {
 		return nil, nil, httperr.ErrBusiness("payer_email_required")
+	}
+
+	// Se há um pedido associado, combina o valor e vincula via BundledOrderID.
+	// Idempotente: só atualiza se ainda não vinculado.
+	if input.OrderID != nil && input.OrderAmountCents > 0 && payment.BundledOrderID == nil {
+		payment.Amount += input.OrderAmountCents
+		payment.BundledOrderID = input.OrderID
+		if err := tx.UpdatePaymentTx(ctx, input.BarbershopID, payment); err != nil {
+			return nil, nil, fmt.Errorf("failed to update payment with order amount: %w", err)
+		}
+	}
+
+	if payment.Amount < 100 {
+		return nil, nil, httperr.ErrBusiness("invalid_amount")
 	}
 
 	installments := input.Installments
@@ -182,6 +213,29 @@ func (uc *CreateTransparentPayment) Execute(
 				}
 			}
 		}
+
+		// Se há um pedido vinculado, marcar como pago e dar baixa no estoque.
+		if payment.BundledOrderID != nil {
+			order, err := tx.GetOrderForUpdate(ctx, input.BarbershopID, *payment.BundledOrderID)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to lock order: %w", err)
+			}
+			if order != nil && order.Status == models.OrderStatusPending {
+				items, err := tx.ListOrderItems(ctx, input.BarbershopID, order.ID)
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to list order items: %w", err)
+				}
+				for _, it := range items {
+					if err := tx.DecreaseProductStock(ctx, input.BarbershopID, it.ProductID, it.Quantity); err != nil {
+						return nil, nil, fmt.Errorf("failed to decrease stock: %w", err)
+					}
+				}
+				order.Status = models.OrderStatusPaid
+				if err := tx.UpdateOrderTx(ctx, order); err != nil {
+					return nil, nil, fmt.Errorf("failed to update order: %w", err)
+				}
+			}
+		}
 	} else {
 		if err := tx.UpdatePaymentTx(ctx, input.BarbershopID, payment); err != nil {
 			return nil, nil, fmt.Errorf("failed to update payment: %w", err)
@@ -203,6 +257,12 @@ func (uc *CreateTransparentPayment) Execute(
 			"status":            result.Status,
 		},
 	})
+
+	// Send confirmation email only when payment is immediately approved (card).
+	if result.Status == "approved" && payment.AppointmentID != nil &&
+		uc.apptNotifier != nil && uc.db != nil {
+		sendAppointmentConfirmedEmail(ctx, uc.db, uc.apptNotifier, uc.ticketRepo, uc.appURL, *payment.AppointmentID)
+	}
 
 	return payment, result, nil
 }

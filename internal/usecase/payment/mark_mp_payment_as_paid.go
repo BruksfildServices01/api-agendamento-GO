@@ -6,11 +6,14 @@ import (
 	"strconv"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domainAppointment "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 	domainOrder "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
+	domainTicket "github.com/BruksfildServices01/barber-scheduler/internal/domain/ticket"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
@@ -21,10 +24,14 @@ const mpPaidEvent = "mp_paid"
 // Recebe o ID interno do pagamento (external_reference da preferência) e o
 // mpPaymentID gerado pelo MP (usado como chave de idempotência).
 type MarkMPPaymentAsPaid struct {
-	paymentRepo domainPayment.Repository
-	audit       *audit.Dispatcher
-	notifier    domainNotification.Notifier
-	idem        idempotency.Store
+	paymentRepo  domainPayment.Repository
+	audit        *audit.Dispatcher
+	notifier     domainNotification.Notifier
+	idem         idempotency.Store
+	db           *gorm.DB
+	apptNotifier domainNotification.AppointmentNotifier
+	ticketRepo   domainTicket.Repository
+	appURL       string
 }
 
 func NewMarkMPPaymentAsPaid(
@@ -32,12 +39,20 @@ func NewMarkMPPaymentAsPaid(
 	audit *audit.Dispatcher,
 	notifier domainNotification.Notifier,
 	idem idempotency.Store,
+	db *gorm.DB,
+	apptNotifier domainNotification.AppointmentNotifier,
+	ticketRepo domainTicket.Repository,
+	appURL string,
 ) *MarkMPPaymentAsPaid {
 	return &MarkMPPaymentAsPaid{
-		paymentRepo: paymentRepo,
-		audit:       audit,
-		notifier:    notifier,
-		idem:        idem,
+		paymentRepo:  paymentRepo,
+		audit:        audit,
+		notifier:     notifier,
+		idem:         idem,
+		db:           db,
+		apptNotifier: apptNotifier,
+		ticketRepo:   ticketRepo,
+		appURL:       appURL,
 	}
 }
 
@@ -155,8 +170,13 @@ func (uc *MarkMPPaymentAsPaid) Execute(
 		}
 	}
 
-	if payment.OrderID != nil {
-		order, err = tx.GetOrderForUpdate(ctx, barbershopID, *payment.OrderID)
+	// Marca pedido como pago — tanto via order_id (pedido standalone) quanto bundled_order_id (pedido embutido no pagamento do agendamento).
+	bundledOrderID := payment.OrderID
+	if bundledOrderID == nil {
+		bundledOrderID = payment.BundledOrderID
+	}
+	if bundledOrderID != nil {
+		order, err = tx.GetOrderForUpdate(ctx, barbershopID, *bundledOrderID)
 		if err != nil {
 			return fmt.Errorf("failed to lock order: %w", err)
 		}
@@ -211,6 +231,11 @@ func (uc *MarkMPPaymentAsPaid) Execute(
 			Entity:       "order",
 			EntityID:     &order.ID,
 		})
+	}
+
+	// Send appointment confirmation email after payment is confirmed.
+	if ap != nil && uc.apptNotifier != nil && uc.db != nil {
+		sendAppointmentConfirmedEmail(ctx, uc.db, uc.apptNotifier, uc.ticketRepo, uc.appURL, ap.ID)
 	}
 
 	return nil

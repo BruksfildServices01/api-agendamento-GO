@@ -18,6 +18,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/storage"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucAppointment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
@@ -133,6 +134,10 @@ func RegisterRoutes(
 		transparentGateway,
 		auditDispatcher,
 		cfg.BackendURL,
+		db,
+		apptNotifier,
+		ticketRepo,
+		cfg.AppURL,
 	)
 
 	markMPPaymentAsPaidUC := ucPayment.NewMarkMPPaymentAsPaid(
@@ -140,6 +145,10 @@ func RegisterRoutes(
 		auditDispatcher,
 		notifier,
 		idemStore,
+		db,
+		apptNotifier,
+		ticketRepo,
+		cfg.AppURL,
 	)
 
 	listPaymentsUC := ucPayment.NewListPaymentsForBarbershop(paymentRepo)
@@ -339,6 +348,8 @@ func RegisterRoutes(
 		updateServiceUC,
 	)
 
+	serviceCategoryHandler := handlers.NewServiceCategoryHandler(db)
+
 	serviceSuggestionHandler := handlers.NewServiceSuggestionHandler(
 		setServiceSuggestionUC,
 		getServiceSuggestionUC,
@@ -431,7 +442,10 @@ func RegisterRoutes(
 		createOrderUC,
 		getOrderUC,
 		listOrdersAdminUC,
+		orderRepo,
 	)
+
+	closureListHandler := handlers.NewClosureListHandler(db)
 
 	paymentHandler := handlers.NewPaymentHandler(db, listPaymentsUC)
 	paymentReportHandler := handlers.NewPaymentReportHandler(
@@ -460,6 +474,22 @@ func RegisterRoutes(
 
 	adjustClosureUC := ucAppointment.NewAdjustClosure(db, auditDispatcher)
 	closureAdjustmentHandler := handlers.NewClosureAdjustmentHandler(adjustClosureUC)
+
+	// R2 storage — only active when credentials are configured.
+	var imageHandler *handlers.ImageHandler
+	if cfg.R2AccountID != "" && cfg.R2BucketName != "" {
+		r2 := storage.NewR2Service(
+			cfg.R2AccountID,
+			cfg.R2AccessKeyID,
+			cfg.R2SecretAccessKey,
+			cfg.R2BucketName,
+			cfg.R2PublicURL,
+		)
+		imageHandler = handlers.NewImageHandler(db, r2)
+		log.Println("[R2] storage enabled, bucket:", cfg.R2BucketName)
+	} else {
+		log.Println("[R2] storage disabled (credentials not set)")
+	}
 
 	subscriptionHandler := handlers.NewSubscriptionHandler(
 		activateSubscriptionUC,
@@ -538,6 +568,11 @@ func RegisterRoutes(
 		secured.PUT("/me/services/:id", serviceHandler.Update)
 		secured.DELETE("/me/services/:id", serviceHandler.Delete)
 
+		secured.GET("/me/service-categories", serviceCategoryHandler.List)
+		secured.POST("/me/service-categories", serviceCategoryHandler.Create)
+		secured.PUT("/me/service-categories/:id", serviceCategoryHandler.Update)
+		secured.DELETE("/me/service-categories/:id", serviceCategoryHandler.Delete)
+
 		secured.GET("/me/services/:id/suggestion", serviceSuggestionHandler.Get)
 		secured.PUT("/me/services/:id/suggestion", serviceSuggestionHandler.Set)
 		secured.DELETE("/me/services/:id/suggestion", serviceSuggestionHandler.Remove)
@@ -570,12 +605,15 @@ func RegisterRoutes(
 		secured.POST("/me/internal-appointments", internalAppointmentHandler.Create)
 
 		secured.GET("/me/payments", paymentHandler.List)
+		secured.GET("/me/payments/cash-due", paymentHandler.CashDue)
 		secured.GET("/me/summary", operationalSummaryHandler.Get)
 		secured.GET("/me/payments/summary", paymentReportHandler.Summary)
 
 		secured.POST("/me/orders", orderHandler.Create)
 		secured.GET("/me/orders", orderHandler.List)
 		secured.GET("/me/orders/:id", orderHandler.GetByID)
+		secured.GET("/me/closures", closureListHandler.List)
+		secured.GET("/me/closures/:id", closureListHandler.GetByID)
 
 		secured.GET("/me/audit-logs", auditLogsHandler.List)
 
@@ -591,5 +629,17 @@ func RegisterRoutes(
 		secured.POST("/me/subscriptions", subscriptionHandler.Activate)
 		secured.DELETE("/me/subscriptions/:clientID", subscriptionHandler.Cancel)
 		secured.GET("/me/subscriptions/:clientID", subscriptionHandler.GetActive)
+
+		// Image upload (only registered when R2 is configured).
+		if imageHandler != nil {
+			secured.POST("/me/services/:id/images", imageHandler.AddServiceImage)
+			secured.DELETE("/me/services/:id/images/:imageId", imageHandler.DeleteServiceImage)
+
+			secured.PUT("/me/products/:id/image", imageHandler.SetProductImage)
+			secured.DELETE("/me/products/:id/image", imageHandler.DeleteProductImage)
+
+			secured.PUT("/me/profile/photo", imageHandler.SetProfilePhoto)
+			secured.DELETE("/me/profile/photo", imageHandler.DeleteProfilePhoto)
+		}
 	}
 }

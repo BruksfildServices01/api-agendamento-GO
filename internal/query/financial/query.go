@@ -83,6 +83,16 @@ func (q *Query) Execute(ctx context.Context, input Input) (*ResponseDTO, error) 
 		return nil, err
 	}
 
+	topServices, err := q.loadTopServices(ctx, input.BarbershopID, startUTC, endUTC)
+	if err != nil {
+		return nil, err
+	}
+
+	topProducts, err := q.loadTopProducts(ctx, input.BarbershopID, startUTC, endUTC)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ResponseDTO{
 		Period:      string(period),
 		DateFrom:    dateFrom,
@@ -92,6 +102,8 @@ func (q *Query) Execute(ctx context.Context, input Input) (*ResponseDTO, error) 
 		Expectation: expectation,
 		Presumed:    presumed,
 		Losses:      losses,
+		TopServices: topServices,
+		TopProducts: topProducts,
 	}, nil
 }
 
@@ -125,8 +137,10 @@ func (q *Query) loadRealized(ctx context.Context, barbershopID uint, start, end 
 		return RealizedDTO{}, err
 	}
 
-	// Product revenue from paid orders
-	var orderResult struct {
+	// Product revenue from paid orders — total.
+	// Closure-linked orders (in-person sales) may be 'pending' in legacy records;
+	// treat them as paid when they have a matching closure.
+	var orderTotal struct {
 		ProductsCents int64 `gorm:"column:products_cents"`
 		Count         int   `gorm:"column:count"`
 	}
@@ -136,10 +150,33 @@ func (q *Query) loadRealized(ctx context.Context, barbershopID uint, start, end 
 			COUNT(*) AS count
 		FROM orders o
 		WHERE o.barbershop_id = ?
-		  AND o.status = 'paid'
 		  AND o.created_at >= ?
 		  AND o.created_at < ?
-	`, barbershopID, start, end).Scan(&orderResult).Error
+		  AND (
+		      o.status = 'paid'
+		      OR EXISTS (
+		          SELECT 1 FROM appointment_closures ac
+		          WHERE ac.additional_order_id = o.id
+		      )
+		  )
+	`, barbershopID, start, end).Scan(&orderTotal).Error
+	if err != nil {
+		return RealizedDTO{}, err
+	}
+
+	// Product revenue — suggestion-linked (orders referenced by a closure's additional_order_id)
+	var suggestionOrdersCents int64
+	err = q.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(o.total_amount), 0)
+		FROM orders o
+		WHERE o.barbershop_id = ?
+		  AND o.created_at >= ?
+		  AND o.created_at < ?
+		  AND EXISTS (
+		      SELECT 1 FROM appointment_closures ac
+		      WHERE ac.additional_order_id = o.id
+		  )
+	`, barbershopID, start, end).Scan(&suggestionOrdersCents).Error
 	if err != nil {
 		return RealizedDTO{}, err
 	}
@@ -147,12 +184,14 @@ func (q *Query) loadRealized(ctx context.Context, barbershopID uint, start, end 
 	serviceNet := closureResult.ServicesCents - closureResult.SubscriptionsCents
 
 	return RealizedDTO{
-		TotalCents:         closureResult.ServicesCents + orderResult.ProductsCents,
-		ServicesCents:      serviceNet,
-		ProductsCents:      orderResult.ProductsCents,
-		SubscriptionsCents: closureResult.SubscriptionsCents,
-		ClosuresCount:      closureResult.Count,
-		PaidOrdersCount:    orderResult.Count,
+		TotalCents:              closureResult.ServicesCents + orderTotal.ProductsCents,
+		ServicesCents:           serviceNet,
+		ProductsCents:           orderTotal.ProductsCents,
+		ProductsSuggestionCents: suggestionOrdersCents,
+		ProductsStandaloneCents: orderTotal.ProductsCents - suggestionOrdersCents,
+		SubscriptionsCents:      closureResult.SubscriptionsCents,
+		ClosuresCount:           closureResult.Count,
+		PaidOrdersCount:         orderTotal.Count,
 	}, nil
 }
 
@@ -252,7 +291,10 @@ func (q *Query) loadLosses(ctx context.Context, barbershopID uint, start, end ti
 		Count       int    `gorm:"column:count"`
 	}
 
-	// No-show losses: service price of no-show appointments
+	// No-show losses: only appointments where the client did NOT complete another
+	// appointment in the same period (i.e. no closure exists for the same client).
+	// Appointments without a linked client are always counted as losses since
+	// there is no way to track whether they returned.
 	var noShowResult lossRow
 	err := q.db.WithContext(ctx).Raw(`
 		SELECT
@@ -265,13 +307,25 @@ func (q *Query) loadLosses(ctx context.Context, barbershopID uint, start, end ti
 		  AND a.status = 'no_show'
 		  AND a.start_time >= ?
 		  AND a.start_time < ?
-	`, barbershopID, start, end).Scan(&noShowResult).Error
+		  AND (
+		      a.client_id IS NULL
+		      OR NOT EXISTS (
+		          SELECT 1
+		          FROM appointment_closures ac2
+		          JOIN appointments a2 ON a2.id = ac2.appointment_id
+		          WHERE a2.barbershop_id = ?
+		            AND a2.client_id = a.client_id
+		            AND a2.start_time >= ?
+		            AND a2.start_time < ?
+		      )
+		  )
+	`, barbershopID, start, end, barbershopID, start, end).Scan(&noShowResult).Error
 	if err != nil {
 		return LossesDTO{}, err
 	}
 	noShowResult.LossType = "no_show"
 
-	// Cancellation losses
+	// Cancellation losses: same rule — only count if client didn't return within the period.
 	var cancelResult lossRow
 	err = q.db.WithContext(ctx).Raw(`
 		SELECT
@@ -284,7 +338,19 @@ func (q *Query) loadLosses(ctx context.Context, barbershopID uint, start, end ti
 		  AND a.status = 'cancelled'
 		  AND a.start_time >= ?
 		  AND a.start_time < ?
-	`, barbershopID, start, end).Scan(&cancelResult).Error
+		  AND (
+		      a.client_id IS NULL
+		      OR NOT EXISTS (
+		          SELECT 1
+		          FROM appointment_closures ac2
+		          JOIN appointments a2 ON a2.id = ac2.appointment_id
+		          WHERE a2.barbershop_id = ?
+		            AND a2.client_id = a.client_id
+		            AND a2.start_time >= ?
+		            AND a2.start_time < ?
+		      )
+		  )
+	`, barbershopID, start, end, barbershopID, start, end).Scan(&cancelResult).Error
 	if err != nil {
 		return LossesDTO{}, err
 	}
@@ -332,6 +398,83 @@ func (q *Query) loadLosses(ctx context.Context, barbershopID uint, start, end ti
 		TotalCents: total,
 		Breakdown:  breakdown,
 	}, nil
+}
+
+// ----------------------------------------------------------------
+// Top services — by revenue from closures
+// ----------------------------------------------------------------
+
+func (q *Query) loadTopServices(ctx context.Context, barbershopID uint, start, end time.Time) ([]TopItemDTO, error) {
+	type row struct {
+		Name         string `gorm:"column:name"`
+		Count        int    `gorm:"column:count"`
+		RevenueCents int64  `gorm:"column:revenue_cents"`
+	}
+	var rows []row
+	err := q.db.WithContext(ctx).Raw(`
+		SELECT
+			COALESCE(NULLIF(ac.actual_service_name, ''), NULLIF(ac.service_name, ''), 'Serviço removido') AS name,
+			COUNT(*) AS count,
+			COALESCE(SUM(COALESCE(ac.final_amount_cents, ac.reference_amount_cents)), 0) AS revenue_cents
+		FROM appointment_closures ac
+		JOIN appointments a ON a.id = ac.appointment_id
+		WHERE ac.barbershop_id = ?
+		  AND a.start_time >= ?
+		  AND a.start_time < ?
+		GROUP BY name
+		ORDER BY revenue_cents DESC
+		LIMIT 5
+	`, barbershopID, start, end).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TopItemDTO, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, TopItemDTO{Name: r.Name, Count: r.Count, RevenueCents: r.RevenueCents})
+	}
+	return items, nil
+}
+
+// ----------------------------------------------------------------
+// Top products — by revenue from order items
+// ----------------------------------------------------------------
+
+func (q *Query) loadTopProducts(ctx context.Context, barbershopID uint, start, end time.Time) ([]TopItemDTO, error) {
+	type row struct {
+		Name         string `gorm:"column:name"`
+		Count        int    `gorm:"column:count"`
+		RevenueCents int64  `gorm:"column:revenue_cents"`
+	}
+	var rows []row
+	err := q.db.WithContext(ctx).Raw(`
+		SELECT
+			oi.product_name_snapshot AS name,
+			SUM(oi.quantity) AS count,
+			SUM(oi.line_total) AS revenue_cents
+		FROM order_items oi
+		JOIN orders o ON o.id = oi.order_id
+		WHERE o.barbershop_id = ?
+		  AND o.created_at >= ?
+		  AND o.created_at < ?
+		  AND (
+		      o.status = 'paid'
+		      OR EXISTS (
+		          SELECT 1 FROM appointment_closures ac
+		          WHERE ac.additional_order_id = o.id
+		      )
+		  )
+		GROUP BY oi.product_name_snapshot
+		ORDER BY revenue_cents DESC
+		LIMIT 5
+	`, barbershopID, start, end).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TopItemDTO, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, TopItemDTO{Name: r.Name, Count: r.Count, RevenueCents: r.RevenueCents})
+	}
+	return items, nil
 }
 
 // ----------------------------------------------------------------

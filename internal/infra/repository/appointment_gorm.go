@@ -253,18 +253,28 @@ func (r *AppointmentGormRepository) AssertNoTimeConflict(
 
 	var count int64
 
-	statuses := []models.AppointmentStatus{
-		models.AppointmentStatus("scheduled"),
-		models.AppointmentStatus("awaiting_payment"),
-	}
-
+	// Conta conflitos reais:
+	// - scheduled (confirmado) → sempre bloqueia
+	// - awaiting_payment (PIX ativo) → bloqueia apenas se o pagamento ainda não expirou
 	err := r.db.WithContext(ctx).
 		Model(&models.Appointment{}).
 		Where(
-			"barbershop_id = ? AND barber_id = ? AND status IN ? AND start_time < ? AND end_time > ?",
+			`barbershop_id = ? AND barber_id = ?
+			 AND start_time < ? AND end_time > ?
+			 AND (
+			   status = 'scheduled'
+			   OR (
+			     status = 'awaiting_payment'
+			     AND NOT EXISTS (
+			       SELECT 1 FROM payments
+			       WHERE payments.appointment_id = appointments.id
+			         AND payments.expires_at IS NOT NULL
+			         AND payments.expires_at < NOW()
+			     )
+			   )
+			 )`,
 			barbershopID,
 			barberID,
-			statuses,
 			end,
 			start,
 		).
@@ -379,9 +389,23 @@ func (r *AppointmentGormRepository) ListAppointmentsForDay(
 
 	var apps []models.Appointment
 
+	// Exclui:
+	// - cancelled / no_show (slot liberado)
+	// - awaiting_payment cujo pagamento já expirou (PIX vencido mas job ainda não rodou)
 	err := r.db.WithContext(ctx).
 		Where(
-			"barbershop_id = ? AND barber_id = ? AND start_time >= ? AND start_time < ? AND status NOT IN ?",
+			`barbershop_id = ? AND barber_id = ?
+			 AND start_time >= ? AND start_time < ?
+			 AND status NOT IN ?
+			 AND NOT (
+			   status = 'awaiting_payment'
+			   AND EXISTS (
+			     SELECT 1 FROM payments
+			     WHERE payments.appointment_id = appointments.id
+			       AND payments.expires_at IS NOT NULL
+			       AND payments.expires_at < NOW()
+			   )
+			 )`,
 			barbershopID,
 			barberID,
 			start,

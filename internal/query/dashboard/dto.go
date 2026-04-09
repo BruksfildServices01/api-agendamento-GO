@@ -11,27 +11,36 @@ const (
 
 // ProductionDTO aggregates appointment outcomes for the period.
 type ProductionDTO struct {
-	Total       int     `json:"total"`
-	Completed   int     `json:"completed"`
-	Cancelled   int     `json:"cancelled"`
-	NoShow      int     `json:"no_show"`
-	Scheduled   int     `json:"scheduled"`
+	Total          int     `json:"total"`
+	Completed      int     `json:"completed"`
+	Cancelled      int     `json:"cancelled"`
+	NoShow         int     `json:"no_show"`
+	Scheduled      int     `json:"scheduled"`
 	AttendanceRate float64 `json:"attendance_rate"` // completed / (completed + cancelled + no_show)
+
+	// Suggestion conversion
+	SuggestionTotal   int `json:"suggestion_total"`   // closures that had an active suggestion
+	SuggestionKept    int `json:"suggestion_kept"`    // suggestion was kept (sold)
+	SuggestionRemoved int `json:"suggestion_removed"` // suggestion was removed (not sold)
 }
 
 // RevenueDTO breaks down revenue by origin.
 type RevenueDTO struct {
-	TotalCents        int64 `json:"total_cents"`
-	ServicesCents     int64 `json:"services_cents"`     // from appointment closures
-	ProductsCents     int64 `json:"products_cents"`     // from paid orders (product type)
-	SubscriptionsCents int64 `json:"subscriptions_cents"` // closures covered by subscription
+	TotalCents              int64 `json:"total_cents"`
+	ServicesCents           int64 `json:"services_cents"`
+	ProductsCents           int64 `json:"products_cents"`
+	ProductsSuggestionCents int64 `json:"products_suggestion_cents"`
+	ProductsStandaloneCents int64 `json:"products_standalone_cents"`
+	SubscriptionsCents      int64 `json:"subscriptions_cents"`
+	AvgTicketCents          int64 `json:"avg_ticket_cents"` // avg per completed appointment
 }
 
 // ClientsDTO shows new vs. returning clients in the period.
 type ClientsDTO struct {
-	Total     int `json:"total"`     // unique clients with appointments in period
-	New       int `json:"new"`       // first appointment ever within period
-	Returning int `json:"returning"` // had appointments before the period
+	Total                int `json:"total"`                  // unique clients with appointments in period
+	New                  int `json:"new"`                    // first appointment ever within period
+	Returning            int `json:"returning"`              // had appointments before the period
+	WithActiveSubscription int `json:"with_active_subscription"` // clients with active subscription
 }
 
 // ServiceRankItem is a single entry in the service ranking.
@@ -52,15 +61,14 @@ type ProductRankItem struct {
 
 // ResponseDTO is the full dashboard payload for the period.
 type ResponseDTO struct {
-	Period     string `json:"period"`      // day|week|month
-	DateFrom   string `json:"date_from"`   // YYYY-MM-DD (local)
-	DateTo     string `json:"date_to"`     // YYYY-MM-DD (local, inclusive)
-	Timezone   string `json:"timezone"`
+	Period   string `json:"period"`
+	DateFrom string `json:"date_from"`
+	DateTo   string `json:"date_to"`
+	Timezone string `json:"timezone"`
 
-	Production ProductionDTO `json:"production"`
-	Revenue    RevenueDTO    `json:"revenue"`
-	Clients    ClientsDTO    `json:"clients"`
-
-	TopServices []ServiceRankItem `json:"top_services"` // top 5 by revenue
-	TopProducts []ProductRankItem `json:"top_products"`  // top 5 by revenue
+	Production  ProductionDTO      `json:"production"`
+	Revenue     RevenueDTO         `json:"revenue"`
+	Clients     ClientsDTO         `json:"clients"`
+	TopServices []ServiceRankItem  `json:"top_services"`
+	TopProducts []ProductRankItem  `json:"top_products"`
 }

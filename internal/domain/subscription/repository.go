@@ -3,7 +3,7 @@ package subscription
 import "context"
 
 type Repository interface {
-	CreatePlan(ctx context.Context, plan *Plan, serviceIDs []uint) error
+	CreatePlan(ctx context.Context, plan *Plan, serviceIDs []uint, categoryIDs []uint) error
 	ListPlans(ctx context.Context, barbershopID uint) ([]Plan, error)
 	GetPlanByID(ctx context.Context, barbershopID uint, planID uint) (*Plan, error)
 	DeletePlan(ctx context.Context, barbershopID uint, planID uint) error
@@ -21,4 +21,5 @@ type Repository interface {
 
 	CountServicesByIDs(ctx context.Context, barbershopID uint, serviceIDs []uint) (int64, error)
 	CountServicesByBarbershop(ctx context.Context, barbershopID uint, serviceIDs []uint) (int64, error)
+	CountCategoriesByIDs(ctx context.Context, barbershopID uint, categoryIDs []uint) (int64, error)
 }

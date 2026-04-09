@@ -10,6 +10,7 @@ type Barbershop struct {
 	Address           string                   `gorm:"size:255"`
 	MinAdvanceMinutes int                      `gorm:"default:120"`
 	Timezone          string                   `gorm:"size:64;not null;default:'America/Sao_Paulo'"`
+	PhotoURL          *string                  `gorm:"size:512"`
 	PaymentConfig     *BarbershopPaymentConfig `gorm:"constraint:OnDelete:CASCADE;"`
 
 	CreatedAt time.Time

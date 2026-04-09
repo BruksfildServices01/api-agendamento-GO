@@ -141,14 +141,29 @@ func (h *PublicHandler) GetInfo(c *gin.Context) {
 		}
 	}
 
+	// Carrega métodos de pagamento aceitos (defaults: todos habilitados)
+	var paymentCfg models.BarbershopPaymentConfig
+	acceptPix := true
+	acceptCredit := true
+	acceptDebit := true
+	if h.db.WithContext(c.Request.Context()).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error == nil {
+		acceptPix = paymentCfg.AcceptPix
+		acceptCredit = paymentCfg.AcceptCredit
+		acceptDebit = paymentCfg.AcceptDebit
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"id":       shop.ID,
-		"name":     shop.Name,
-		"slug":     shop.Slug,
-		"phone":    shop.Phone,
-		"address":  shop.Address,
-		"timezone": shop.Timezone,
-		"working_hours": wh,
+		"id":             shop.ID,
+		"name":           shop.Name,
+		"slug":           shop.Slug,
+		"phone":          shop.Phone,
+		"address":        shop.Address,
+		"timezone":       shop.Timezone,
+		"photo_url":      shop.PhotoURL,
+		"working_hours":  wh,
+		"accept_pix":     acceptPix,
+		"accept_credit":  acceptCredit,
+		"accept_debit":   acceptDebit,
 	})
 }
 
@@ -389,6 +404,7 @@ func (h *PublicHandler) GetServiceSuggestion(c *gin.Context) {
 				Description: suggestion.Product.Description,
 				Category:    suggestion.Product.Category,
 				PriceCents:  suggestion.Product.Price,
+				ImageURL:    suggestion.Product.ImageURL,
 			},
 		}
 	}

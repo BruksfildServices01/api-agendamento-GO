@@ -719,4 +719,25 @@ CREATE TRIGGER trg_carts_updated
 BEFORE UPDATE ON carts
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- ============================================================
+-- IMAGES / MEDIA
+-- ============================================================
+
+-- Up to 3 photos per barbershop service.
+CREATE TABLE service_images (
+  id                    SERIAL PRIMARY KEY,
+  barbershop_service_id BIGINT       NOT NULL REFERENCES barbershop_services(id) ON DELETE CASCADE,
+  url                   TEXT         NOT NULL,
+  position              SMALLINT     NOT NULL DEFAULT 0,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_service_images_service ON service_images(barbershop_service_id);
+
+-- Single product image.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT;
+
+-- Barbershop profile photo.
+ALTER TABLE barbershops ADD COLUMN IF NOT EXISTS photo_url TEXT;
+
 COMMIT;

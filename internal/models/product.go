@@ -13,8 +13,9 @@ type Product struct {
 	Category      string `gorm:"size:50"`
 	Price         int64  `gorm:"type:bigint;not null"`
 	Stock         int    `gorm:"not null;default:0"`
-	Active        bool   `gorm:"default:true"`
-	OnlineVisible bool   `gorm:"not null;default:false"`
+	Active        bool    `gorm:"default:true"`
+	OnlineVisible bool    `gorm:"not null;default:false"`
+	ImageURL      *string `gorm:"size:512"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

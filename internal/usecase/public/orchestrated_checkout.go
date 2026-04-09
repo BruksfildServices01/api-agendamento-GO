@@ -107,7 +107,9 @@ func (uc *OrchestratedCheckout) Execute(
 	}
 
 	// Fire async appointment confirmation notification
-	if uc.apptNotifier != nil && input.ClientEmail != "" {
+	// Only notify after confirmed payment — skip if appointment is awaiting payment.
+	if uc.apptNotifier != nil && input.ClientEmail != "" &&
+		appointment.Status != models.AppointmentStatusAwaitingPayment {
 		type bsRow struct {
 			Name     string `gorm:"column:name"`
 			Phone    string `gorm:"column:phone"`

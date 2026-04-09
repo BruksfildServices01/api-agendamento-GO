@@ -10,6 +10,7 @@ type Product struct {
 	Description string
 	Category    string
 	Price       int64
+	ImageURL    string
 
 	Stock         int
 	Active        bool

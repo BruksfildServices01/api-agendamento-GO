@@ -48,6 +48,7 @@ func (r *ServiceGormRepository) Update(
 			"price":        model.Price,
 			"active":       model.Active,
 			"category":     model.Category,
+			"category_id":  model.CategoryID,
 		}).
 		Error
 }
@@ -129,6 +130,9 @@ func (r *ServiceGormRepository) ListPublicServices(
 	var modelsList []models.BarbershopService
 
 	q := r.db.WithContext(ctx).
+		Preload("ServiceImages", func(db *gorm.DB) *gorm.DB {
+			return db.Order("position ASC")
+		}).
 		Where("barbershop_id = ? AND active = ?", barbershopID, true)
 
 	if category != "" {
@@ -161,6 +165,14 @@ func (r *ServiceGormRepository) ListPublicServices(
 }
 
 func mapServiceToDomain(m *models.BarbershopService) *domain.Service {
+	imgs := make([]domain.ServiceImage, 0, len(m.ServiceImages))
+	for _, img := range m.ServiceImages {
+		imgs = append(imgs, domain.ServiceImage{
+			ID:       img.ID,
+			URL:      img.URL,
+			Position: img.Position,
+		})
+	}
 	return &domain.Service{
 		ID:           m.ID,
 		BarbershopID: m.BarbershopID,
@@ -170,6 +182,8 @@ func mapServiceToDomain(m *models.BarbershopService) *domain.Service {
 		Price:        m.Price,
 		Active:       m.Active,
 		Category:     m.Category,
+		CategoryID:   m.CategoryID,
+		Images:       imgs,
 	}
 }
 
@@ -183,6 +197,7 @@ func mapServiceToModel(s *domain.Service) *models.BarbershopService {
 		Price:        s.Price,
 		Active:       s.Active,
 		Category:     s.Category,
+		CategoryID:   s.CategoryID,
 	}
 }
 

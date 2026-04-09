@@ -49,6 +49,15 @@ type Config struct {
 	// BackendURL é usado para montar a notification_url enviada ao Mercado Pago.
 	// Ex: https://api.seudominio.com
 	BackendURL string
+
+	// =========================
+	// CLOUDFLARE R2 (storage)
+	// =========================
+	R2AccountID       string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2BucketName      string
+	R2PublicURL       string // ex: https://pub-xxx.r2.dev
 }
 
 func Load() *Config {
@@ -88,6 +97,13 @@ func Load() *Config {
 		MPProvider:    getEnv("MP_PROVIDER", "mock"),
 		MPAccessToken: getEnv("MP_ACCESS_TOKEN", ""),
 		BackendURL:    strings.TrimRight(getEnv("BACKEND_URL", "http://localhost:8080"), "/"),
+
+		// R2
+		R2AccountID:       getEnv("R2_ACCOUNT_ID", ""),
+		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2BucketName:      getEnv("R2_BUCKET_NAME", ""),
+		R2PublicURL:       strings.TrimRight(getEnv("R2_PUBLIC_URL", ""), "/"),
 	}
 
 	cfg.AppURL = strings.TrimRight(cfg.AppURL, "/")

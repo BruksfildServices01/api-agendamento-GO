@@ -25,6 +25,7 @@ type UpdateServiceInput struct {
 	Price       *int64
 	Active      *bool
 	Category    *string
+	CategoryID  *uint
 }
 
 func (uc *UpdateService) Execute(
@@ -75,6 +76,10 @@ func (uc *UpdateService) Execute(
 
 	if input.Category != nil {
 		svc.Category = strings.TrimSpace(*input.Category)
+	}
+
+	if input.CategoryID != nil {
+		svc.CategoryID = input.CategoryID
 	}
 
 	if err := uc.repo.Update(ctx, svc); err != nil {

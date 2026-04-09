@@ -10,23 +10,25 @@ const (
 
 // RealizedDTO is revenue already confirmed in the period.
 type RealizedDTO struct {
-	TotalCents         int64 `json:"total_cents"`
-	ServicesCents      int64 `json:"services_cents"`      // from appointment_closures
-	ProductsCents      int64 `json:"products_cents"`      // from paid orders
-	SubscriptionsCents int64 `json:"subscriptions_cents"` // closures covered by subscription plan
-	ClosuresCount      int   `json:"closures_count"`
-	PaidOrdersCount    int   `json:"paid_orders_count"`
+	TotalCents                  int64 `json:"total_cents"`
+	ServicesCents               int64 `json:"services_cents"`               // from appointment_closures (net of subscription)
+	ProductsCents               int64 `json:"products_cents"`               // total from paid orders
+	ProductsSuggestionCents     int64 `json:"products_suggestion_cents"`    // orders linked via closure.additional_order_id
+	ProductsStandaloneCents     int64 `json:"products_standalone_cents"`    // orders not linked to any closure
+	SubscriptionsCents          int64 `json:"subscriptions_cents"`          // closures covered by subscription plan
+	ClosuresCount               int   `json:"closures_count"`
+	PaidOrdersCount             int   `json:"paid_orders_count"`
 }
 
-// ExpectationItemDTO is a single future appointment contributing to expectation.
+// ExpectationDTO aggregates future scheduled appointments.
 type ExpectationDTO struct {
 	TotalCents        int64 `json:"total_cents"`
-	ServicesCents     int64 `json:"services_cents"`     // sum of service prices for future appts
-	SuggestionsCents  int64 `json:"suggestions_cents"`  // sum of suggested product prices
-	AppointmentsCount int   `json:"appointments_count"` // future scheduled/awaiting_payment
+	ServicesCents     int64 `json:"services_cents"`
+	SuggestionsCents  int64 `json:"suggestions_cents"`
+	AppointmentsCount int   `json:"appointments_count"`
 }
 
-// PresumedDTO is past appointments without a closure — barber didn't close them.
+// PresumedDTO is past appointments without a closure.
 type PresumedDTO struct {
 	TotalCents        int64 `json:"total_cents"`
 	AppointmentsCount int   `json:"appointments_count"`
@@ -34,26 +36,36 @@ type PresumedDTO struct {
 
 // LossItemDTO is a single loss event.
 type LossItemDTO struct {
-	Type        string `json:"type"`         // no_show|late_cancel|suggestion_not_sold|unclosed
+	Type        string `json:"type"`
 	AmountCents int64  `json:"amount_cents"`
 	Count       int    `json:"count"`
 }
 
 // LossesDTO aggregates all loss categories.
 type LossesDTO struct {
-	TotalCents       int64         `json:"total_cents"`
-	Breakdown        []LossItemDTO `json:"breakdown"`
+	TotalCents int64         `json:"total_cents"`
+	Breakdown  []LossItemDTO `json:"breakdown"`
+}
+
+// TopItemDTO represents a ranked service or product.
+type TopItemDTO struct {
+	Name         string `json:"name"`
+	Count        int    `json:"count"`
+	RevenueCents int64  `json:"revenue_cents"`
 }
 
 // ResponseDTO is the full financial view for the period.
 type ResponseDTO struct {
-	Period   string `json:"period"`    // week|month
-	DateFrom string `json:"date_from"` // YYYY-MM-DD (local)
-	DateTo   string `json:"date_to"`   // YYYY-MM-DD (local, inclusive)
+	Period   string `json:"period"`
+	DateFrom string `json:"date_from"`
+	DateTo   string `json:"date_to"`
 	Timezone string `json:"timezone"`
 
 	Realized    RealizedDTO    `json:"realized"`
 	Expectation ExpectationDTO `json:"expectation"`
 	Presumed    PresumedDTO    `json:"presumed"`
 	Losses      LossesDTO      `json:"losses"`
+
+	TopServices []TopItemDTO `json:"top_services"`
+	TopProducts []TopItemDTO `json:"top_products"`
 }

@@ -22,6 +22,10 @@ type PaymentPoliciesOutput struct {
 	Categories           []domain.CategoryPaymentPolicy `json:"categories"`
 	MPPublicKey          string                         `json:"mp_public_key"`
 	MPAccessTokenSet     bool                           `json:"mp_access_token_set"`
+	AcceptCash           bool                           `json:"accept_cash"`
+	AcceptPix            bool                           `json:"accept_pix"`
+	AcceptCredit         bool                           `json:"accept_credit"`
+	AcceptDebit          bool                           `json:"accept_debit"`
 }
 
 func (uc *GetPaymentPolicies) Execute(
@@ -45,5 +49,9 @@ func (uc *GetPaymentPolicies) Execute(
 		Categories:           categories,
 		MPPublicKey:          cfg.MPPublicKey,
 		MPAccessTokenSet:     cfg.MPAccessToken != "",
+		AcceptCash:           cfg.AcceptCash,
+		AcceptPix:            cfg.AcceptPix,
+		AcceptCredit:         cfg.AcceptCredit,
+		AcceptDebit:          cfg.AcceptDebit,
 	}, nil
 }

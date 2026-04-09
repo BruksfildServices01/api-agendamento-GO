@@ -181,6 +181,10 @@ func mapServiceSuggestionToDomain(
 	}
 
 	if row.Product != nil {
+		imageURL := ""
+		if row.Product.ImageURL != nil {
+			imageURL = *row.Product.ImageURL
+		}
 		out.Product = &domain.SuggestedProduct{
 			ID:            row.Product.ID,
 			BarbershopID:  row.Product.BarbershopID,
@@ -188,6 +192,7 @@ func mapServiceSuggestionToDomain(
 			Description:   row.Product.Description,
 			Category:      row.Product.Category,
 			Price:         row.Product.Price,
+			ImageURL:      imageURL,
 			Stock:         row.Product.Stock,
 			Active:        row.Product.Active,
 			OnlineVisible: row.Product.OnlineVisible,

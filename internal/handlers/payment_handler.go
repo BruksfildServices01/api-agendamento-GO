@@ -136,6 +136,115 @@ func (h *PaymentHandler) List(c *gin.Context) {
 	})
 }
 
+// ======================================================
+// GET /api/me/payments/cash-due
+// Returns scheduled appointments with no paid digital payment —
+// these are cash/in-person collections the barber still needs to receive.
+// Query params: start_date, end_date (YYYY-MM-DD, barbershop timezone)
+// ======================================================
+func (h *PaymentHandler) CashDue(c *gin.Context) {
+	raw, exists := c.Get(middleware.ContextBarbershopID)
+	if !exists {
+		httperr.Unauthorized(c, "unauthorized", "Acesso não autorizado.")
+		return
+	}
+	barbershopID, ok := raw.(uint)
+	if !ok || barbershopID == 0 {
+		httperr.Unauthorized(c, "unauthorized", "Acesso não autorizado.")
+		return
+	}
+
+	var shop models.Barbershop
+	if err := h.db.WithContext(c.Request.Context()).
+		Select("id, timezone").
+		First(&shop, barbershopID).Error; err != nil {
+		httperr.BadRequest(c, "invalid_barbershop", "Barbearia inválida.")
+		return
+	}
+	loc := timezone.Location(shop.Timezone)
+
+	var startDate, endDate *time.Time
+	if v := c.Query("start_date"); v != "" {
+		t, err := parseDateAsStartOfDayUTC(v, loc)
+		if err != nil {
+			httperr.BadRequest(c, "invalid_start_date", "Formato inválido para start_date (YYYY-MM-DD).")
+			return
+		}
+		startDate = t
+	}
+	if v := c.Query("end_date"); v != "" {
+		t, err := parseDateAsEndExclusiveUTC(v, loc)
+		if err != nil {
+			httperr.BadRequest(c, "invalid_end_date", "Formato inválido para end_date (YYYY-MM-DD).")
+			return
+		}
+		endDate = t
+	}
+
+	type cashDueRow struct {
+		AppointmentID uint      `gorm:"column:appointment_id"`
+		StartTime     time.Time `gorm:"column:start_time"`
+		ClientName    string    `gorm:"column:client_name"`
+		AmountCents   int64     `gorm:"column:amount_cents"`
+		ServiceName   string    `gorm:"column:service_name"`
+	}
+
+	query := `
+		SELECT
+			a.id AS appointment_id,
+			a.start_time,
+			COALESCE(c.name, 'Cliente não identificado') AS client_name,
+			COALESCE(bs.price, 0) AS amount_cents,
+			COALESCE(bs.name, 'Serviço') AS service_name
+		FROM appointments a
+		LEFT JOIN clients c ON c.id = a.client_id
+		LEFT JOIN barbershop_services bs ON bs.id = a.barber_product_id
+		WHERE a.barbershop_id = ?
+		  AND a.status = 'scheduled'
+		  AND NOT EXISTS (
+		    SELECT 1 FROM payments p
+		    WHERE p.appointment_id = a.id AND p.status = 'paid'
+		  )`
+
+	args := []any{barbershopID}
+	if startDate != nil {
+		query += " AND a.start_time >= ?"
+		args = append(args, *startDate)
+	}
+	if endDate != nil {
+		query += " AND a.start_time < ?"
+		args = append(args, *endDate)
+	}
+	query += " ORDER BY a.start_time ASC"
+
+	var rows []cashDueRow
+	if err := h.db.WithContext(c.Request.Context()).Raw(query, args...).Scan(&rows).Error; err != nil {
+		httperr.Internal(c, "cash_due_failed", "Erro ao buscar atendimentos a receber.")
+		return
+	}
+
+	type cashDueItem struct {
+		AppointmentID uint      `json:"appointment_id"`
+		StartTime     time.Time `json:"start_time"`
+		ClientName    string    `json:"client_name"`
+		AmountCents   int64     `json:"amount_cents"`
+		ServiceName   string    `json:"service_name"`
+	}
+
+	items := make([]cashDueItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, cashDueItem{
+			AppointmentID: r.AppointmentID,
+			StartTime:     r.StartTime,
+			ClientName:    r.ClientName,
+			AmountCents:   r.AmountCents,
+			ServiceName:   r.ServiceName,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": len(items)})
+}
+
 // --------------------------------------------------
 // Helpers (timezone-safe)
 // --------------------------------------------------

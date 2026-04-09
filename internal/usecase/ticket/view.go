@@ -16,6 +16,7 @@ type TicketViewDTO struct {
 	EndTime         time.Time `json:"end_time"`
 	ServiceName     string    `json:"service_name"`
 	BarbershopName  string    `json:"barbershop_name"`
+	BarbershopSlug  string    `json:"barbershop_slug"`
 	BarbershopPhone string    `json:"barbershop_phone"`
 	BarberName      string    `json:"barber_name"`
 	ClientName      string    `json:"client_name"`
@@ -43,6 +44,7 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		EndTime         time.Time `gorm:"column:end_time"`
 		ServiceName     string    `gorm:"column:service_name"`
 		BarbershopName  string    `gorm:"column:barbershop_name"`
+		BarbershopSlug  string    `gorm:"column:barbershop_slug"`
 		BarbershopPhone string    `gorm:"column:barbershop_phone"`
 		BarberName      string    `gorm:"column:barber_name"`
 		ClientName      string    `gorm:"column:client_name"`
@@ -61,6 +63,7 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 			a.end_time       AS end_time,
 			bs.name          AS service_name,
 			b.name           AS barbershop_name,
+			b.slug           AS barbershop_slug,
 			b.phone          AS barbershop_phone,
 			u.name           AS barber_name,
 			c.name           AS client_name,
@@ -99,6 +102,7 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		EndTime:         r.EndTime,
 		ServiceName:     r.ServiceName,
 		BarbershopName:  r.BarbershopName,
+		BarbershopSlug:  r.BarbershopSlug,
 		BarbershopPhone: r.BarbershopPhone,
 		BarberName:      r.BarberName,
 		ClientName:      r.ClientName,

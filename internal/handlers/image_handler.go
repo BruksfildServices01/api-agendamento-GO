@@ -69,7 +69,7 @@ func (h *ImageHandler) AddServiceImage(c *gin.Context) {
 	}
 	_ = mime
 
-	key := fmt.Sprintf("%d/services/%s.webp", barbershopID, uuid.NewString())
+	key := fmt.Sprintf("%d/services/%s.jpg", barbershopID, uuid.NewString())
 	url, err := h.r2.Upload(c.Request.Context(), storage.KindServiceImage, key, raw)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload_failed"})
@@ -164,7 +164,7 @@ func (h *ImageHandler) SetProductImage(c *gin.Context) {
 		return
 	}
 
-	key := fmt.Sprintf("%d/products/%s.webp", barbershopID, uuid.NewString())
+	key := fmt.Sprintf("%d/products/%s.jpg", barbershopID, uuid.NewString())
 	url, err := h.r2.Upload(c.Request.Context(), storage.KindProductImage, key, raw)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload_failed"})
@@ -228,7 +228,7 @@ func (h *ImageHandler) SetProfilePhoto(c *gin.Context) {
 		return
 	}
 
-	key := fmt.Sprintf("%d/profile/%s.webp", barbershopID, uuid.NewString())
+	key := fmt.Sprintf("%d/profile/%s.jpg", barbershopID, uuid.NewString())
 	url, err := h.r2.Upload(c.Request.Context(), storage.KindProfilePhoto, key, raw)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload_failed"})

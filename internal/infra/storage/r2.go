@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/chai2010/webp"
 	"golang.org/x/image/draw"
 
 	// register decoders
@@ -66,7 +65,7 @@ func NewR2Service(accountID, accessKeyID, secretKey, bucket, publicURL string) *
 func (s *R2Service) Upload(ctx context.Context, kind AssetKind, objectKey string, raw []byte) (string, error) {
 	maxW, maxH := dimensionsFor(kind)
 
-	webpBytes, err := convertToWebP(raw, maxW, maxH)
+	jpegBytes, err := convertToJPEG(raw, maxW, maxH)
 	if err != nil {
 		return "", fmt.Errorf("image conversion: %w", err)
 	}
@@ -74,8 +73,8 @@ func (s *R2Service) Upload(ctx context.Context, kind AssetKind, objectKey string
 	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(objectKey),
-		Body:        bytes.NewReader(webpBytes),
-		ContentType: aws.String("image/webp"),
+		Body:        bytes.NewReader(jpegBytes),
+		ContentType: aws.String("image/jpeg"),
 	})
 	if err != nil {
 		return "", fmt.Errorf("r2 upload: %w", err)
@@ -115,10 +114,9 @@ func dimensionsFor(kind AssetKind) (int, int) {
 	}
 }
 
-func convertToWebP(raw []byte, maxW, maxH int) ([]byte, error) {
+func convertToJPEG(raw []byte, maxW, maxH int) ([]byte, error) {
 	src, format, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
-		// Try jpeg and png explicitly as fallback.
 		if src, err = tryDecode(raw); err != nil {
 			return nil, fmt.Errorf("unsupported format %q: %w", format, err)
 		}
@@ -127,8 +125,8 @@ func convertToWebP(raw []byte, maxW, maxH int) ([]byte, error) {
 	resized := resizeFit(src, maxW, maxH)
 
 	var buf bytes.Buffer
-	if err := webp.Encode(&buf, resized, &webp.Options{Lossless: false, Quality: 85}); err != nil {
-		return nil, fmt.Errorf("webp encode: %w", err)
+	if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, fmt.Errorf("jpeg encode: %w", err)
 	}
 	return buf.Bytes(), nil
 }

@@ -222,6 +222,9 @@ func (r *PaymentGormRepository) ListForBarbershop(
 
 	if filter.Status != nil {
 		q = q.Where("status = ?", *filter.Status)
+	} else {
+		// Only show paid payments by default — expired and pending PIX are irrelevant to the barbershop owner.
+		q = q.Where("status = ?", "paid")
 	}
 	if filter.StartDate != nil {
 		q = q.Where("created_at >= ?", *filter.StartDate)
@@ -557,10 +560,12 @@ func (r *PaymentGormTxRepository) UpdatePaymentTx(
 		Model(&models.Payment{}).
 		Where("id = ? AND barbershop_id = ?", p.ID, barbershopID).
 		Updates(map[string]any{
-			"txid":       p.TxID,
-			"qr_code":    p.QRCode,
-			"expires_at": p.ExpiresAt,
-			"updated_at": now,
+			"txid":             p.TxID,
+			"qr_code":          p.QRCode,
+			"expires_at":       p.ExpiresAt,
+			"amount":           p.Amount,
+			"bundled_order_id": p.BundledOrderID,
+			"updated_at":       now,
 		}).
 		Error
 }

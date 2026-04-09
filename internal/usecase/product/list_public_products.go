@@ -49,6 +49,7 @@ func (uc *ListPublicProducts) Execute(
 			Description: p.Description,
 			PriceCents:  p.Price,
 			Category:    p.Category,
+			ImageURL:    p.ImageURL,
 		})
 	}
 

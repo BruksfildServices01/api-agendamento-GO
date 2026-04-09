@@ -36,7 +36,8 @@ type CreatePlanRequest struct {
 	DurationDays      int    `json:"duration_days" binding:"required"`
 	CutsIncluded      int    `json:"cuts_included" binding:"min=0"`
 	DiscountPercent   int    `json:"discount_percent" binding:"min=0,max=100"`
-	ServiceIDs        []uint `json:"service_ids" binding:"required"`
+	ServiceIDs        []uint `json:"service_ids"`
+	CategoryIDs       []uint `json:"category_ids"`
 }
 
 func (h *PlanHandler) Create(c *gin.Context) {
@@ -56,6 +57,7 @@ func (h *PlanHandler) Create(c *gin.Context) {
 		CutsIncluded:      req.CutsIncluded,
 		DiscountPercent:   req.DiscountPercent,
 		ServiceIDs:        req.ServiceIDs,
+		CategoryIDs:       req.CategoryIDs,
 	})
 	if err != nil {
 		switch {

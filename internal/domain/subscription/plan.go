@@ -9,6 +9,7 @@ type Plan struct {
 	CutsIncluded      int
 	DiscountPercent   int
 	ServiceIDs        []uint
+	CategoryIDs       []uint
 	Active            bool
 	ActiveSubscribers int
 }

@@ -14,6 +14,11 @@ type BarbershopService struct {
 	Active      bool   `gorm:"default:true"`
 	Category    string `gorm:"size:50"`
 
+	CategoryID      *uint            `gorm:"index"`
+	ServiceCategory *ServiceCategory `gorm:"foreignKey:CategoryID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	ServiceImages []ServiceImage `gorm:"foreignKey:BarbershopServiceID"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

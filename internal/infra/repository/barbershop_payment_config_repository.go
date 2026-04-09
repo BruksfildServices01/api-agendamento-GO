@@ -55,6 +55,10 @@ func (r *BarbershopPaymentConfigGormRepository) GetByBarbershopID(
 		PixExpirationMinutes: m.PixExpirationMinutes,
 		MPAccessToken:        m.MPAccessToken,
 		MPPublicKey:          m.MPPublicKey,
+		AcceptCash:           m.AcceptCash,
+		AcceptPix:            m.AcceptPix,
+		AcceptCredit:         m.AcceptCredit,
+		AcceptDebit:          m.AcceptDebit,
 	}, nil
 }
 
@@ -80,6 +84,10 @@ func (r *BarbershopPaymentConfigGormRepository) UpsertConfig(
 				PixExpirationMinutes: cfg.PixExpirationMinutes,
 				MPAccessToken:        cfg.MPAccessToken,
 				MPPublicKey:          cfg.MPPublicKey,
+				AcceptCash:           cfg.AcceptCash,
+				AcceptPix:            cfg.AcceptPix,
+				AcceptCredit:         cfg.AcceptCredit,
+				AcceptDebit:          cfg.AcceptDebit,
 			}).Error
 		}
 		return err
@@ -90,6 +98,10 @@ func (r *BarbershopPaymentConfigGormRepository) UpsertConfig(
 	m.PixExpirationMinutes = cfg.PixExpirationMinutes
 	m.MPAccessToken = cfg.MPAccessToken
 	m.MPPublicKey = cfg.MPPublicKey
+	m.AcceptCash = cfg.AcceptCash
+	m.AcceptPix = cfg.AcceptPix
+	m.AcceptCredit = cfg.AcceptCredit
+	m.AcceptDebit = cfg.AcceptDebit
 
 	return r.db.WithContext(ctx).Save(&m).Error
 }

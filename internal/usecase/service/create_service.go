@@ -23,6 +23,7 @@ type CreateServiceInput struct {
 	Price        int64
 	Active       bool
 	Category     string
+	CategoryID   *uint
 }
 
 func (uc *CreateService) Execute(
@@ -54,6 +55,7 @@ func (uc *CreateService) Execute(
 		Price:        input.Price,
 		Active:       input.Active,
 		Category:     strings.TrimSpace(input.Category),
+		CategoryID:   input.CategoryID,
 	}
 
 	if err := uc.repo.Create(ctx, svc); err != nil {

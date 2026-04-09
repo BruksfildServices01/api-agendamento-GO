@@ -41,6 +41,9 @@ type transparentPaymentRequest struct {
 	PaymentMethodID string `json:"payment_method_id" binding:"required"`
 	Token           string `json:"token"`
 	Installments    int    `json:"installments"`
+	// Opcional: pedido de produtos a ser cobrado junto com o agendamento.
+	OrderID          *uint `json:"order_id,omitempty"`
+	OrderAmountCents int64 `json:"order_amount_cents,omitempty"`
 }
 
 type transparentPaymentResponse struct {
@@ -99,7 +102,6 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		httperr.BadRequest(c, "invalid_body", err.Error())
 		return
 	}
-
 	ctx := c.Request.Context()
 
 	// Garante que existe um registro de pagamento para o agendamento
@@ -129,47 +131,68 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		}
 	}
 
-	// Tenta usar o gateway da própria barbearia se ela tiver token configurado
+	// Carrega configuração de pagamento da barbearia (defaults: todos aceitos)
 	var paymentCfg models.BarbershopPaymentConfig
-	if dbErr := h.db.WithContext(ctx).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error; dbErr == nil {
-		if paymentCfg.MPAccessToken != "" {
-			if g, err := mp.New(paymentCfg.MPAccessToken); err == nil {
-				defer func() {}()
-				payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
-					BarbershopID:    shop.ID,
-					AppointmentID:   uint(appointmentID),
-					PayerEmail:      req.PayerEmail,
-					PayerCPF:        req.PayerCPF,
-					PaymentMethodID: req.PaymentMethodID,
-					Token:           req.Token,
-					Installments:    req.Installments,
-				}, g)
-				if err != nil {
-					mapTransparentPaymentError(c, slug, appointmentID, err)
-					return
-				}
-				c.JSON(http.StatusCreated, transparentPaymentResponse{
-					PaymentID:    payment.ID,
-					MPPaymentID:  result.MPPaymentID,
-					Status:       result.Status,
-					StatusDetail: result.StatusDetail,
-					QRCode:       result.QRCode,
-					QRCodeBase64: result.QRCodeBase64,
-					TicketURL:    result.TicketURL,
-				})
+	hasCfg := h.db.WithContext(ctx).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error == nil
+	if hasCfg {
+		// Validar se o método de pagamento está habilitado
+		method := req.PaymentMethodID
+		var blocked bool
+		switch {
+		case method == "pix" && !paymentCfg.AcceptPix:
+			blocked = true
+		case method != "pix" && isDebitMethod(method) && !paymentCfg.AcceptDebit:
+			blocked = true
+		case method != "pix" && !isDebitMethod(method) && !paymentCfg.AcceptCredit:
+			blocked = true
+		}
+		if blocked {
+			httperr.BadRequest(c, "payment_method_not_accepted", "Esta forma de pagamento não é aceita por esta barbearia.")
+			return
+		}
+	}
+
+	// Tenta usar o gateway da própria barbearia se ela tiver token configurado
+	if hasCfg && paymentCfg.MPAccessToken != "" {
+		if g, err := mp.New(paymentCfg.MPAccessToken); err == nil {
+			payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
+				BarbershopID:     shop.ID,
+				AppointmentID:    uint(appointmentID),
+				PayerEmail:       req.PayerEmail,
+				PayerCPF:         req.PayerCPF,
+				PaymentMethodID:  req.PaymentMethodID,
+				Token:            req.Token,
+				Installments:     req.Installments,
+				OrderID:          req.OrderID,
+				OrderAmountCents: req.OrderAmountCents,
+			}, g)
+			if err != nil {
+				mapTransparentPaymentError(c, slug, appointmentID, err)
 				return
 			}
+			c.JSON(http.StatusCreated, transparentPaymentResponse{
+				PaymentID:    payment.ID,
+				MPPaymentID:  result.MPPaymentID,
+				Status:       result.Status,
+				StatusDetail: result.StatusDetail,
+				QRCode:       result.QRCode,
+				QRCodeBase64: result.QRCodeBase64,
+				TicketURL:    result.TicketURL,
+			})
+			return
 		}
 	}
 
 	payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
-		BarbershopID:    shop.ID,
-		AppointmentID:   uint(appointmentID),
-		PayerEmail:      req.PayerEmail,
-		PayerCPF:        req.PayerCPF,
-		PaymentMethodID: req.PaymentMethodID,
-		Token:           req.Token,
-		Installments:    req.Installments,
+		BarbershopID:     shop.ID,
+		AppointmentID:    uint(appointmentID),
+		PayerEmail:       req.PayerEmail,
+		PayerCPF:         req.PayerCPF,
+		PaymentMethodID:  req.PaymentMethodID,
+		Token:            req.Token,
+		Installments:     req.Installments,
+		OrderID:          req.OrderID,
+		OrderAmountCents: req.OrderAmountCents,
 	})
 	if err != nil {
 		mapTransparentPaymentError(c, slug, appointmentID, err)
@@ -185,4 +208,13 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		QRCodeBase64: result.QRCodeBase64,
 		TicketURL:    result.TicketURL,
 	})
+}
+
+// isDebitMethod returns true for known debit card payment_method_ids.
+func isDebitMethod(method string) bool {
+	switch method {
+	case "debvisa", "debmaster", "debelo", "debcabal", "redcompra":
+		return true
+	}
+	return false
 }

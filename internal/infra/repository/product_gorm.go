@@ -198,6 +198,10 @@ func (r *ProductGormRepository) DecreaseStock(
 }
 
 func mapProductToDomain(m *models.Product) *domain.Product {
+	imageURL := ""
+	if m.ImageURL != nil {
+		imageURL = *m.ImageURL
+	}
 	return &domain.Product{
 		ID:            m.ID,
 		BarbershopID:  m.BarbershopID,
@@ -205,6 +209,7 @@ func mapProductToDomain(m *models.Product) *domain.Product {
 		Description:   m.Description,
 		Category:      m.Category,
 		Price:         m.Price,
+		ImageURL:      imageURL,
 		Stock:         m.Stock,
 		Active:        m.Active,
 		OnlineVisible: m.OnlineVisible,

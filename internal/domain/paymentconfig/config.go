@@ -9,4 +9,9 @@ type Config struct {
 
 	MPAccessToken string
 	MPPublicKey   string
+
+	AcceptCash   bool
+	AcceptPix    bool
+	AcceptCredit bool
+	AcceptDebit  bool
 }

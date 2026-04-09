@@ -7,6 +7,7 @@ type SuggestedProduct struct {
 	Description   string
 	Category      string
 	Price         int64
+	ImageURL      string
 	Stock         int
 	Active        bool
 	OnlineVisible bool

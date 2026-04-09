@@ -45,6 +45,7 @@ type CreateServiceRequest struct {
 	DurationMin int    `json:"duration_min" binding:"required,min=1"`
 	Price       int64  `json:"price" binding:"required"` // cents
 	Category    string `json:"category"`
+	CategoryID  *uint  `json:"category_id"`
 }
 
 type UpdateServiceRequest struct {
@@ -54,6 +55,7 @@ type UpdateServiceRequest struct {
 	Price       *int64  `json:"price,omitempty"` // cents
 	Active      *bool   `json:"active,omitempty"`
 	Category    *string `json:"category,omitempty"`
+	CategoryID  *uint   `json:"category_id,omitempty"`
 }
 
 //
@@ -122,7 +124,9 @@ func (h *ServiceHandler) List(c *gin.Context) {
 	}
 
 	var services []models.BarbershopService
-	if err := q.Order("id ASC").Find(&services).Error; err != nil {
+	if err := q.Preload("ServiceImages", func(db *gorm.DB) *gorm.DB {
+		return db.Order("position ASC")
+	}).Preload("ServiceCategory").Order("id ASC").Find(&services).Error; err != nil {
 		httperr.Internal(c, "failed_to_list_services", "failed_to_list_services")
 		return
 	}
@@ -165,6 +169,7 @@ func (h *ServiceHandler) Create(c *gin.Context) {
 			Price:        req.Price,
 			Active:       true,
 			Category:     strings.ToLower(strings.TrimSpace(req.Category)),
+			CategoryID:   req.CategoryID,
 		},
 	)
 	if err != nil {
@@ -284,6 +289,7 @@ func (h *ServiceHandler) Update(c *gin.Context) {
 			Price:        req.Price,
 			Active:       req.Active,
 			Category:     req.Category,
+			CategoryID:   req.CategoryID,
 		},
 	)
 	if err != nil {

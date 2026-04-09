@@ -30,6 +30,7 @@ func (r *SubscriptionGormRepository) CreatePlan(
 	ctx context.Context,
 	plan *domain.Plan,
 	serviceIDs []uint,
+	categoryIDs []uint,
 ) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		model := models.Plan{
@@ -52,6 +53,15 @@ func (r *SubscriptionGormRepository) CreatePlan(
 				 VALUES (?, ?)`,
 				model.ID,
 				serviceID,
+			).Error; err != nil {
+				return err
+			}
+		}
+
+		for _, categoryID := range categoryIDs {
+			if err := tx.Exec(
+				`INSERT INTO plan_categories (plan_id, category_id) VALUES (?, ?)`,
+				model.ID, categoryID,
 			).Error; err != nil {
 				return err
 			}
@@ -82,6 +92,11 @@ func (r *SubscriptionGormRepository) ListPlans(
 			return nil, err
 		}
 
+		categoryIDs, err := r.listPlanCategoryIDs(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+
 		plans = append(plans, domain.Plan{
 			ID:                p.ID,
 			BarbershopID:      p.BarbershopID,
@@ -92,6 +107,7 @@ func (r *SubscriptionGormRepository) ListPlans(
 			DiscountPercent:   p.DiscountPercent,
 			Active:            p.Active,
 			ServiceIDs:        serviceIDs,
+			CategoryIDs:       categoryIDs,
 		})
 	}
 
@@ -121,6 +137,11 @@ func (r *SubscriptionGormRepository) GetPlanByID(
 		return nil, err
 	}
 
+	categoryIDs, err := r.listPlanCategoryIDs(ctx, model.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &domain.Plan{
 		ID:                model.ID,
 		BarbershopID:      model.BarbershopID,
@@ -131,6 +152,7 @@ func (r *SubscriptionGormRepository) GetPlanByID(
 		DiscountPercent:   model.DiscountPercent,
 		Active:            model.Active,
 		ServiceIDs:        serviceIDs,
+		CategoryIDs:       categoryIDs,
 	}, nil
 }
 
@@ -294,16 +316,14 @@ func (r *SubscriptionGormRepository) ListAllowedServiceIDs(
 	planID uint,
 ) ([]uint, error) {
 	var ids []uint
-
-	err := r.db.WithContext(ctx).
-		Raw(
-			`SELECT service_id
-			 FROM plan_services
-			 WHERE plan_id = ?`,
-			planID,
-		).
-		Scan(&ids).Error
-
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT bs.id
+		FROM barbershop_services bs
+		WHERE bs.id IN (SELECT service_id FROM plan_services WHERE plan_id = ?)
+		   OR (bs.category_id IS NOT NULL AND bs.category_id IN (
+		       SELECT category_id FROM plan_categories WHERE plan_id = ?
+		   ))
+	`, planID, planID).Scan(&ids).Error
 	return ids, err
 }
 
@@ -349,6 +369,10 @@ func (r *SubscriptionGormRepository) DeletePlan(
 		if err := tx.
 			Where("plan_id = ? AND status != ?", planID, "active").
 			Delete(&models.Subscription{}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Exec(`DELETE FROM plan_categories WHERE plan_id = ?`, planID).Error; err != nil {
 			return err
 		}
 
@@ -416,4 +440,28 @@ func (r *SubscriptionGormRepository) CountServicesByIDs(
 	}
 
 	return count, nil
+}
+
+func (r *SubscriptionGormRepository) listPlanCategoryIDs(ctx context.Context, planID uint) ([]uint, error) {
+	var ids []uint
+	err := r.db.WithContext(ctx).Raw(
+		`SELECT category_id FROM plan_categories WHERE plan_id = ?`, planID,
+	).Scan(&ids).Error
+	return ids, err
+}
+
+func (r *SubscriptionGormRepository) CountCategoriesByIDs(
+	ctx context.Context,
+	barbershopID uint,
+	categoryIDs []uint,
+) (int64, error) {
+	if len(categoryIDs) == 0 {
+		return 0, nil
+	}
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.ServiceCategory{}).
+		Where("barbershop_id = ? AND id IN ?", barbershopID, categoryIDs).
+		Count(&count).Error
+	return count, err
 }

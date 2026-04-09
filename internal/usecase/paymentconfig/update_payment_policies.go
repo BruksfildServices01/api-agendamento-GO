@@ -22,6 +22,10 @@ type UpdatePaymentPoliciesInput struct {
 	Categories           []domain.CategoryPaymentPolicy `json:"categories"`
 	MPAccessToken        *string                        `json:"mp_access_token,omitempty"`
 	MPPublicKey          *string                        `json:"mp_public_key,omitempty"`
+	AcceptCash           bool                           `json:"accept_cash"`
+	AcceptPix            bool                           `json:"accept_pix"`
+	AcceptCredit         bool                           `json:"accept_credit"`
+	AcceptDebit          bool                           `json:"accept_debit"`
 }
 
 func (uc *UpdatePaymentPolicies) Execute(
@@ -46,6 +50,10 @@ func (uc *UpdatePaymentPolicies) Execute(
 	if in.MPPublicKey != nil {
 		cfg.MPPublicKey = *in.MPPublicKey
 	}
+	cfg.AcceptCash = in.AcceptCash
+	cfg.AcceptPix = in.AcceptPix
+	cfg.AcceptCredit = in.AcceptCredit
+	cfg.AcceptDebit = in.AcceptDebit
 
 	// 2) Valida invariantes do config
 	if err := domain.Validate(cfg); err != nil {

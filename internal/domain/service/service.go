@@ -1,5 +1,11 @@
 package service
 
+type ServiceImage struct {
+	ID       uint
+	URL      string
+	Position int
+}
+
 type Service struct {
 	ID           uint
 	BarbershopID uint
@@ -9,4 +15,6 @@ type Service struct {
 	Price        int64
 	Active       bool
 	Category     string
+	CategoryID   *uint
+	Images       []ServiceImage
 }

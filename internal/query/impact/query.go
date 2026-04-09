@@ -681,19 +681,13 @@ func (q *Query) buildROI(ctx context.Context, barbershopID uint, start, end time
 	}
 
 	valueGenerated := revenue.CurrentCents + indirect.AdditionalSalesCents
-	lossesMitigatedNote := fmt.Sprintf("R$ %.2f em perdas identificadas no período", float64(losses.TotalCents)/100)
+	lossesMitigatedNote := ""
 
 	justificationNote := fmt.Sprintf(
-		"No período, o sistema registrou R$ %.2f em receita realizada, %d atendimentos com taxa de presença de %.1f%% e %d clientes ativos. "+
-			"Foram identificadas perdas de R$ %.2f (no-show e cancelamentos). "+
-			"Ganhos indiretos de R$ %.2f em vendas adicionais e R$ %.2f cobertos por assinaturas.",
-		float64(revenue.CurrentCents)/100,
+		"%d atendimentos no período, %.0f%% dos clientes compareceram, %d clientes ativos.",
 		usage.TotalAppointments,
 		usage.AttendanceRatePercent,
 		growth.TotalActiveClients,
-		float64(losses.TotalCents)/100,
-		float64(indirect.AdditionalSalesCents)/100,
-		float64(subValue.TotalCents)/100,
 	)
 
 	return ROIDTO{

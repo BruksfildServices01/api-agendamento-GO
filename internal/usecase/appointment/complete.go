@@ -219,6 +219,9 @@ func (uc *CompleteAppointment) Execute(
 				return err
 			}
 
+			// Appointment closure = in-person sale; payment is collected on the spot.
+			order.Status = orderDomain.OrderStatusPaid
+
 			if err := txOrderRepo.Create(ctx, order); err != nil {
 				return err
 			}

@@ -12,6 +12,7 @@ import (
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucOrder "github.com/BruksfildServices01/barber-scheduler/internal/usecase/order"
 )
@@ -20,17 +21,20 @@ type OrderHandler struct {
 	createUC    *ucOrder.CreateOrder
 	getUC       *ucOrder.GetOrder
 	listAdminUC *ucOrder.ListOrdersAdmin
+	orderRepo   *infraRepo.OrderGormRepository
 }
 
 func NewOrderHandler(
 	createUC *ucOrder.CreateOrder,
 	getUC *ucOrder.GetOrder,
 	listAdminUC *ucOrder.ListOrdersAdmin,
+	orderRepo *infraRepo.OrderGormRepository,
 ) *OrderHandler {
 	return &OrderHandler{
 		createUC:    createUC,
 		getUC:       getUC,
 		listAdminUC: listAdminUC,
+		orderRepo:   orderRepo,
 	}
 }
 
@@ -62,6 +66,32 @@ type OrderItemResponse struct {
 	Quantity            int    `json:"quantity"`
 	UnitPrice           int64  `json:"unit_price"`
 	LineTotal           int64  `json:"line_total"`
+}
+
+type RichOrderClientInfo struct {
+	ID    uint   `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
+type RichOrderServiceInfo struct {
+	Name          string `json:"name"`
+	PaymentMethod string `json:"payment_method,omitempty"`
+	AppointmentID *uint  `json:"appointment_id,omitempty"`
+}
+
+type RichOrderResponse struct {
+	ID          uint                 `json:"id"`
+	Status      string               `json:"status"`
+	OrderSource string               `json:"order_source"` // "suggestion" | "standalone"
+	Client      *RichOrderClientInfo `json:"client,omitempty"`
+	Service     *RichOrderServiceInfo `json:"service,omitempty"`
+	SubtotalAmount int64             `json:"subtotal_amount"`
+	DiscountAmount int64             `json:"discount_amount"`
+	TotalAmount    int64             `json:"total_amount"`
+	Items          []OrderItemResponse `json:"items"`
+	CreatedAt      string             `json:"created_at"`
 }
 
 func (h *OrderHandler) Create(c *gin.Context) {
@@ -120,17 +150,55 @@ func (h *OrderHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	order, err := h.getUC.Execute(c.Request.Context(), barbershopID, uint(orderID64))
+	rich, err := h.orderRepo.GetRichByID(c.Request.Context(), barbershopID, uint(orderID64))
 	if err != nil {
 		httperr.Internal(c, "failed_to_get_order", "Falha ao buscar pedido.")
 		return
 	}
-	if order == nil {
+	if rich == nil {
 		httperr.NotFound(c, "order_not_found", "Pedido não encontrado.")
 		return
 	}
 
-	httpresp.OK(c, toOrderResponse(order))
+	resp := RichOrderResponse{
+		ID:             rich.ID,
+		Status:         rich.Status,
+		OrderSource:    rich.OrderSource,
+		SubtotalAmount: rich.SubtotalAmount,
+		DiscountAmount: rich.DiscountAmount,
+		TotalAmount:    rich.TotalAmount,
+		CreatedAt:      rich.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		Items:          make([]OrderItemResponse, 0, len(rich.Items)),
+	}
+
+	if rich.ClientID != nil && rich.ClientName != "" {
+		resp.Client = &RichOrderClientInfo{
+			ID:    *rich.ClientID,
+			Name:  rich.ClientName,
+			Phone: rich.ClientPhone,
+			Email: rich.ClientEmail,
+		}
+	}
+
+	if rich.OrderSource == "suggestion" && rich.ServiceName != "" {
+		resp.Service = &RichOrderServiceInfo{
+			Name:          rich.ServiceName,
+			PaymentMethod: rich.PaymentMethod,
+			AppointmentID: rich.AppointmentID,
+		}
+	}
+
+	for _, it := range rich.Items {
+		resp.Items = append(resp.Items, OrderItemResponse{
+			ProductID:           it.ProductID,
+			ProductNameSnapshot: it.ProductNameSnapshot,
+			Quantity:            it.Quantity,
+			UnitPrice:           it.UnitPrice,
+			LineTotal:           it.LineTotal,
+		})
+	}
+
+	httpresp.OK(c, resp)
 }
 
 func (h *OrderHandler) List(c *gin.Context) {

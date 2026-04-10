@@ -149,7 +149,7 @@ func (uc *OrchestratedCheckout) Execute(
 		cartKey = strings.TrimSpace(*input.CartKey)
 	}
 
-	if cartKey != "" && uc.getCartUC != nil {
+	if cartKey != "" && uc.getCartUC != nil && appointment.Status == models.AppointmentStatusAwaitingPayment {
 		cartView, err := uc.getCartUC.Execute(
 			ctx,
 			ucCart.GetCartInput{

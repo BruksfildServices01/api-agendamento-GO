@@ -24,7 +24,8 @@ func NewBarbershopHandler(db *gorm.DB) *BarbershopHandler {
 }
 
 type UpdateBarbershopConfigRequest struct {
-	MinAdvanceMinutes *int `json:"min_advance_minutes"`
+	MinAdvanceMinutes        *int `json:"min_advance_minutes"`
+	ScheduleToleranceMinutes *int `json:"schedule_tolerance_minutes"`
 }
 
 func (h *BarbershopHandler) GetMeBarbershop(c *gin.Context) {
@@ -70,6 +71,14 @@ func (h *BarbershopHandler) UpdateMeBarbershop(c *gin.Context) {
 			return
 		}
 		shop.MinAdvanceMinutes = *req.MinAdvanceMinutes
+	}
+
+	if req.ScheduleToleranceMinutes != nil {
+		if *req.ScheduleToleranceMinutes < 0 || *req.ScheduleToleranceMinutes > 60 {
+			httperr.BadRequest(c, "invalid_tolerance", "Tolerância de agenda deve estar entre 0 e 60 minutos.")
+			return
+		}
+		shop.ScheduleToleranceMinutes = *req.ScheduleToleranceMinutes
 	}
 
 	if err := h.db.Save(&shop).Error; err != nil {

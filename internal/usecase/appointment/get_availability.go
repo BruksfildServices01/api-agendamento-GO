@@ -88,6 +88,7 @@ func (uc *GetAvailability) Execute(
 
 	// 6) Slots
 	slotDuration := time.Duration(product.DurationMin) * time.Minute
+	toleranceDur := time.Duration(shop.ScheduleToleranceMinutes) * time.Minute
 	slots := make([]domain.TimeSlot, 0)
 
 	apIdx := 0
@@ -105,14 +106,19 @@ func (uc *GetAvailability) Execute(
 			continue
 		}
 
-		for apIdx < len(appointments) && appointments[apIdx].EndTime.Before(slotStart) {
+		for apIdx < len(appointments) && !appointments[apIdx].EndTime.After(slotStart) {
 			apIdx++
 		}
 
 		conflict := false
 		if apIdx < len(appointments) {
 			ap := appointments[apIdx]
-			if slotStart.Before(ap.EndTime) && slotEnd.After(ap.StartTime) {
+			// Com tolerância: o slot só conflita se a sobreposição exceder o limite configurado.
+			// slotStart + tol < ap.EndTime  →  início do slot (considerando margem) está antes do fim do existente
+			// slotEnd - tol > ap.StartTime  →  fim do slot (considerando margem) está depois do início do existente
+			effectiveStart := slotStart.Add(toleranceDur)
+			effectiveEnd := slotEnd.Add(-toleranceDur)
+			if effectiveStart.Before(effectiveEnd) && effectiveStart.Before(ap.EndTime) && effectiveEnd.After(ap.StartTime) {
 				conflict = true
 			}
 		}

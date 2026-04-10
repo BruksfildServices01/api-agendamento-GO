@@ -97,6 +97,7 @@ CREATE TABLE barbershops (
   phone VARCHAR(20),
   address VARCHAR(255),
   min_advance_minutes INTEGER DEFAULT 120,
+  schedule_tolerance_minutes INTEGER DEFAULT 0,
   timezone VARCHAR(64) NOT NULL DEFAULT 'America/Sao_Paulo',
   photo_url VARCHAR(512),
 

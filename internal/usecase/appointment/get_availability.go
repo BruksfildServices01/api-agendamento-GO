@@ -118,7 +118,13 @@ func (uc *GetAvailability) Execute(
 			// slotEnd - tol > ap.StartTime  →  fim do slot (considerando margem) está depois do início do existente
 			effectiveStart := slotStart.Add(toleranceDur)
 			effectiveEnd := slotEnd.Add(-toleranceDur)
-			if effectiveStart.Before(effectiveEnd) && effectiveStart.Before(ap.EndTime) && effectiveEnd.After(ap.StartTime) {
+			// Se a tolerância é maior que metade do serviço o range fica inválido;
+			// recua para o range completo para não liberar slots ocupados.
+			if !effectiveStart.Before(effectiveEnd) {
+				effectiveStart = slotStart
+				effectiveEnd = slotEnd
+			}
+			if effectiveStart.Before(ap.EndTime) && effectiveEnd.After(ap.StartTime) {
 				conflict = true
 			}
 		}

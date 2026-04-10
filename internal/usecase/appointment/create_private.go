@@ -187,19 +187,22 @@ func (uc *CreatePrivateAppointment) Execute(
 	conflictEnd := end
 	if shop.ScheduleToleranceMinutes > 0 {
 		tol := time.Duration(shop.ScheduleToleranceMinutes) * time.Minute
-		conflictStart = start.Add(tol)
-		conflictEnd = end.Add(-tol)
-	}
-	if conflictStart.Before(conflictEnd) {
-		if err := uc.repo.AssertNoTimeConflict(
-			ctx,
-			in.BarbershopID,
-			in.BarberID,
-			conflictStart,
-			conflictEnd,
-		); err != nil {
-			return nil, err
+		cs := start.Add(tol)
+		ce := end.Add(-tol)
+		// Só aplica tolerância se o range não ficar inválido.
+		if cs.Before(ce) {
+			conflictStart = cs
+			conflictEnd = ce
 		}
+	}
+	if err := uc.repo.AssertNoTimeConflict(
+		ctx,
+		in.BarbershopID,
+		in.BarberID,
+		conflictStart,
+		conflictEnd,
+	); err != nil {
+		return nil, err
 	}
 
 	// --------------------------------------------------
@@ -278,7 +281,14 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 12) Criar Appointment
+	// 12) Limpar awaiting_payment expirado/orfão no slot
+	// Garante que a DB constraint não conflite com a lógica
+	// de AssertNoTimeConflict na janela entre o job e o INSERT.
+	// --------------------------------------------------
+	_ = uc.repo.CancelExpiredAwaitingPaymentAtSlot(ctx, in.BarbershopID, in.BarberID, start)
+
+	// --------------------------------------------------
+	// 13) Criar Appointment
 	// --------------------------------------------------
 	barbershopID := in.BarbershopID
 	barberID := in.BarberID

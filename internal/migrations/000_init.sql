@@ -98,6 +98,14 @@ CREATE TABLE barbershops (
   address VARCHAR(255),
   min_advance_minutes INTEGER DEFAULT 120,
   timezone VARCHAR(64) NOT NULL DEFAULT 'America/Sao_Paulo',
+  photo_url VARCHAR(512),
+
+  -- SaaS billing
+  status TEXT NOT NULL DEFAULT 'trial'
+    CHECK (status IN ('pending_payment', 'trial', 'active', 'inactive', 'suspended')),
+  trial_ends_at TIMESTAMPTZ,
+  subscription_expires_at TIMESTAMPTZ,
+
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -605,6 +613,18 @@ CREATE TABLE plan_services (
 );
 
 CREATE INDEX idx_plan_services_plan ON plan_services(plan_id);
+
+-- ============================================================
+-- PLAN CATEGORIES (pivot)
+-- ============================================================
+
+CREATE TABLE plan_categories (
+  plan_id     BIGINT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  category_id BIGINT NOT NULL REFERENCES service_categories(id) ON DELETE CASCADE,
+  PRIMARY KEY (plan_id, category_id)
+);
+
+CREATE INDEX idx_plan_categories_plan ON plan_categories(plan_id);
 
 -- ============================================================
 -- SUBSCRIPTIONS

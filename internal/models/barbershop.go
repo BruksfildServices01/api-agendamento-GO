@@ -13,6 +13,11 @@ type Barbershop struct {
 	PhotoURL          *string                  `gorm:"size:512"`
 	PaymentConfig     *BarbershopPaymentConfig `gorm:"constraint:OnDelete:CASCADE;"`
 
+	// SaaS billing
+	Status                string     `gorm:"size:30;not null;default:'trial'"`
+	TrialEndsAt           *time.Time `gorm:"index"`
+	SubscriptionExpiresAt *time.Time
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

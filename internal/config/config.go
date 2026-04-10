@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -49,6 +50,14 @@ type Config struct {
 	// BackendURL é usado para montar a notification_url enviada ao Mercado Pago.
 	// Ex: https://api.seudominio.com
 	BackendURL string
+
+	// =========================
+	// SAAS BILLING
+	// =========================
+	// Preço mensal da plataforma em centavos (padrão: 4990 = R$49,90).
+	PlatformMonthlyPriceCents int
+	// Duração do período de trial em dias (padrão: 7).
+	TrialDays int
 
 	// =========================
 	// CLOUDFLARE R2 (storage)
@@ -98,6 +107,10 @@ func Load() *Config {
 		MPAccessToken: getEnv("MP_ACCESS_TOKEN", ""),
 		BackendURL:    strings.TrimRight(getEnv("BACKEND_URL", "http://localhost:8080"), "/"),
 
+		// SAAS BILLING
+		PlatformMonthlyPriceCents: getEnvInt("PLATFORM_MONTHLY_PRICE_CENTS", 4990),
+		TrialDays:                 getEnvInt("TRIAL_DAYS", 7),
+
 		// R2
 		R2AccountID:       getEnv("R2_ACCOUNT_ID", ""),
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
@@ -135,6 +148,15 @@ func Load() *Config {
 func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func getEnvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

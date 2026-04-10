@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 )
@@ -16,7 +17,7 @@ const (
 	ContextUserRole     = "userRole"
 )
 
-func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
+func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -33,7 +34,6 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		tokenString := parts[1]
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrTokenMalformed
 			}
@@ -55,6 +55,17 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		role, _ := claims["role"].(string)
 		if !ok1 || !ok2 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_token_payload"})
+			return
+		}
+
+		// Verify the barbershop still exists in DB (handles stale tokens after DB reset).
+		var exists int64
+		db.WithContext(c.Request.Context()).
+			Table("barbershops").
+			Where("id = ?", uint(barbershopID)).
+			Count(&exists)
+		if exists == 0 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
 			return
 		}
 

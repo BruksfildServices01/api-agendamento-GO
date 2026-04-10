@@ -117,6 +117,12 @@ CREATE TABLE barbershop_payment_configs (
     ON DELETE CASCADE,
   default_requirement payment_requirement NOT NULL,
   pix_expiration_minutes INTEGER NOT NULL DEFAULT 15,
+  mp_access_token VARCHAR(255),
+  mp_public_key   VARCHAR(255),
+  accept_cash     BOOLEAN NOT NULL DEFAULT true,
+  accept_pix      BOOLEAN NOT NULL DEFAULT true,
+  accept_credit   BOOLEAN NOT NULL DEFAULT true,
+  accept_debit    BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -219,6 +225,24 @@ COMMENT ON COLUMN client_metrics.manual_category_expires_at IS
 and auto-classification resumes on the next metric update. NULL = permanent override.';
 
 -- ============================================================
+-- SERVICE CATEGORIES
+-- ============================================================
+
+CREATE TABLE service_categories (
+  id            BIGSERIAL PRIMARY KEY,
+  barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  name          VARCHAR(100) NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_service_categories_barbershop ON service_categories(barbershop_id);
+
+CREATE TRIGGER trg_service_categories_updated
+BEFORE UPDATE ON service_categories
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
 -- BARBER SERVICES
 -- ============================================================
 
@@ -231,11 +255,13 @@ CREATE TABLE barbershop_services (
   price BIGINT NOT NULL CHECK (price >= 0),
   active BOOLEAN DEFAULT true,
   category VARCHAR(50),
+  category_id BIGINT REFERENCES service_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX idx_services_barbershop ON barbershop_services(barbershop_id);
+CREATE INDEX idx_barbershop_services_category ON barbershop_services(category_id);
 
 CREATE TRIGGER trg_services_updated
 BEFORE UPDATE ON barbershop_services
@@ -408,6 +434,7 @@ CREATE TABLE payments (
   barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
   appointment_id BIGINT REFERENCES appointments(id) ON DELETE CASCADE,
   order_id BIGINT REFERENCES orders(id) ON DELETE CASCADE,
+  bundled_order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
   txid VARCHAR(100) UNIQUE,
   qr_code TEXT,
   amount BIGINT NOT NULL CHECK (amount >= 0),
@@ -739,5 +766,42 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT;
 
 -- Barbershop profile photo.
 ALTER TABLE barbershops ADD COLUMN IF NOT EXISTS photo_url TEXT;
+
+-- ============================================================
+-- CLIENT CRM CATEGORIES
+-- ============================================================
+
+CREATE TABLE client_crm_categories (
+  barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  client_id     BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  category      client_category NOT NULL DEFAULT 'new',
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (barbershop_id, client_id)
+);
+
+CREATE INDEX idx_client_crm_categories_barbershop ON client_crm_categories(barbershop_id);
+
+-- ============================================================
+-- PERFORMANCE INDEXES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_appointments_barbershop_client
+    ON appointments(barbershop_id, client_id);
+
+CREATE INDEX IF NOT EXISTS idx_appointments_barbershop_start
+    ON appointments(barbershop_id, start_time);
+
+CREATE INDEX IF NOT EXISTS idx_clients_phone
+    ON clients(barbershop_id, phone);
+
+CREATE INDEX IF NOT EXISTS idx_clients_name_lower
+    ON clients(barbershop_id, LOWER(name::text));
+
+CREATE INDEX IF NOT EXISTS idx_payments_appointment
+    ON payments(barbershop_id, appointment_id);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_active_client
+    ON subscriptions(barbershop_id, client_id, status)
+    WHERE status = 'active';
 
 COMMIT;

@@ -53,11 +53,16 @@ func (n *EmailNotifier) NotifyConfirmed(ctx context.Context, input domain.Appoin
 
 	html, err := renderAppointmentConfirmed(input)
 	if err != nil {
+		log.Printf("[EMAIL] NotifyConfirmed render error: %v", err)
 		return err
 	}
 
 	ics := buildAppointmentICS(input)
-	return n.sendWithICS(input.ClientEmail, "Agendamento confirmado – Corteon", html, ics)
+	err = n.sendWithICS(input.ClientEmail, "Agendamento confirmado – Corteon", html, ics)
+	if err != nil {
+		log.Printf("[EMAIL] NotifyConfirmed send error to=%s: %v", input.ClientEmail, err)
+	}
+	return err
 }
 
 // ── Agendamento cancelado ────────────────────────────────────────────────────

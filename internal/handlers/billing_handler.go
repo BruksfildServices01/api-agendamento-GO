@@ -131,6 +131,11 @@ func (h *BillingHandler) Checkout(c *gin.Context) {
 			Pending: pendingURL,
 			Failure: failureURL,
 		},
+		PaymentMethods: &mpPreference.PaymentMethodsRequest{
+			ExcludedPaymentTypes: []mpPreference.ExcludedPaymentTypeRequest{
+				{ID: "account_money"},
+			},
+		},
 		AutoReturn:        "approved",
 		ExternalReference: externalRef,
 		NotificationURL:   notificationURL,

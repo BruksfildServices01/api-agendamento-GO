@@ -595,6 +595,36 @@ func (r *AppointmentGormRepository) GetOperationalSummary(
 // JOB REPOSITORY (P0.2 - race-safe no-show)
 // ======================================================
 
+func (r *AppointmentGormRepository) CancelExpiredAwaitingPaymentAtSlot(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	startTime time.Time,
+) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE appointments
+		SET status       = 'cancelled',
+		    cancelled_at = NOW(),
+		    updated_at   = NOW()
+		WHERE barbershop_id = ?
+		  AND barber_id    = ?
+		  AND start_time   = ?
+		  AND status       = 'awaiting_payment'
+		  AND (
+		      NOT EXISTS (
+		          SELECT 1 FROM payments
+		          WHERE payments.appointment_id = appointments.id
+		      )
+		      OR EXISTS (
+		          SELECT 1 FROM payments
+		          WHERE payments.appointment_id = appointments.id
+		            AND payments.expires_at IS NOT NULL
+		            AND payments.expires_at < NOW()
+		      )
+		  )
+	`, barbershopID, barberID, startTime).Error
+}
+
 func (r *AppointmentGormRepository) CancelOrphanAwaitingPayments(
 	ctx context.Context,
 	barbershopID uint,

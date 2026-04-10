@@ -61,6 +61,17 @@ type Repository interface {
 		end time.Time,
 	) error
 
+	// CancelExpiredAwaitingPaymentAtSlot cancela, imediatamente antes de um INSERT,
+	// qualquer appointment awaiting_payment no slot exato cujo PIX já expirou ou
+	// que nunca teve payment criado (orfão). Garante que a DB constraint não
+	// conflite com a lógica de AssertNoTimeConflict.
+	CancelExpiredAwaitingPaymentAtSlot(
+		ctx context.Context,
+		barbershopID uint,
+		barberID uint,
+		startTime time.Time,
+	) error
+
 	// ==================================================
 	// APPOINTMENT - STATE CHANGE (OWNER FLOW)
 	// ==================================================

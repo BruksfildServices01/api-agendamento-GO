@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -59,23 +61,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	slug := strings.ToLower(strings.TrimSpace(req.BarbershopSlug))
-
-	// --------------------------------------------------
-	// Validação de slug (antes da transação)
-	// --------------------------------------------------
-	var count int64
-	if err := h.db.Model(&models.Barbershop{}).
-		Where("slug = ?", slug).
-		Count(&count).Error; err != nil {
-		httperr.Internal(c, "failed_to_check_slug", "failed_to_check_slug")
-		return
-	}
-
-	if count > 0 {
-		httperr.BadRequest(c, "slug_already_exists", "slug_already_exists")
-		return
-	}
+	slug := uniqueSlug(h.db, strings.ToLower(strings.TrimSpace(req.BarbershopSlug)))
 
 	ctx := c.Request.Context()
 
@@ -306,4 +292,23 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		},
 		"token": token,
 	})
+}
+
+// uniqueSlug garante que o slug seja único no banco.
+// Se o slug base já existe, adiciona um sufixo aleatório de 4 dígitos.
+func uniqueSlug(db *gorm.DB, base string) string {
+	if base == "" {
+		base = "barbearia"
+	}
+	candidate := base
+	for i := 0; i < 10; i++ {
+		var count int64
+		db.Model(&models.Barbershop{}).Where("slug = ?", candidate).Count(&count)
+		if count == 0 {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%04d", base, rand.Intn(9000)+1000)
+	}
+	// fallback com timestamp — impossível colidir
+	return fmt.Sprintf("%s-%d", base, time.Now().UnixMilli()%100000)
 }

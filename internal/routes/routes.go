@@ -562,6 +562,7 @@ func RegisterRoutes(
 		secured.GET("/me", meHandler.GetMe)
 		secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)
 		secured.PUT("/me/barbershop", barbershopHandler.UpdateMeBarbershop)
+		secured.PATCH("/me/barbershop/slug", barbershopHandler.UpdateSlug)
 
 		secured.GET("/me/services", serviceHandler.List)
 		secured.POST("/me/services", serviceHandler.Create)

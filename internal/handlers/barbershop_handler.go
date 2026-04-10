@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -10,6 +12,8 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
+
+var slugRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 type BarbershopHandler struct {
 	db *gorm.DB
@@ -74,4 +78,42 @@ func (h *BarbershopHandler) UpdateMeBarbershop(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, shop)
+}
+
+// PATCH /api/me/barbershop/slug
+func (h *BarbershopHandler) UpdateSlug(c *gin.Context) {
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	var req struct {
+		Slug string `json:"slug" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httperr.BadRequest(c, "invalid_request", "Slug inválido.")
+		return
+	}
+
+	slug := strings.ToLower(strings.TrimSpace(req.Slug))
+
+	if len(slug) < 3 || len(slug) > 50 || !slugRegex.MatchString(slug) {
+		httperr.BadRequest(c, "invalid_slug", "Slug deve ter entre 3 e 50 caracteres (letras, números e hífens).")
+		return
+	}
+
+	var count int64
+	h.db.Model(&models.Barbershop{}).
+		Where("slug = ? AND id != ?", slug, barbershopID).
+		Count(&count)
+	if count > 0 {
+		httperr.BadRequest(c, "slug_already_exists", "Este endereço já está em uso.")
+		return
+	}
+
+	if err := h.db.Model(&models.Barbershop{}).
+		Where("id = ?", barbershopID).
+		Update("slug", slug).Error; err != nil {
+		httperr.Internal(c, "failed_to_update_slug", "Erro ao salvar.")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"slug": slug})
 }

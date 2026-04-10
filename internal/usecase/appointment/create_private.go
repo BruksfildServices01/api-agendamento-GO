@@ -179,16 +179,27 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	// --------------------------------------------------
-	// 7) Conflito de horário (instantes)
+	// 7) Conflito de horário (com tolerância configurada)
 	// --------------------------------------------------
-	if err := uc.repo.AssertNoTimeConflict(
-		ctx,
-		in.BarbershopID,
-		in.BarberID,
-		start,
-		end,
-	); err != nil {
-		return nil, err
+	// A tolerância permite sobreposição de até T minutos em cada extremidade,
+	// espelhando a mesma lógica usada em get_availability.go.
+	conflictStart := start
+	conflictEnd := end
+	if shop.ScheduleToleranceMinutes > 0 {
+		tol := time.Duration(shop.ScheduleToleranceMinutes) * time.Minute
+		conflictStart = start.Add(tol)
+		conflictEnd = end.Add(-tol)
+	}
+	if conflictStart.Before(conflictEnd) {
+		if err := uc.repo.AssertNoTimeConflict(
+			ctx,
+			in.BarbershopID,
+			in.BarberID,
+			conflictStart,
+			conflictEnd,
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	// --------------------------------------------------

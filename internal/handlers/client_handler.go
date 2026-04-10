@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -135,23 +136,32 @@ func (h *ClientHandler) List(c *gin.Context) {
 		return
 	}
 
-	// 5. Build response (subscription check only for this page).
+	// 5. Batch-load active subscriptions for this page (single query instead of N+1).
+	premiumSet := make(map[uint]bool)
+	if len(clients) > 0 {
+		clientIDs := make([]uint, len(clients))
+		for i, cl := range clients {
+			clientIDs[i] = cl.ID
+		}
+		now := time.Now().UTC()
+		var premiumIDs []uint
+		h.db.WithContext(ctx).
+			Table("subscriptions").
+			Select("client_id").
+			Where("barbershop_id = ? AND client_id IN ? AND status = 'active' AND current_period_start <= ? AND current_period_end > ?",
+				barbershopID, clientIDs, now, now).
+			Scan(&premiumIDs)
+		for _, id := range premiumIDs {
+			premiumSet[id] = true
+		}
+	}
+
 	out := make([]ClientListItemResponse, 0, len(clients))
 	for _, client := range clients {
-		premium := false
-		if h.getActiveSubscription != nil {
-			sub, err := h.getActiveSubscription.Execute(ctx, barbershopID, client.ID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_resolve_client_premium"})
-				return
-			}
-			premium = sub != nil
-		}
-
 		out = append(out, ClientListItemResponse{
 			Client:   client,
 			Category: categoryByClient[client.ID],
-			Premium:  premium,
+			Premium:  premiumSet[client.ID],
 		})
 	}
 

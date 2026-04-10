@@ -557,7 +557,7 @@ func RegisterRoutes(
 	api.POST("/auth/login", authHandler.Login)
 
 	secured := api.Group("/")
-	secured.Use(middleware.AuthMiddleware(cfg))
+	secured.Use(middleware.AuthMiddleware(cfg, db))
 	{
 		secured.GET("/me", meHandler.GetMe)
 		secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)

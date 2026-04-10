@@ -48,11 +48,14 @@ func (h *MeHandler) GetMe(c *gin.Context) {
 			"barbershop_id": user.BarbershopID,
 		},
 		"barbershop": gin.H{
-			"id":      user.Barbershop.ID,
-			"name":    user.Barbershop.Name,
-			"slug":    user.Barbershop.Slug,
-			"phone":   user.Barbershop.Phone,
-			"address": user.Barbershop.Address,
+			"id":                      user.Barbershop.ID,
+			"name":                    user.Barbershop.Name,
+			"slug":                    user.Barbershop.Slug,
+			"phone":                   user.Barbershop.Phone,
+			"address":                 user.Barbershop.Address,
+			"subscription_status":     user.Barbershop.Status,
+			"trial_ends_at":           user.Barbershop.TrialEndsAt,
+			"subscription_expires_at": user.Barbershop.SubscriptionExpiresAt,
 		},
 	})
 }

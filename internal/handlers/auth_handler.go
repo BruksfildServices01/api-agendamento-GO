@@ -71,6 +71,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		responseToken string
 	)
 
+	trialEnd := time.Now().AddDate(0, 0, h.config.TrialDays)
+
 	// ==================================================
 	// TRANSACTION
 	// ==================================================
@@ -79,11 +81,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		// Barbearia
 		// -------------------------------
 		shop := models.Barbershop{
-			Name:     req.BarbershopName,
-			Slug:     slug,
-			Phone:    req.BarbershopPhone,
-			Address:  req.BarbershopAddress,
-			Timezone: "America/Sao_Paulo",
+			Name:        req.BarbershopName,
+			Slug:        slug,
+			Phone:       req.BarbershopPhone,
+			Address:     req.BarbershopAddress,
+			Timezone:    "America/Sao_Paulo",
+			Status:      "trial",
+			TrialEndsAt: &trialEnd,
 		}
 
 		if err := tx.Create(&shop).Error; err != nil {

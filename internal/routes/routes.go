@@ -498,6 +498,8 @@ func RegisterRoutes(
 		auditDispatcher,
 	)
 
+	billingHandler := handlers.NewBillingHandler(db, cfg)
+
 	// ======================================================
 	// ROUTES
 	// ======================================================
@@ -555,6 +557,9 @@ func RegisterRoutes(
 
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/login", authHandler.Login)
+
+	// Billing webhook (public — called by Mercado Pago).
+	api.POST("/billing/webhook", middleware.MaxBodySize(64*1024), billingHandler.Webhook)
 
 	secured := api.Group("/")
 	secured.Use(middleware.AuthMiddleware(cfg, db))
@@ -630,6 +635,10 @@ func RegisterRoutes(
 		secured.POST("/me/subscriptions", subscriptionHandler.Activate)
 		secured.DELETE("/me/subscriptions/:clientID", subscriptionHandler.Cancel)
 		secured.GET("/me/subscriptions/:clientID", subscriptionHandler.GetActive)
+
+		// Billing (subscription check bypassed in AuthMiddleware for these paths).
+		secured.GET("/me/billing/status", billingHandler.Status)
+		secured.POST("/me/billing/checkout", billingHandler.Checkout)
 
 		// Image upload (only registered when R2 is configured).
 		if imageHandler != nil {

@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -16,6 +18,12 @@ const (
 	ContextBarbershopID = "barbershopID"
 	ContextUserRole     = "userRole"
 )
+
+// Paths that bypass the subscription status check (billing and basic me info).
+func skipSubscriptionCheck(path string) bool {
+	return path == "/api/me" ||
+		strings.HasPrefix(path, "/api/me/billing")
+}
 
 func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -58,15 +66,57 @@ func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Verify the barbershop still exists in DB (handles stale tokens after DB reset).
-		var exists int64
-		db.WithContext(c.Request.Context()).
+		// Fetch barbershop to verify existence and check subscription status.
+		var shop struct {
+			ID                    uint
+			Status                string
+			TrialEndsAt           *time.Time
+			SubscriptionExpiresAt *time.Time
+		}
+		err = db.WithContext(c.Request.Context()).
 			Table("barbershops").
+			Select("id, status, trial_ends_at, subscription_expires_at").
 			Where("id = ?", uint(barbershopID)).
-			Count(&exists)
-		if exists == 0 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
+			First(&shop).Error
+
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
+				return
+			}
+			// On unexpected DB error, fail open to avoid blocking users.
+			c.Set(ContextUserID, uint(userID))
+			c.Set(ContextBarbershopID, uint(barbershopID))
+			c.Set(ContextUserRole, role)
+			c.Next()
 			return
+		}
+
+		// Check subscription status (skip for billing and basic me endpoints).
+		if !skipSubscriptionCheck(c.Request.URL.Path) {
+			now := time.Now()
+			blocked := false
+
+			switch shop.Status {
+			case "inactive", "suspended", "pending_payment":
+				blocked = true
+			case "trial":
+				if shop.TrialEndsAt != nil && now.After(*shop.TrialEndsAt) {
+					blocked = true
+				}
+			case "active":
+				if shop.SubscriptionExpiresAt != nil && now.After(*shop.SubscriptionExpiresAt) {
+					blocked = true
+				}
+			}
+
+			if blocked {
+				c.AbortWithStatusJSON(http.StatusPaymentRequired, gin.H{
+					"error":  "subscription_required",
+					"status": shop.Status,
+				})
+				return
+			}
 		}
 
 		c.Set(ContextUserID, uint(userID))

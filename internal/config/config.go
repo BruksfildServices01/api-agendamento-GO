@@ -25,11 +25,13 @@ type Config struct {
 	CORSAllowedOrigins []string
 
 	// =========================
-	// EMAIL (BREVO SMTP)
+	// EMAIL (BREVO)
 	// =========================
-	EmailEnabled bool
-	EmailFrom    string
+	EmailEnabled  bool
+	EmailFrom     string
+	BrevoAPIKey   string
 
+	// SMTP (legado — ignorado quando BrevoAPIKey está definido)
 	SMTPHost string
 	SMTPPort string
 	SMTPUser string
@@ -95,6 +97,7 @@ func Load() *Config {
 		// EMAIL
 		EmailEnabled: getEnv("EMAIL_ENABLED", "false") == "true",
 		EmailFrom:    getEnv("EMAIL_FROM", ""),
+		BrevoAPIKey:  getEnv("BREVO_API_KEY", ""),
 
 		SMTPHost: getEnv("SMTP_HOST", ""),
 		SMTPPort: getEnv("SMTP_PORT", ""),
@@ -128,12 +131,11 @@ func Load() *Config {
 	// VALIDAÇÃO DE EMAIL
 	// =========================
 	if cfg.EmailEnabled {
-		if cfg.EmailFrom == "" ||
-			cfg.SMTPHost == "" ||
-			cfg.SMTPPort == "" ||
-			cfg.SMTPUser == "" ||
-			cfg.SMTPPass == "" {
-			log.Fatal("❌ EMAIL_ENABLED=true mas variáveis SMTP incompletas")
+		if cfg.EmailFrom == "" {
+			log.Fatal("❌ EMAIL_ENABLED=true mas EMAIL_FROM não definido")
+		}
+		if cfg.BrevoAPIKey == "" && (cfg.SMTPHost == "" || cfg.SMTPPort == "" || cfg.SMTPUser == "" || cfg.SMTPPass == "") {
+			log.Fatal("❌ EMAIL_ENABLED=true mas nem BREVO_API_KEY nem variáveis SMTP estão completas")
 		}
 	}
 

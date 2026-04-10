@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agendamento cancelado</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F4F1EC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F4F1EC;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:560px;">
+
+          <!-- Logo -->
+          <tr>
+            <td align="center" style="padding-bottom:32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:#C9A84C;border-radius:12px;width:40px;height:40px;text-align:center;vertical-align:middle;">
+                    <span style="color:#000;font-size:20px;font-weight:bold;line-height:40px;">✂</span>
+                  </td>
+                  <td style="padding-left:10px;vertical-align:middle;">
+                    <span style="font-size:22px;font-weight:800;color:#1A1A1A;letter-spacing:-0.5px;">Corteon</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Card principal -->
+          <tr>
+            <td style="background-color:#FFFFFF;border-radius:20px;padding:40px 36px;border:1px solid #E8E2D9;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+
+                <!-- Ícone -->
+                <tr>
+                  <td align="center" style="padding-bottom:24px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="background-color:#FEF2F2;border-radius:50%;width:64px;height:64px;text-align:center;vertical-align:middle;">
+                          <span style="font-size:32px;line-height:64px;">✕</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+
+                <!-- Título -->
+                <tr>
+                  <td align="center" style="padding-bottom:8px;">
+                    <h1 style="margin:0;font-size:22px;font-weight:800;color:#1A1A1A;letter-spacing:-0.3px;">Agendamento cancelado</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-bottom:32px;">
+                    <p style="margin:0;font-size:15px;color:#666666;">Seu horário foi cancelado.</p>
+                  </td>
+                </tr>
+
+                <!-- Divider -->
+                <tr>
+                  <td style="padding-bottom:28px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      <tr><td style="height:1px;background-color:#F0EBE3;"></td></tr>
+                    </table>
+                  </td>
+                </tr>
+
+                <!-- Saudação -->
+                <tr>
+                  <td style="padding-bottom:20px;">
+                    <p style="margin:0;font-size:15px;color:#1A1A1A;">Olá, <strong>{{.ClientName}}</strong>!</p>
+                  </td>
+                </tr>
+
+                <!-- Bloco: Detalhes cancelados -->
+                <tr>
+                  <td style="padding-bottom:24px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FEF2F2;border:1px solid #FECACA;border-radius:12px;padding:16px 20px;">
+                      <tr>
+                        <td>
+                          <p style="margin:0 0 4px 0;font-size:11px;font-weight:700;color:#DC2626;text-transform:uppercase;letter-spacing:0.8px;">Horário cancelado</p>
+                          <p style="margin:0 0 4px 0;font-size:16px;font-weight:700;color:#1A1A1A;">{{.BarbershopName}}</p>
+                          <p style="margin:0;font-size:14px;color:#666666;">{{.AppointmentDate}}</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+
+                <!-- Mensagem -->
+                <tr>
+                  <td style="padding-bottom:8px;">
+                    <p style="margin:0;font-size:14px;color:#555555;line-height:1.6;">
+                      Se quiser remarcar, entre em contato diretamente com a barbearia.
+                    </p>
+                  </td>
+                </tr>
+
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding-top:24px;">
+              <p style="margin:0;font-size:12px;color:#999999;line-height:1.6;">
+                E-mail automático enviado pelo <strong>Corteon</strong>. Não responda esta mensagem.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

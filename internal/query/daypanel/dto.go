@@ -7,6 +7,7 @@ type ClientDTO struct {
 	ID       uint   `json:"id"`
 	Name     string `json:"name"`
 	Phone    string `json:"phone"`
+	Email    string `json:"email,omitempty"`
 	Category string `json:"category"` // new|regular|trusted|at_risk
 }
 
@@ -21,9 +22,10 @@ type ServiceDTO struct {
 // PaymentDTO carries the PIX payment status for the appointment.
 // Status is "none" when no payment record exists.
 type PaymentDTO struct {
-	Status      string     `json:"status"` // none|pending|paid|expired
+	Status      string     `json:"status"`           // none|pending|paid|expired
 	AmountCents int64      `json:"amount_cents"`
 	PaidAt      *time.Time `json:"paid_at,omitempty"`
+	Method      string     `json:"method,omitempty"` // cash|card|pix|subscription (from closure)
 }
 
 // SuggestionDTO is the product suggested for the service being performed.

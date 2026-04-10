@@ -133,6 +133,7 @@ type appointmentRow struct {
 	ClientID       *uint  `gorm:"column:client_id"`
 	ClientName     string `gorm:"column:client_name"`
 	ClientPhone    string `gorm:"column:client_phone"`
+	ClientEmail    string `gorm:"column:client_email"`
 	ClientCategory string `gorm:"column:client_category"`
 
 	ServiceID       *uint  `gorm:"column:service_id"`
@@ -140,10 +141,11 @@ type appointmentRow struct {
 	ServiceDuration int    `gorm:"column:service_duration_min"`
 	ServicePrice    int64  `gorm:"column:service_price_cents"`
 
-	PaymentID     *uint      `gorm:"column:payment_id"`
-	PaymentStatus string     `gorm:"column:payment_status"`
-	PaymentAmount int64      `gorm:"column:payment_amount_cents"`
-	PaymentPaidAt *time.Time `gorm:"column:payment_paid_at"`
+	PaymentID            *uint      `gorm:"column:payment_id"`
+	PaymentStatus        string     `gorm:"column:payment_status"`
+	PaymentAmount        int64      `gorm:"column:payment_amount_cents"`
+	PaymentPaidAt        *time.Time `gorm:"column:payment_paid_at"`
+	ClosurePaymentMethod string     `gorm:"column:closure_payment_method"`
 }
 
 func (q *Query) loadAppointmentRows(ctx context.Context, barbershopID, barberID uint, startUTC, endUTC time.Time) ([]appointmentRow, error) {
@@ -159,6 +161,7 @@ func (q *Query) loadAppointmentRows(ctx context.Context, barbershopID, barberID 
 			c.id            AS client_id,
 			COALESCE(c.name, '')  AS client_name,
 			COALESCE(c.phone, '') AS client_phone,
+			COALESCE(c.email, '') AS client_email,
 			COALESCE(cm.category::text, 'new') AS client_category,
 
 			bs.id           AS service_id,
@@ -169,7 +172,9 @@ func (q *Query) loadAppointmentRows(ctx context.Context, barbershopID, barberID 
 			p.id            AS payment_id,
 			COALESCE(p.status::text, 'none') AS payment_status,
 			COALESCE(p.amount, 0)  AS payment_amount_cents,
-			p.paid_at       AS payment_paid_at
+			p.paid_at       AS payment_paid_at,
+
+			COALESCE(ac.payment_method, '') AS closure_payment_method
 
 		FROM appointments a
 		LEFT JOIN clients c
@@ -182,6 +187,8 @@ func (q *Query) loadAppointmentRows(ctx context.Context, barbershopID, barberID 
 		LEFT JOIN payments p
 			ON p.appointment_id = a.id
 			AND p.barbershop_id = a.barbershop_id
+		LEFT JOIN appointment_closures ac
+			ON ac.appointment_id = a.id
 
 		WHERE a.barbershop_id = ?
 		  AND a.start_time >= ?
@@ -412,6 +419,7 @@ func assembleCard(
 			Status:      row.PaymentStatus,
 			AmountCents: row.PaymentAmount,
 			PaidAt:      row.PaymentPaidAt,
+			Method:      row.ClosurePaymentMethod,
 		},
 	}
 
@@ -421,6 +429,7 @@ func assembleCard(
 			ID:       *row.ClientID,
 			Name:     row.ClientName,
 			Phone:    row.ClientPhone,
+			Email:    row.ClientEmail,
 			Category: row.ClientCategory,
 		}
 	}

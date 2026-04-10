@@ -302,6 +302,7 @@ func RegisterRoutes(
 		expirePaymentsJob := jobs.NewExpirePaymentsJob(
 			expirePaymentsUC,
 			appointmentRepo,
+			appointmentRepo,
 		)
 
 		markNoShowJob := jobs.NewMarkNoShowJob(

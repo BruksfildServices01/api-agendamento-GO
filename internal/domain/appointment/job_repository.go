@@ -38,4 +38,15 @@ type JobRepository interface {
 		barbershopID uint,
 		target time.Time,
 	) ([]*models.Appointment, error)
+
+	// CancelOrphanAwaitingPayments cancela appointments que ficaram
+	// presos em awaiting_payment sem nenhum registro de payment associado.
+	// Isso ocorre quando o checkout cria o appointment mas o cliente abandona
+	// antes de iniciar o pagamento.
+	// Retorna o número de registros cancelados.
+	CancelOrphanAwaitingPayments(
+		ctx context.Context,
+		barbershopID uint,
+		olderThan time.Time,
+	) (int64, error)
 }

@@ -54,8 +54,10 @@ type Config struct {
 	// =========================
 	// SAAS BILLING
 	// =========================
-	// Preço mensal da plataforma em centavos (padrão: 4990 = R$49,90).
+	// Preço mensal da plataforma em centavos (padrão: 2190 = R$21,90).
 	PlatformMonthlyPriceCents int
+	// Public key do MP da plataforma (exibida no frontend para Checkout Transparente).
+	PlatformMPPublicKey string
 	// Duração do período de trial em dias (padrão: 7).
 	TrialDays int
 
@@ -108,7 +110,8 @@ func Load() *Config {
 		BackendURL:    strings.TrimRight(getEnv("BACKEND_URL", "http://localhost:8080"), "/"),
 
 		// SAAS BILLING
-		PlatformMonthlyPriceCents: getEnvInt("PLATFORM_MONTHLY_PRICE_CENTS", 4990),
+		PlatformMonthlyPriceCents: getEnvInt("PLATFORM_MONTHLY_PRICE_CENTS", 2190),
+		PlatformMPPublicKey:       getEnv("PLATFORM_MP_PUBLIC_KEY", ""),
 		TrialDays:                 getEnvInt("TRIAL_DAYS", 7),
 
 		// R2

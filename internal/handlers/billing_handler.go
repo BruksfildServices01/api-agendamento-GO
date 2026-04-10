@@ -73,6 +73,7 @@ func (h *BillingHandler) Status(c *gin.Context) {
 		"days_remaining":       daysRemaining,
 		"expires_at":           expiresAt,
 		"monthly_price_cents":  h.cfg.PlatformMonthlyPriceCents,
+		"mp_public_key":        h.cfg.PlatformMPPublicKey,
 	})
 }
 
@@ -228,6 +229,93 @@ func (h *BillingHandler) Webhook(c *gin.Context) {
 
 	log.Printf("[BillingWebhook] activated barbershop %d", barbershopID)
 	c.Status(http.StatusOK)
+}
+
+type billingPayRequest struct {
+	PayerEmail      string `json:"payer_email"       binding:"required,email"`
+	PayerCPF        string `json:"payer_cpf"`
+	PaymentMethodID string `json:"payment_method_id" binding:"required"`
+	Token           string `json:"token"`
+	Installments    int    `json:"installments"`
+}
+
+// POST /api/me/billing/pay
+// Creates a transparent payment (PIX or credit card) for the platform subscription.
+// In mock mode, activates the subscription immediately and returns approved.
+func (h *BillingHandler) Pay(c *gin.Context) {
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	// Mock mode: activate immediately.
+	if h.cfg.MPProvider != "mp" {
+		if err := h.activateBarbershop(barbershopID); err != nil {
+			httperr.Internal(c, "activation_error", "Erro ao ativar conta.")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "approved", "mp_payment_id": 0})
+		return
+	}
+
+	var req billingPayRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httperr.BadRequest(c, "invalid_body", err.Error())
+		return
+	}
+
+	mpCfg, err := mpSDKConfig.New(h.cfg.MPAccessToken)
+	if err != nil {
+		httperr.Internal(c, "mp_config_error", "Erro ao configurar gateway de pagamento.")
+		return
+	}
+
+	paymentClient := mpPayment.NewClient(mpCfg)
+	amount := float64(h.cfg.PlatformMonthlyPriceCents) / 100
+	externalRef := fmt.Sprintf("billing:%d", barbershopID)
+	notificationURL := fmt.Sprintf("%s/api/billing/webhook", h.cfg.BackendURL)
+
+	installments := req.Installments
+	if installments <= 0 {
+		installments = 1
+	}
+
+	pay, err := paymentClient.Create(context.Background(), mpPayment.Request{
+		TransactionAmount: amount,
+		Description:       "Mensalidade Corteon",
+		ExternalReference: externalRef,
+		NotificationURL:   notificationURL,
+		PaymentMethodID:   req.PaymentMethodID,
+		Token:             req.Token,
+		Installments:      installments,
+		Payer: &mpPayment.PayerRequest{
+			Email: req.PayerEmail,
+			Identification: &mpPayment.IdentificationRequest{
+				Type:   "CPF",
+				Number: req.PayerCPF,
+			},
+		},
+	})
+	if err != nil {
+		log.Printf("[BillingPay] mp payment error: %v", err)
+		httperr.Internal(c, "payment_creation_failed", "Erro ao criar pagamento.")
+		return
+	}
+
+	resp := gin.H{
+		"status":        pay.Status,
+		"mp_payment_id": pay.ID,
+	}
+
+	if pay.Status == "approved" {
+		if err := h.activateBarbershop(barbershopID); err != nil {
+			log.Printf("[BillingPay] failed to activate barbershop %d: %v", barbershopID, err)
+		}
+	}
+
+	if pay.Status == "pending" || pay.Status == "in_process" {
+		resp["qr_code"] = pay.PointOfInteraction.TransactionData.QRCode
+		resp["qr_code_base64"] = pay.PointOfInteraction.TransactionData.QRCodeBase64
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // activateBarbershop sets status=active and extends subscription by 1 month.

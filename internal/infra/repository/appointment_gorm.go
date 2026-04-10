@@ -250,22 +250,6 @@ func (r *AppointmentGormRepository) AssertNoTimeConflict(
 	start time.Time,
 	end time.Time,
 ) error {
-	// Busca a tolerância configurada pela barbearia.
-	// A tolerância reduz a "zona de bloqueio" de agendamentos existentes:
-	// um novo agendamento pode sobrepor até X minutos em cada extremidade.
-	var shop models.Barbershop
-	if err := r.db.WithContext(ctx).
-		Select("schedule_tolerance_minutes").
-		First(&shop, barbershopID).Error; err == nil && shop.ScheduleToleranceMinutes > 0 {
-		tol := time.Duration(shop.ScheduleToleranceMinutes) * time.Minute
-		start = start.Add(tol)
-		end = end.Add(-tol)
-		// Se tolerância >= duração do serviço, não há conflito possível — retorna cedo.
-		if !start.Before(end) {
-			return nil
-		}
-	}
-
 	var count int64
 
 	// Conta conflitos reais:

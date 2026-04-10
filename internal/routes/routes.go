@@ -639,6 +639,7 @@ func RegisterRoutes(
 		// Billing (subscription check bypassed in AuthMiddleware for these paths).
 		secured.GET("/me/billing/status", billingHandler.Status)
 		secured.POST("/me/billing/checkout", billingHandler.Checkout)
+		secured.POST("/me/billing/pay", billingHandler.Pay)
 
 		// Image upload (only registered when R2 is configured).
 		if imageHandler != nil {

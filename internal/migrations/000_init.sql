@@ -333,6 +333,10 @@ ON service_suggested_products(product_id);
 CREATE INDEX idx_service_suggested_products_barbershop
 ON service_suggested_products(barbershop_id);
 
+CREATE INDEX IF NOT EXISTS idx_ssp_barbershop_service_active
+ON service_suggested_products(barbershop_id, service_id)
+WHERE active = true;
+
 CREATE TRIGGER trg_service_suggested_products_updated
 BEFORE UPDATE ON service_suggested_products
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -397,6 +401,7 @@ CREATE TABLE orders (
 
 CREATE INDEX idx_orders_barbershop ON orders(barbershop_id);
 CREATE INDEX idx_orders_client ON orders(client_id);
+CREATE INDEX IF NOT EXISTS idx_orders_barbershop_date ON orders(barbershop_id, created_at);
 
 CREATE TRIGGER trg_orders_updated
 BEFORE UPDATE ON orders
@@ -690,6 +695,9 @@ CREATE TABLE appointment_closures (
 
 CREATE INDEX idx_appointment_closures_barbershop
 ON appointment_closures(barbershop_id);
+
+CREATE INDEX IF NOT EXISTS idx_appointment_closures_barbershop_appt
+ON appointment_closures(barbershop_id, appointment_id);
 
 CREATE TRIGGER trg_appointment_closures_updated
 BEFORE UPDATE ON appointment_closures

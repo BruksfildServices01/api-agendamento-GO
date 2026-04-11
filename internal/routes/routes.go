@@ -228,7 +228,7 @@ func RegisterRoutes(
 	getCartUC := ucCart.NewGetCart(cartMemoryStore)
 	addCartItemUC := ucCart.NewAddItem(cartMemoryStore, productRepo)
 	removeCartItemUC := ucCart.NewRemoveItem(cartMemoryStore)
-	checkoutCartUC := ucCart.NewCheckoutCart(cartMemoryStore, createOrderUC)
+	checkoutCartUC := ucCart.NewCheckoutCart(db, cartMemoryStore, createOrderUC)
 
 	// ======================================================
 	// APPOINTMENT USE CASES
@@ -291,6 +291,7 @@ func RegisterRoutes(
 		db,
 		apptNotifier,
 		cfg.AppURL,
+		getPublicServiceSuggestionUC,
 	)
 
 	// ======================================================

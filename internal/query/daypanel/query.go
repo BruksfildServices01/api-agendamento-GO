@@ -83,24 +83,59 @@ func (q *Query) Execute(ctx context.Context, input Input) (*ResponseDTO, error) 
 	serviceIDs := collectServiceIDs(rows)
 
 	// 5. Batch load related data (no N+1)
-	subscriptionsByClient, err := q.loadSubscriptions(ctx, input.BarbershopID, clientIDs)
-	if err != nil {
-		return nil, err
+	//
+	// loadSuggestions and loadPrePaidOrders are independent of each other and of
+	// loadSubscriptions, so they run concurrently with the subscription chain.
+	// loadPlanServiceCoverage must remain sequential after loadSubscriptions
+	// because it needs to know which plans are active.
+
+	var (
+		suggestionsByService  map[uint]suggestionRow
+		prePaidOrdersByClient map[uint]prePaidOrderRow
+	)
+
+	sugCh   := make(chan error, 1)
+	orderCh := make(chan error, 1)
+
+	go func() {
+		var err error
+		suggestionsByService, err = q.loadSuggestions(ctx, input.BarbershopID, serviceIDs)
+		sugCh <- err
+	}()
+
+	go func() {
+		var err error
+		prePaidOrdersByClient, err = q.loadPrePaidOrders(ctx, input.BarbershopID, clientIDs, startUTC, endUTC)
+		orderCh <- err
+	}()
+
+	subscriptionsByClient, subsErr := q.loadSubscriptions(ctx, input.BarbershopID, clientIDs)
+
+	var coveredServicesByPlan map[uint]map[uint]bool
+	var covErr error
+	if subsErr == nil {
+		coveredServicesByPlan, covErr = q.loadPlanServiceCoverage(ctx, subscriptionsByClient, serviceIDs)
 	}
 
-	coveredServicesByPlan, err := q.loadPlanServiceCoverage(ctx, subscriptionsByClient, serviceIDs)
-	if err != nil {
-		return nil, err
-	}
+	// Always drain both goroutines before returning any error.
+	// Returning early (before reading from the channels) would silently discard
+	// errors from loadSuggestions and loadPrePaidOrders.
+	// Channel receives happen-after the goroutine sends, guaranteeing memory
+	// visibility of suggestionsByService and prePaidOrdersByClient.
+	sugErr   := <-sugCh
+	orderErr := <-orderCh
 
-	suggestionsByService, err := q.loadSuggestions(ctx, input.BarbershopID, serviceIDs)
-	if err != nil {
-		return nil, err
+	if subsErr != nil {
+		return nil, subsErr
 	}
-
-	prePaidOrdersByClient, err := q.loadPrePaidOrders(ctx, input.BarbershopID, clientIDs, startUTC, endUTC)
-	if err != nil {
-		return nil, err
+	if covErr != nil {
+		return nil, covErr
+	}
+	if sugErr != nil {
+		return nil, sugErr
+	}
+	if orderErr != nil {
+		return nil, orderErr
 	}
 
 	// 6. Assemble cards

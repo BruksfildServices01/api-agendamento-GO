@@ -6,6 +6,7 @@ import (
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
@@ -22,23 +23,44 @@ func (uc *GetAvailability) Execute(
 	in domain.AvailabilityInput,
 ) ([]domain.TimeSlot, error) {
 
-	// 1) Barbearia (timezone é fonte da verdade)
-	shop, err := uc.repo.GetBarbershopByID(ctx, in.BarbershopID)
-	if err != nil {
-		return nil, err
+	// 1 & 2) Paralelo: barbearia e produto não têm dependência entre si.
+	// O receive no canal acontece-after o send da goroutine, garantindo
+	// visibilidade de memória de shop e product sem sincronização adicional.
+	var (
+		shop    *models.Barbershop
+		product *models.BarbershopService
+	)
+	shopCh    := make(chan error, 1)
+	productCh := make(chan error, 1)
+
+	go func() {
+		var err error
+		shop, err = uc.repo.GetBarbershopByID(ctx, in.BarbershopID)
+		shopCh <- err
+	}()
+	go func() {
+		var err error
+		product, err = uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
+		productCh <- err
+	}()
+
+	// Drena os dois canais antes de checar erros — evita goroutine leak e
+	// garante que ambas as atribuições sejam visíveis após os receives.
+	shopErr    := <-shopCh
+	productErr := <-productCh
+
+	if shopErr != nil {
+		return nil, shopErr
 	}
 	if shop == nil {
 		return nil, httperr.ErrBusiness("barbershop_not_found")
 	}
+	if productErr != nil || product == nil {
+		return nil, httperr.ErrBusiness("product_not_found")
+	}
 
 	loc := timezone.Location(shop.Timezone)
 	dateLocal := in.Date.In(loc)
-
-	// 2) Produto
-	product, err := uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
-	if err != nil || product == nil {
-		return nil, httperr.ErrBusiness("product_not_found")
-	}
 
 	// 3) Working hours do weekday LOCAL
 	weekday := int(dateLocal.Weekday())

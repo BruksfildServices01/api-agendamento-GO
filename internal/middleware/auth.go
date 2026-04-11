@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,22 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
+)
+
+// barbershopCacheEntry caches the subscription-status fields fetched per request.
+// Entries expire after barbershopCacheTTL to keep billing state up-to-date.
+const barbershopCacheTTL = 60 * time.Second
+
+type barbershopCacheEntry struct {
+	status                string
+	trialEndsAt           *time.Time
+	subscriptionExpiresAt *time.Time
+	expiresAt             time.Time
+}
+
+var (
+	barbershopCacheMu sync.Mutex
+	barbershopCache   = make(map[uint]*barbershopCacheEntry)
 )
 
 const (
@@ -67,29 +84,60 @@ func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 		}
 
 		// Fetch barbershop to verify existence and check subscription status.
-		var shop struct {
-			ID                    uint
-			Status                string
-			TrialEndsAt           *time.Time
-			SubscriptionExpiresAt *time.Time
-		}
-		err = db.WithContext(c.Request.Context()).
-			Table("barbershops").
-			Select("id, status, trial_ends_at, subscription_expires_at").
-			Where("id = ?", uint(barbershopID)).
-			First(&shop).Error
+		// Results are cached in-process for barbershopCacheTTL to avoid one DB
+		// round-trip per authenticated request.
+		bid := uint(barbershopID)
 
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
+		var shopStatus string
+		var shopTrialEndsAt *time.Time
+		var shopSubscriptionExpiresAt *time.Time
+
+		barbershopCacheMu.Lock()
+		cached, hit := barbershopCache[bid]
+		if hit && time.Now().Before(cached.expiresAt) {
+			shopStatus = cached.status
+			shopTrialEndsAt = cached.trialEndsAt
+			shopSubscriptionExpiresAt = cached.subscriptionExpiresAt
+			barbershopCacheMu.Unlock()
+		} else {
+			// Evict stale entry before releasing the lock so only one goroutine queries.
+			delete(barbershopCache, bid)
+			barbershopCacheMu.Unlock()
+
+			var shop struct {
+				ID                    uint
+				Status                string
+				TrialEndsAt           *time.Time
+				SubscriptionExpiresAt *time.Time
+			}
+			err = db.WithContext(c.Request.Context()).
+				Table("barbershops").
+				Select("id, status, trial_ends_at, subscription_expires_at").
+				Where("id = ?", bid).
+				First(&shop).Error
+
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
+					return
+				}
+				// DB unavailable — fail closed to prevent unauthorized access.
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "service_unavailable"})
 				return
 			}
-			// On unexpected DB error, fail open to avoid blocking users.
-			c.Set(ContextUserID, uint(userID))
-			c.Set(ContextBarbershopID, uint(barbershopID))
-			c.Set(ContextUserRole, role)
-			c.Next()
-			return
+
+			shopStatus = shop.Status
+			shopTrialEndsAt = shop.TrialEndsAt
+			shopSubscriptionExpiresAt = shop.SubscriptionExpiresAt
+
+			barbershopCacheMu.Lock()
+			barbershopCache[bid] = &barbershopCacheEntry{
+				status:                shop.Status,
+				trialEndsAt:           shop.TrialEndsAt,
+				subscriptionExpiresAt: shop.SubscriptionExpiresAt,
+				expiresAt:             time.Now().Add(barbershopCacheTTL),
+			}
+			barbershopCacheMu.Unlock()
 		}
 
 		// Check subscription status (skip for billing and basic me endpoints).
@@ -97,15 +145,15 @@ func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 			now := time.Now()
 			blocked := false
 
-			switch shop.Status {
+			switch shopStatus {
 			case "inactive", "suspended", "pending_payment":
 				blocked = true
 			case "trial":
-				if shop.TrialEndsAt != nil && now.After(*shop.TrialEndsAt) {
+				if shopTrialEndsAt != nil && now.After(*shopTrialEndsAt) {
 					blocked = true
 				}
 			case "active":
-				if shop.SubscriptionExpiresAt != nil && now.After(*shop.SubscriptionExpiresAt) {
+				if shopSubscriptionExpiresAt != nil && now.After(*shopSubscriptionExpiresAt) {
 					blocked = true
 				}
 			}
@@ -113,7 +161,7 @@ func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 			if blocked {
 				c.AbortWithStatusJSON(http.StatusPaymentRequired, gin.H{
 					"error":  "subscription_required",
-					"status": shop.Status,
+					"status": shopStatus,
 				})
 				return
 			}

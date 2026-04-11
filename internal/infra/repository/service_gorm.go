@@ -133,10 +133,19 @@ func (r *ServiceGormRepository) ListPublicServices(
 		Preload("ServiceImages", func(db *gorm.DB) *gorm.DB {
 			return db.Order("position ASC")
 		}).
+		Preload("ServiceCategory").
 		Where("barbershop_id = ? AND active = ?", barbershopID, true)
 
 	if category != "" {
-		q = q.Where("LOWER(category) = ?", category)
+		// Match against either the legacy text field or the relational category name.
+		q = q.Where(
+			`LOWER(category) = ? OR EXISTS (
+				SELECT 1 FROM service_categories sc
+				WHERE sc.id = barbershop_services.category_id
+				  AND LOWER(sc.name) = ?
+			)`,
+			category, category,
+		)
 	}
 
 	if query != "" {
@@ -173,6 +182,13 @@ func mapServiceToDomain(m *models.BarbershopService) *domain.Service {
 			Position: img.Position,
 		})
 	}
+
+	// Prefer the relational category name; fall back to the legacy text field.
+	category := m.Category
+	if category == "" && m.ServiceCategory != nil {
+		category = m.ServiceCategory.Name
+	}
+
 	return &domain.Service{
 		ID:           m.ID,
 		BarbershopID: m.BarbershopID,
@@ -181,7 +197,7 @@ func mapServiceToDomain(m *models.BarbershopService) *domain.Service {
 		DurationMin:  m.DurationMin,
 		Price:        m.Price,
 		Active:       m.Active,
-		Category:     m.Category,
+		Category:     category,
 		CategoryID:   m.CategoryID,
 		Images:       imgs,
 	}

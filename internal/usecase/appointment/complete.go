@@ -2,6 +2,7 @@ package appointment
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -309,13 +310,16 @@ func (uc *CompleteAppointment) Execute(
 	})
 
 	if ap.ClientID != nil {
-		_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
+		if err := uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
 			BarbershopID: barbershopID,
 			ClientID:     *ap.ClientID,
 			EventType:    ucMetrics.EventAppointmentCompleted,
 			OccurredAt:   time.Now().UTC(),
 			Amount:       referenceAmount,
-		})
+		}); err != nil {
+			log.Printf("[CompleteAppointment] metrics update failed for client %d (barbershop %d): %v",
+				*ap.ClientID, barbershopID, err)
+		}
 	}
 
 	return ap, closure, consumeCutResult, nil

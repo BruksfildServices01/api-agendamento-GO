@@ -85,18 +85,63 @@ func (r *SubscriptionGormRepository) ListPlans(
 		return nil, err
 	}
 
+	if len(modelsPlans) == 0 {
+		return []domain.Plan{}, nil
+	}
+
+	// Collect plan IDs for batch loading — avoids N+1 queries.
+	planIDs := make([]uint, len(modelsPlans))
+	for i, p := range modelsPlans {
+		planIDs[i] = p.ID
+	}
+
+	// Batch load: plan_services → resolve to barbershop_service IDs.
+	type planServiceRow struct {
+		PlanID    uint
+		ServiceID uint
+	}
+	var planServiceRows []planServiceRow
+	err = r.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT ps.plan_id, bs.id AS service_id
+		FROM plan_services ps
+		JOIN barbershop_services bs ON bs.id = ps.service_id
+		WHERE ps.plan_id IN ?
+		UNION
+		SELECT DISTINCT pc.plan_id, bs.id AS service_id
+		FROM plan_categories pc
+		JOIN barbershop_services bs ON bs.category_id = pc.category_id
+		WHERE pc.plan_id IN ?
+	`, planIDs, planIDs).Scan(&planServiceRows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Batch load: plan_categories.
+	type planCategoryRow struct {
+		PlanID     uint
+		CategoryID uint
+	}
+	var planCategoryRows []planCategoryRow
+	err = r.db.WithContext(ctx).Raw(
+		`SELECT plan_id, category_id FROM plan_categories WHERE plan_id IN ?`,
+		planIDs,
+	).Scan(&planCategoryRows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Index results by plan ID.
+	servicesByPlan := make(map[uint][]uint, len(planIDs))
+	for _, row := range planServiceRows {
+		servicesByPlan[row.PlanID] = append(servicesByPlan[row.PlanID], row.ServiceID)
+	}
+	categoriesByPlan := make(map[uint][]uint, len(planIDs))
+	for _, row := range planCategoryRows {
+		categoriesByPlan[row.PlanID] = append(categoriesByPlan[row.PlanID], row.CategoryID)
+	}
+
 	plans := make([]domain.Plan, 0, len(modelsPlans))
 	for _, p := range modelsPlans {
-		serviceIDs, err := r.ListAllowedServiceIDs(ctx, p.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		categoryIDs, err := r.listPlanCategoryIDs(ctx, p.ID)
-		if err != nil {
-			return nil, err
-		}
-
 		plans = append(plans, domain.Plan{
 			ID:                p.ID,
 			BarbershopID:      p.BarbershopID,
@@ -106,8 +151,8 @@ func (r *SubscriptionGormRepository) ListPlans(
 			CutsIncluded:      p.CutsIncluded,
 			DiscountPercent:   p.DiscountPercent,
 			Active:            p.Active,
-			ServiceIDs:        serviceIDs,
-			CategoryIDs:       categoryIDs,
+			ServiceIDs:        servicesByPlan[p.ID],
+			CategoryIDs:       categoriesByPlan[p.ID],
 		})
 	}
 

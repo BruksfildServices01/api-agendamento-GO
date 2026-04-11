@@ -49,6 +49,15 @@ type Repository interface {
 		ap *models.Appointment,
 	) error
 
+	// CreateAppointmentWithKey creates the appointment and persists the
+	// idempotency key atomically in a single transaction.
+	// Pass an empty string for idempotencyKey to skip key persistence.
+	CreateAppointmentWithKey(
+		ctx context.Context,
+		ap *models.Appointment,
+		idempotencyKey string,
+	) error
+
 	// ==================================================
 	// TIME CONFLICT
 	// ==================================================

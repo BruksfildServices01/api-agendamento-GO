@@ -13,9 +13,10 @@ import (
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
-	ucAppointment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
-	ucCart "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
-	ucTicket "github.com/BruksfildServices01/barber-scheduler/internal/usecase/ticket"
+	ucAppointment   "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
+	ucCart          "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
+	ucSuggestion    "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
+	ucTicket        "github.com/BruksfildServices01/barber-scheduler/internal/usecase/ticket"
 )
 
 type OrchestratedCheckout struct {
@@ -24,6 +25,7 @@ type OrchestratedCheckout struct {
 	checkoutCartUC      *ucCart.CheckoutCart
 	serviceRepo         domainService.Repository
 	generateTicketUC    *ucTicket.GenerateTicket
+	getSuggestionUC     *ucSuggestion.GetPublicServiceSuggestion
 	db                  *gorm.DB
 	apptNotifier        domainNotification.AppointmentNotifier
 	appURL              string
@@ -38,6 +40,7 @@ func NewOrchestratedCheckout(
 	db *gorm.DB,
 	apptNotifier domainNotification.AppointmentNotifier,
 	appURL string,
+	getSuggestionUC *ucSuggestion.GetPublicServiceSuggestion,
 ) *OrchestratedCheckout {
 	return &OrchestratedCheckout{
 		createAppointmentUC: createAppointmentUC,
@@ -45,6 +48,7 @@ func NewOrchestratedCheckout(
 		checkoutCartUC:      checkoutCartUC,
 		serviceRepo:         serviceRepo,
 		generateTicketUC:    generateTicketUC,
+		getSuggestionUC:     getSuggestionUC,
 		db:                  db,
 		apptNotifier:        apptNotifier,
 		appURL:              appURL,
@@ -183,6 +187,27 @@ func (uc *OrchestratedCheckout) Execute(
 		}
 	}
 
+	// Fetch service suggestion non-fatally — a failure here must not abort the checkout.
+	var suggestionDTO *dto.PublicOrchestratedCheckoutSuggestionDTO
+	if uc.getSuggestionUC != nil {
+		sugg, suggErr := uc.getSuggestionUC.Execute(ctx, ucSuggestion.GetPublicServiceSuggestionInput{
+			BarbershopID: barbershopID,
+			ServiceID:    service.ID,
+		})
+		if suggErr != nil {
+			log.Printf("[OrchestratedCheckout] suggestion fetch failed for service %d: %v", service.ID, suggErr)
+		} else if sugg != nil && sugg.Product != nil {
+			suggestionDTO = &dto.PublicOrchestratedCheckoutSuggestionDTO{
+				ProductID:   sugg.Product.ID,
+				Name:        sugg.Product.Name,
+				Description: sugg.Product.Description,
+				Category:    sugg.Product.Category,
+				PriceCents:  sugg.Product.Price,
+				ImageURL:    sugg.Product.ImageURL,
+			}
+		}
+	}
+
 	serviceAmountCents := service.Price
 	totalAmountCents := serviceAmountCents + productsAmountCents
 
@@ -216,9 +241,10 @@ func (uc *OrchestratedCheckout) Execute(
 			OrderPaymentRequired:       orderPaymentRequired,
 			MultiplePaymentsRequired:   multiplePaymentsRequired,
 		},
-		NextStep: buildNextStep(appointmentPaymentRequired, orderPaymentRequired),
-		NextURLs: dto.PublicOrchestratedCheckoutURLsDTO{},
-		Warning:  warning,
+		NextStep:   buildNextStep(appointmentPaymentRequired, orderPaymentRequired),
+		NextURLs:   dto.PublicOrchestratedCheckoutURLsDTO{},
+		Suggestion: suggestionDTO,
+		Warning:    warning,
 	}
 
 	if ticketToken != "" {

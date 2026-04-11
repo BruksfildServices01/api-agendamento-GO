@@ -41,12 +41,22 @@ type PublicOrchestratedCheckoutPaymentsDTO struct {
 	MultiplePaymentsRequired   bool `json:"multiple_payments_required"`
 }
 
+type PublicOrchestratedCheckoutSuggestionDTO struct {
+	ProductID   uint   `json:"product_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"`
+	PriceCents  int64  `json:"price_cents"`
+	ImageURL    string `json:"image_url,omitempty"`
+}
+
 type PublicOrchestratedCheckoutResponseDTO struct {
-	Appointment *PublicOrchestratedCheckoutAppointmentDTO `json:"appointment,omitempty"`
-	Order       *PublicOrchestratedCheckoutOrderDTO       `json:"order,omitempty"`
-	Summary     PublicOrchestratedCheckoutSummaryDTO      `json:"summary"`
-	Payments    PublicOrchestratedCheckoutPaymentsDTO     `json:"payments"`
-	NextStep    PublicOrchestratedCheckoutNextStepDTO     `json:"next_step"`
-	NextURLs    PublicOrchestratedCheckoutURLsDTO         `json:"next_urls"`
-	Warning     string                                    `json:"warning,omitempty"`
+	Appointment *PublicOrchestratedCheckoutAppointmentDTO  `json:"appointment,omitempty"`
+	Order       *PublicOrchestratedCheckoutOrderDTO        `json:"order,omitempty"`
+	Summary     PublicOrchestratedCheckoutSummaryDTO       `json:"summary"`
+	Payments    PublicOrchestratedCheckoutPaymentsDTO      `json:"payments"`
+	NextStep    PublicOrchestratedCheckoutNextStepDTO      `json:"next_step"`
+	NextURLs    PublicOrchestratedCheckoutURLsDTO          `json:"next_urls"`
+	Suggestion  *PublicOrchestratedCheckoutSuggestionDTO   `json:"suggestion,omitempty"`
+	Warning     string                                     `json:"warning,omitempty"`
 }

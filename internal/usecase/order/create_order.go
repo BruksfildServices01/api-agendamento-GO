@@ -29,6 +29,17 @@ func NewCreateOrder(
 	}
 }
 
+// WithTx returns a CreateOrder that runs inside the provided transaction.
+// The internal Transaction() call becomes a GORM nested transaction (SAVEPOINT),
+// which commits when the outer transaction commits.
+func (uc *CreateOrder) WithTx(tx *gorm.DB) *CreateOrder {
+	return &CreateOrder{
+		db:                tx,
+		orderRepository:   uc.orderRepository,
+		productRepository: uc.productRepository,
+	}
+}
+
 type CreateOrderItemInput struct {
 	ProductID uint `json:"product_id"`
 	Quantity  int  `json:"quantity"`

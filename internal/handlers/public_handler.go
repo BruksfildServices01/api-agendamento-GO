@@ -69,6 +69,23 @@ func NewPublicHandler(
 }
 
 ////////////////////////////////////////////////////////
+// CACHE HELPERS
+////////////////////////////////////////////////////////
+
+// setCacheControl sets a conservative public HTTP cache policy on read-only
+// public responses. Only call this on the success path, never on errors.
+func setCacheControl(c *gin.Context, maxAgeSeconds int) {
+	v := "public, max-age=" + strconv.Itoa(maxAgeSeconds) + ", s-maxage=" + strconv.Itoa(maxAgeSeconds)
+	c.Header("Cache-Control", v)
+}
+
+// setNoStore prevents any cache layer from storing the response.
+// Use on GET endpoints that return dynamic, per-request data.
+func setNoStore(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+}
+
+////////////////////////////////////////////////////////
 // PUBLIC SERVICES
 ////////////////////////////////////////////////////////
 
@@ -94,6 +111,7 @@ func (h *PublicHandler) ListServices(c *gin.Context) {
 		return
 	}
 
+	setCacheControl(c, 120)
 	c.JSON(http.StatusOK, gin.H{
 		"barbershop": gin.H{
 			"id":   shop.ID,
@@ -152,6 +170,7 @@ func (h *PublicHandler) GetInfo(c *gin.Context) {
 		acceptDebit = paymentCfg.AcceptDebit
 	}
 
+	setCacheControl(c, 300)
 	c.JSON(http.StatusOK, gin.H{
 		"id":             shop.ID,
 		"name":           shop.Name,
@@ -193,6 +212,7 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
+	setCacheControl(c, 60)
 	c.JSON(http.StatusOK, gin.H{
 		"barbershop": gin.H{
 			"id":   shop.ID,
@@ -232,6 +252,7 @@ func (h *PublicHandler) GetCart(c *gin.Context) {
 		return
 	}
 
+	setNoStore(c)
 	httpresp.OK(c, result)
 }
 
@@ -409,6 +430,7 @@ func (h *PublicHandler) GetServiceSuggestion(c *gin.Context) {
 		}
 	}
 
+	setCacheControl(c, 120)
 	c.JSON(http.StatusOK, gin.H{
 		"barbershop": gin.H{
 			"id":   shop.ID,
@@ -483,6 +505,7 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 		return
 	}
 
+	setNoStore(c)
 	c.JSON(http.StatusOK, gin.H{
 		"date":     dateStr,
 		"timezone": shop.Timezone,

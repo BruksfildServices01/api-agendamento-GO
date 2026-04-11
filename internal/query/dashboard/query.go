@@ -63,31 +63,61 @@ func (q *Query) Execute(ctx context.Context, input Input) (*ResponseDTO, error) 
 	dateFrom := startUTC.In(loc).Format("2006-01-02")
 	dateTo := endUTC.Add(-time.Second).In(loc).Format("2006-01-02")
 
-	// 3. Run all queries in parallel (independent)
-	production, err := q.loadProduction(ctx, input.BarbershopID, startUTC, endUTC)
-	if err != nil {
-		return nil, err
-	}
+	// 3. Run all queries in parallel — they share no state and take identical inputs.
+	var (
+		production  ProductionDTO
+		revenue     RevenueDTO
+		clients     ClientsDTO
+		topServices []ServiceRankItem
+		topProducts []ProductRankItem
+	)
 
-	revenue, err := q.loadRevenue(ctx, input.BarbershopID, startUTC, endUTC)
-	if err != nil {
-		return nil, err
-	}
+	prodCh     := make(chan error, 1)
+	revCh      := make(chan error, 1)
+	clientsCh  := make(chan error, 1)
+	servicesCh := make(chan error, 1)
+	productsCh := make(chan error, 1)
 
-	clients, err := q.loadClients(ctx, input.BarbershopID, startUTC, endUTC)
-	if err != nil {
-		return nil, err
-	}
+	go func() {
+		var err error
+		production, err = q.loadProduction(ctx, input.BarbershopID, startUTC, endUTC)
+		prodCh <- err
+	}()
+	go func() {
+		var err error
+		revenue, err = q.loadRevenue(ctx, input.BarbershopID, startUTC, endUTC)
+		revCh <- err
+	}()
+	go func() {
+		var err error
+		clients, err = q.loadClients(ctx, input.BarbershopID, startUTC, endUTC)
+		clientsCh <- err
+	}()
+	go func() {
+		var err error
+		topServices, err = q.loadTopServices(ctx, input.BarbershopID, startUTC, endUTC)
+		servicesCh <- err
+	}()
+	go func() {
+		var err error
+		topProducts, err = q.loadTopProducts(ctx, input.BarbershopID, startUTC, endUTC)
+		productsCh <- err
+	}()
 
-	topServices, err := q.loadTopServices(ctx, input.BarbershopID, startUTC, endUTC)
-	if err != nil {
-		return nil, err
-	}
+	// Always drain all channels before returning any error.
+	// Channel receives happen-after the goroutine sends, guaranteeing memory
+	// visibility of the five result variables without additional synchronization.
+	prodErr     := <-prodCh
+	revErr      := <-revCh
+	clientsErr  := <-clientsCh
+	servicesErr := <-servicesCh
+	productsErr := <-productsCh
 
-	topProducts, err := q.loadTopProducts(ctx, input.BarbershopID, startUTC, endUTC)
-	if err != nil {
-		return nil, err
-	}
+	if prodErr     != nil { return nil, prodErr }
+	if revErr      != nil { return nil, revErr }
+	if clientsErr  != nil { return nil, clientsErr }
+	if servicesErr != nil { return nil, servicesErr }
+	if productsErr != nil { return nil, productsErr }
 
 	return &ResponseDTO{
 		Period:      string(period),
@@ -276,11 +306,11 @@ func (q *Query) loadClients(ctx context.Context, barbershopID uint, start, end t
 	err := q.db.WithContext(ctx).Raw(`
 		SELECT
 			a.client_id,
-			MIN(all_a.start_time) AS first_ever_appt
+			COALESCE(MAX(cm.first_appointment_at), MIN(a.start_time)) AS first_ever_appt
 		FROM appointments a
-		JOIN appointments all_a
-			ON all_a.client_id = a.client_id
-			AND all_a.barbershop_id = a.barbershop_id
+		LEFT JOIN client_metrics cm
+			ON cm.client_id = a.client_id
+			AND cm.barbershop_id = a.barbershop_id
 		WHERE a.barbershop_id = ?
 		  AND a.client_id IS NOT NULL
 		  AND a.start_time >= ?

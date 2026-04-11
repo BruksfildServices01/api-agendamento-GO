@@ -38,19 +38,11 @@ func (uc *CancelAppointment) Execute(
 ) (*models.Appointment, error) {
 
 	// =========================================
-	// 1️⃣ Barbearia
+	// 1️⃣ Appointment
 	// =========================================
-	shop, err := uc.repo.GetBarbershopByID(ctx, barbershopID)
-	if err != nil {
-		return nil, err
-	}
-	if shop == nil {
-		return nil, httperr.ErrBusiness("barbershop_not_found")
-	}
-
-	// =========================================
-	// 2️⃣ Appointment
-	// =========================================
+	// GetAppointmentForBarber already filters by barbershop_id, so a separate
+	// GetBarbershopByID existence check is redundant — if the appointment is not
+	// found the barbershop_id mismatch is caught below via *ap.BarbershopID.
 	ap, err := uc.repo.GetAppointmentForBarber(
 		ctx,
 		barbershopID,
@@ -66,7 +58,7 @@ func (uc *CancelAppointment) Execute(
 	}
 
 	// =========================================
-	// 3️⃣ Regra de domínio (✅ UTC para persistência)
+	// 2️⃣ Regra de domínio (✅ UTC para persistência)
 	// =========================================
 	now := time.Now().UTC()
 
@@ -75,14 +67,14 @@ func (uc *CancelAppointment) Execute(
 	}
 
 	// =========================================
-	// 4️⃣ Persistência
+	// 3️⃣ Persistência
 	// =========================================
 	if err := uc.repo.UpdateAppointment(ctx, ap); err != nil {
 		return nil, err
 	}
 
 	// =========================================
-	// 5️⃣ Auditoria
+	// 4️⃣ Auditoria
 	// =========================================
 	uc.audit.Dispatch(audit.Event{
 		BarbershopID: barbershopID,
@@ -93,7 +85,7 @@ func (uc *CancelAppointment) Execute(
 	})
 
 	// =========================================
-	// 6️⃣ Métricas (best effort, ✅ UTC)
+	// 5️⃣ Métricas (best effort, ✅ UTC)
 	// =========================================
 	if ap.ClientID != nil {
 		_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{

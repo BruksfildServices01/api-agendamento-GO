@@ -148,6 +148,47 @@ func (r *AppointmentGormRepository) CreateAppointment(
 	return err
 }
 
+// CreateAppointmentWithKey creates the appointment and persists the
+// idempotency key atomically in a single transaction, eliminating the
+// window where the appointment exists but the key has not been saved yet.
+func (r *AppointmentGormRepository) CreateAppointmentWithKey(
+	ctx context.Context,
+	ap *models.Appointment,
+	idempotencyKey string,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(ap).Error; err != nil {
+			if isUniqueBarberSlotActiveViolation(err) {
+				return httperr.ErrBusiness("time_conflict")
+			}
+			return err
+		}
+
+		if idempotencyKey == "" {
+			return nil
+		}
+
+		if err := tx.Exec(
+			"INSERT INTO idempotency_keys (key) VALUES (?)",
+			idempotencyKey,
+		).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return httperr.ErrBusiness("duplicate_request")
+			}
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return httperr.ErrBusiness("duplicate_request")
+			}
+			if strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
+				return httperr.ErrBusiness("duplicate_request")
+			}
+			return err
+		}
+
+		return nil
+	})
+}
+
 func isUniqueBarberSlotActiveViolation(err error) bool {
 	if err == nil {
 		return false

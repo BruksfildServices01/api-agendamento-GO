@@ -37,6 +37,14 @@ func NewPostgresStore(db *gorm.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
+// ClearWithTx deletes the cart row inside the provided transaction, allowing
+// cart clearing to be atomic with order creation in CheckoutCart.
+func (s *PostgresStore) ClearWithTx(ctx context.Context, tx *gorm.DB, key string, barbershopID uint) error {
+	return tx.WithContext(ctx).
+		Where("key = ? AND barbershop_id = ?", key, barbershopID).
+		Delete(&cartRow{}).Error
+}
+
 func (s *PostgresStore) Get(ctx context.Context, key string, barbershopID uint) (*domain.Cart, error) {
 	var row cartRow
 	err := s.db.WithContext(ctx).

@@ -2,7 +2,6 @@ package appointment
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
@@ -310,20 +309,11 @@ func (uc *CreatePrivateAppointment) Execute(
 		Notes:           in.Notes,
 	}
 
-	if err := uc.repo.CreateAppointment(ctx, ap); err != nil {
+	// --------------------------------------------------
+	// 13) Criar appointment + persistir chave de idempotência atomicamente
+	// --------------------------------------------------
+	if err := uc.repo.CreateAppointmentWithKey(ctx, ap, idempotencyStorageKey); err != nil {
 		return nil, err
-	}
-
-	// --------------------------------------------------
-	// 13) Persistir chave de idempotência após sucesso real
-	// --------------------------------------------------
-	if idempotencyStorageKey != "" {
-		if err := uc.idempotency.Save(ctx, idempotencyStorageKey); err != nil {
-			if errors.Is(err, idempotency.ErrDuplicateRequest) {
-				return nil, httperr.ErrBusiness("duplicate_request")
-			}
-			return nil, err
-		}
 	}
 
 	// --------------------------------------------------

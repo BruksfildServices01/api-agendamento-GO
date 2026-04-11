@@ -3,7 +3,9 @@ package notification
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"html/template"
+	"net/url"
 	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
@@ -53,23 +55,25 @@ func renderPaymentConfirmed(input domain.PaymentConfirmedInput) (string, error) 
 // ── appointment_confirmed ────────────────────────────────────────────────────
 
 type appointmentConfirmedData struct {
-	ClientName      string
-	ServiceName     string
-	AppointmentDate string
-	BarbershopName  string
-	BarbershopPhone string
-	TicketURL       string
+	ClientName         string
+	ServiceName        string
+	AppointmentDate    string
+	BarbershopName     string
+	BarbershopPhone    string
+	TicketURL          string
+	GoogleCalendarURL  string
 }
 
 func renderAppointmentConfirmed(input domain.AppointmentConfirmedInput) (string, error) {
 	loc := loadLocation(input.Timezone)
 	data := appointmentConfirmedData{
-		ClientName:      input.ClientName,
-		ServiceName:     input.ServiceName,
-		AppointmentDate: input.StartTime.In(loc).Format("02/01/2006 às 15:04"),
-		BarbershopName:  input.BarbershopName,
-		BarbershopPhone: input.BarbershopPhone,
-		TicketURL:       input.TicketURL,
+		ClientName:        input.ClientName,
+		ServiceName:       input.ServiceName,
+		AppointmentDate:   input.StartTime.In(loc).Format("02/01/2006 às 15:04"),
+		BarbershopName:    input.BarbershopName,
+		BarbershopPhone:   input.BarbershopPhone,
+		TicketURL:         input.TicketURL,
+		GoogleCalendarURL: buildGoogleCalendarURL(input.ServiceName, input.BarbershopName, input.StartTime, input.EndTime),
 	}
 	return execTemplate(appointmentConfirmedTmpl, data)
 }
@@ -101,6 +105,7 @@ type appointmentRescheduledData struct {
 	BarbershopName     string
 	BarbershopPhone    string
 	TicketURL          string
+	GoogleCalendarURL  string
 }
 
 func renderAppointmentRescheduled(input domain.AppointmentRescheduledInput) (string, error) {
@@ -112,8 +117,25 @@ func renderAppointmentRescheduled(input domain.AppointmentRescheduledInput) (str
 		BarbershopName:     input.BarbershopName,
 		BarbershopPhone:    input.BarbershopPhone,
 		TicketURL:          input.NewTicketURL,
+		GoogleCalendarURL:  buildGoogleCalendarURL(input.ServiceName, input.BarbershopName, input.NewStartTime, input.NewEndTime),
 	}
 	return execTemplate(appointmentRescheduledTmpl, data)
+}
+
+// ── google calendar ──────────────────────────────────────────────────────────
+
+func buildGoogleCalendarURL(serviceName, barbershopName string, start, end time.Time) string {
+	fmtTime := func(t time.Time) string {
+		return t.UTC().Format("20060102T150405Z")
+	}
+	title := fmt.Sprintf("%s — %s", serviceName, barbershopName)
+	details := fmt.Sprintf("✂️ Serviço: %s\n💈 Barbearia: %s\n\nAgendado pelo Corteon.", serviceName, barbershopName)
+	params := url.Values{}
+	params.Set("action", "TEMPLATE")
+	params.Set("text", title)
+	params.Set("dates", fmtTime(start)+"/"+fmtTime(end))
+	params.Set("details", details)
+	return "https://calendar.google.com/calendar/render?" + params.Encode()
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

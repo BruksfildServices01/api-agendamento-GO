@@ -116,11 +116,20 @@
                   </td>
                 </tr>
 
-                <!-- Botão -->
+                <!-- Botão: detalhes -->
                 {{if .TicketURL}}
                 <tr>
-                  <td align="center" style="padding-bottom:28px;">
+                  <td align="center" style="padding-bottom:12px;">
                     <a href="{{.TicketURL}}" style="display:inline-block;background-color:#C9A84C;color:#000000;font-size:14px;font-weight:700;text-decoration:none;padding:14px 32px;border-radius:12px;letter-spacing:0.2px;">Ver detalhes do agendamento →</a>
+                  </td>
+                </tr>
+                {{end}}
+
+                <!-- Botão: Google Agenda -->
+                {{if .GoogleCalendarURL}}
+                <tr>
+                  <td align="center" style="padding-bottom:28px;">
+                    <a href="{{.GoogleCalendarURL}}" target="_blank" style="display:inline-block;background-color:#FFFFFF;color:#1A73E8;font-size:14px;font-weight:700;text-decoration:none;padding:14px 32px;border-radius:12px;letter-spacing:0.2px;border:2px solid #1A73E8;">📅 Adicionar no Google Agenda</a>
                   </td>
                 </tr>
                 {{end}}

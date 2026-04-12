@@ -125,7 +125,7 @@ CREATE TABLE barbershop_payment_configs (
     REFERENCES barbershops(id)
     ON DELETE CASCADE,
   default_requirement payment_requirement NOT NULL,
-  pix_expiration_minutes INTEGER NOT NULL DEFAULT 15,
+  pix_expiration_minutes INTEGER NOT NULL DEFAULT 3,
   mp_access_token VARCHAR(255),
   mp_public_key   VARCHAR(255),
   accept_cash     BOOLEAN NOT NULL DEFAULT true,

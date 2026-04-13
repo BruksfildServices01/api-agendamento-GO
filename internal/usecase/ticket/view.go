@@ -78,7 +78,6 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		LEFT JOIN users u           ON u.id = a.barber_id
 		LEFT JOIN clients c         ON c.id = a.client_id
 		WHERE t.token = ?
-		  AND t.expires_at > NOW()
 	`, token).Scan(&r).Error
 
 	if err != nil {

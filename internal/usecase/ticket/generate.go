@@ -35,7 +35,9 @@ func (uc *GenerateTicket) Execute(ctx context.Context, input GenerateTicketInput
 		AppointmentID: input.AppointmentID,
 		BarbershopID:  input.BarbershopID,
 		Token:         token,
-		ExpiresAt:     input.StartTime,
+		// Ticket stays accessible for 30 days after the appointment so the
+		// client can still view details or contact the barbershop.
+		ExpiresAt: input.StartTime.Add(30 * 24 * time.Hour),
 	}
 
 	if err := uc.repo.Upsert(ctx, ticket); err != nil {

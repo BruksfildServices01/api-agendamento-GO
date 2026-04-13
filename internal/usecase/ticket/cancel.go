@@ -51,10 +51,6 @@ func (uc *CancelViaTicket) Execute(ctx context.Context, token string) error {
 		return err
 	}
 
-	if time.Now().UTC().After(ticket.ExpiresAt) {
-		return domainTicket.ErrTokenExpired
-	}
-
 	type apptRow struct {
 		ID           uint      `gorm:"column:id"`
 		Status       string    `gorm:"column:status"`

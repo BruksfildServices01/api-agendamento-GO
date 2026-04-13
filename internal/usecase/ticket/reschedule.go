@@ -56,10 +56,6 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 		return "", err
 	}
 
-	if time.Now().UTC().After(ticket.ExpiresAt) {
-		return "", domainTicket.ErrTokenExpired
-	}
-
 	type apptRow struct {
 		ID              uint      `gorm:"column:id"`
 		Status          string    `gorm:"column:status"`
@@ -223,7 +219,7 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 
 		if err := tx.Exec(
 			"UPDATE appointment_tickets SET expires_at = ?, token = ? WHERE id = ?",
-			newStartUTC, newToken, ticket.ID,
+			newStartUTC.Add(30*24*time.Hour), newToken, ticket.ID,
 		).Error; err != nil {
 			return err
 		}

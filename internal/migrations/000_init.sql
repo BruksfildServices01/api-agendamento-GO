@@ -128,10 +128,10 @@ CREATE TABLE barbershop_payment_configs (
   pix_expiration_minutes INTEGER NOT NULL DEFAULT 3,
   mp_access_token VARCHAR(255),
   mp_public_key   VARCHAR(255),
-  accept_cash     BOOLEAN NOT NULL DEFAULT true,
-  accept_pix      BOOLEAN NOT NULL DEFAULT true,
-  accept_credit   BOOLEAN NOT NULL DEFAULT true,
-  accept_debit    BOOLEAN NOT NULL DEFAULT true,
+  accept_cash     BOOLEAN NOT NULL DEFAULT false,
+  accept_pix      BOOLEAN NOT NULL DEFAULT false,
+  accept_credit   BOOLEAN NOT NULL DEFAULT false,
+  accept_debit    BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

@@ -103,6 +103,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			BarbershopID:         shop.ID,
 			DefaultRequirement:   models.PaymentRequirement(paymentCfg.DefaultRequirement),
 			PixExpirationMinutes: paymentCfg.PixExpirationMinutes,
+			AcceptCash:           paymentCfg.AcceptCash,
+			AcceptPix:            paymentCfg.AcceptPix,
+			AcceptCredit:         paymentCfg.AcceptCredit,
+			AcceptDebit:          paymentCfg.AcceptDebit,
 		}).Error; err != nil {
 			return err
 		}

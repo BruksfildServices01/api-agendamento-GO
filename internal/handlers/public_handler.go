@@ -159,30 +159,30 @@ func (h *PublicHandler) GetInfo(c *gin.Context) {
 		}
 	}
 
-	// Carrega métodos de pagamento aceitos (defaults: todos habilitados)
+	// Carrega métodos de pagamento aceitos
 	var paymentCfg models.BarbershopPaymentConfig
-	acceptPix := true
-	acceptCredit := true
-	acceptDebit := true
+	var acceptPix, acceptCredit, acceptDebit, paymentEnabled bool
 	if h.db.WithContext(c.Request.Context()).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error == nil {
-		acceptPix = paymentCfg.AcceptPix
-		acceptCredit = paymentCfg.AcceptCredit
-		acceptDebit = paymentCfg.AcceptDebit
+		paymentEnabled = paymentCfg.MPPublicKey != "" && paymentCfg.MPAccessToken != ""
+		acceptPix = paymentCfg.AcceptPix && paymentEnabled
+		acceptCredit = paymentCfg.AcceptCredit && paymentEnabled
+		acceptDebit = paymentCfg.AcceptDebit && paymentEnabled
 	}
 
 	setCacheControl(c, 300)
 	c.JSON(http.StatusOK, gin.H{
-		"id":             shop.ID,
-		"name":           shop.Name,
-		"slug":           shop.Slug,
-		"phone":          shop.Phone,
-		"address":        shop.Address,
-		"timezone":       shop.Timezone,
-		"photo_url":      shop.PhotoURL,
-		"working_hours":  wh,
-		"accept_pix":     acceptPix,
-		"accept_credit":  acceptCredit,
-		"accept_debit":   acceptDebit,
+		"id":              shop.ID,
+		"name":            shop.Name,
+		"slug":            shop.Slug,
+		"phone":           shop.Phone,
+		"address":         shop.Address,
+		"timezone":        shop.Timezone,
+		"photo_url":       shop.PhotoURL,
+		"working_hours":   wh,
+		"accept_pix":      acceptPix,
+		"accept_credit":   acceptCredit,
+		"accept_debit":    acceptDebit,
+		"payment_enabled": paymentEnabled,
 	})
 }
 

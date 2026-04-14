@@ -254,6 +254,11 @@ func (uc *CreatePrivateAppointment) Execute(
 		policy.DefaultRequirement,
 	)
 
+	// Sem credenciais de pagamento configuradas → nunca exigir pagamento
+	if !policy.PaymentEnabled {
+		requirement = domainPayment.PaymentOptional
+	}
+
 	if hasActiveSubscription && subscriptionCoversService {
 		requirement = domainPayment.PaymentOptional
 	}

@@ -14,6 +14,9 @@ type BookingPaymentPolicy struct {
 
 	// Regras específicas por categoria comportamental (vem do DB)
 	CategoryPolicies domain.CategoryPaymentPolicies
+
+	// Pagamento habilitado somente se a barbearia configurou as credenciais MP
+	PaymentEnabled bool
 }
 
 type ResolveBookingPaymentPolicy struct {
@@ -42,9 +45,12 @@ func (uc *ResolveBookingPaymentPolicy) Execute(
 
 	categoryPolicies := domain.CategoryPaymentPolicies(categories)
 
+	paymentEnabled := cfg.MPPublicKey != "" && cfg.MPAccessToken != ""
+
 	return &BookingPaymentPolicy{
 		PixExpirationMinutes: cfg.PixExpirationMinutes,
 		DefaultRequirement:   cfg.DefaultRequirement,
 		CategoryPolicies:     categoryPolicies,
+		PaymentEnabled:       paymentEnabled,
 	}, nil
 }

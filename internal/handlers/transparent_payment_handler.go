@@ -131,9 +131,16 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		}
 	}
 
-	// Carrega configuração de pagamento da barbearia (defaults: todos aceitos)
+	// Carrega configuração de pagamento da barbearia
 	var paymentCfg models.BarbershopPaymentConfig
 	hasCfg := h.db.WithContext(ctx).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error == nil
+
+	// Bloqueia se as credenciais MP não estão configuradas
+	if !hasCfg || paymentCfg.MPAccessToken == "" || paymentCfg.MPPublicKey == "" {
+		httperr.BadRequest(c, "payment_not_configured", "Esta barbearia ainda não configurou o pagamento online.")
+		return
+	}
+
 	if hasCfg {
 		// Validar se o método de pagamento está habilitado
 		method := req.PaymentMethodID

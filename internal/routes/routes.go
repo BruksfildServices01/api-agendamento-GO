@@ -306,9 +306,8 @@ func RegisterRoutes(
 			appointmentRepo,
 		)
 
-		markNoShowJob := jobs.NewMarkNoShowJob(
+		autoCompleteJob := jobs.NewAutoCompleteJob(
 			appointmentRepo,
-			updateClientMetricsUC,
 			auditDispatcher,
 			appointmentRepo,
 		)
@@ -326,14 +325,14 @@ func RegisterRoutes(
 		})
 
 		scheduler.Every(every, func(ctx context.Context) {
-			ok, err := locker.TryLock(ctx, "job:mark_no_show", ttl)
+			ok, err := locker.TryLock(ctx, "job:auto_complete", ttl)
 			if err != nil || !ok {
 				return
 			}
-			if err := markNoShowJob.Run(ctx); err != nil {
-				log.Printf("[MarkNoShowJob] error=%v\n", err)
+			if err := autoCompleteJob.Run(ctx); err != nil {
+				log.Printf("[AutoCompleteJob] error=%v\n", err)
 			}
-			_ = locker.Unlock(ctx, "job:mark_no_show")
+			_ = locker.Unlock(ctx, "job:auto_complete")
 		})
 	}
 

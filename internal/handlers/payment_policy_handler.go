@@ -51,6 +51,10 @@ func (h *PaymentPolicyHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.updateUC.Execute(c.Request.Context(), barbershopID, in); err != nil {
+		if err == paymentconfig.ErrInvalidMPCredentials {
+			httperr.BadRequest(c, "invalid_mp_credentials", "Token do Mercado Pago inválido. Verifique suas credenciais.")
+			return
+		}
 		httperr.Internal(c, "internal_error", err.Error())
 		return
 	}

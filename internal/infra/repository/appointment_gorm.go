@@ -739,6 +739,27 @@ func (r *AppointmentGormRepository) MarkNoShowAuto(
 	return res.RowsAffected > 0, nil
 }
 
+func (r *AppointmentGormRepository) AutoCompleteAppointments(
+	ctx context.Context,
+	barbershopID uint,
+	cutoffUTC time.Time,
+) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Model(&models.Appointment{}).
+		Where(
+			"barbershop_id = ? AND status = ? AND end_time <= ?",
+			barbershopID,
+			models.AppointmentStatusScheduled,
+			cutoffUTC,
+		).
+		Updates(map[string]any{
+			"status":       models.AppointmentStatusCompleted,
+			"completed_at": cutoffUTC,
+		})
+
+	return res.RowsAffected, res.Error
+}
+
 var _ domain.Repository = (*AppointmentGormRepository)(nil)
 var _ domain.BarbershopLister = (*AppointmentGormRepository)(nil)
 var _ domain.JobRepository = (*AppointmentGormRepository)(nil)

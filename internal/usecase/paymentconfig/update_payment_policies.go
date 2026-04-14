@@ -2,9 +2,15 @@ package paymentconfig
 
 import (
 	"context"
+	"errors"
+
+	"github.com/mercadopago/sdk-go/pkg/config"
+	"github.com/mercadopago/sdk-go/pkg/user"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
 )
+
+var ErrInvalidMPCredentials = errors.New("credenciais do Mercado Pago inválidas")
 
 type UpdatePaymentPolicies struct {
 	repo domain.Repository
@@ -45,7 +51,18 @@ func (uc *UpdatePaymentPolicies) Execute(
 		cfg.PixExpirationMinutes = *in.PixExpirationMinutes
 	}
 	if in.MPAccessToken != nil {
-		cfg.MPAccessToken = *in.MPAccessToken
+		token := *in.MPAccessToken
+		if token != "" {
+			// Valida o access token contra a API do Mercado Pago
+			mpCfg, err := config.New(token)
+			if err != nil {
+				return ErrInvalidMPCredentials
+			}
+			if _, err := user.NewClient(mpCfg).Get(ctx); err != nil {
+				return ErrInvalidMPCredentials
+			}
+		}
+		cfg.MPAccessToken = token
 	}
 	if in.MPPublicKey != nil {
 		cfg.MPPublicKey = *in.MPPublicKey

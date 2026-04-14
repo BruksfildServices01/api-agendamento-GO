@@ -30,6 +30,15 @@ type JobRepository interface {
 		noShowAtUTC time.Time,
 	) (bool, error)
 
+	// AutoCompleteAppointments marca como completed todos os agendamentos
+	// scheduled cujo end_time <= cutoffUTC. Race-safe via WHERE status='scheduled'.
+	// Retorna o número de registros atualizados.
+	AutoCompleteAppointments(
+		ctx context.Context,
+		barbershopID uint,
+		cutoffUTC time.Time,
+	) (int64, error)
+
 	// --------------------------------------------------
 	// (Opcional) se você ainda tiver algum job de lembrete
 	// --------------------------------------------------

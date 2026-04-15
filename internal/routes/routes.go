@@ -307,6 +307,7 @@ func RegisterRoutes(
 		)
 
 		autoCompleteJob := jobs.NewAutoCompleteJob(
+			completeAppointmentUC,
 			appointmentRepo,
 			auditDispatcher,
 			appointmentRepo,

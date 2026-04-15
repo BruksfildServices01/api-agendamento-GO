@@ -739,25 +739,53 @@ func (r *AppointmentGormRepository) MarkNoShowAuto(
 	return res.RowsAffected > 0, nil
 }
 
-func (r *AppointmentGormRepository) AutoCompleteAppointments(
+func (r *AppointmentGormRepository) ListAutoCompleteCandidates(
 	ctx context.Context,
 	barbershopID uint,
 	cutoffUTC time.Time,
-) (int64, error) {
-	res := r.db.WithContext(ctx).
-		Model(&models.Appointment{}).
-		Where(
-			"barbershop_id = ? AND status = ? AND end_time <= ?",
-			barbershopID,
-			models.AppointmentStatusScheduled,
-			cutoffUTC,
-		).
-		Updates(map[string]any{
-			"status":       models.AppointmentStatusCompleted,
-			"completed_at": cutoffUTC,
-		})
+) ([]*domain.AutoCompleteCandidate, error) {
+	type row struct {
+		AppointmentID  uint  `gorm:"column:appointment_id"`
+		BarberID       *uint `gorm:"column:barber_id"`
+		HasPaidPayment bool  `gorm:"column:has_paid_payment"`
+		PaymentIsPix   bool  `gorm:"column:payment_is_pix"`
+	}
 
-	return res.RowsAffected, res.Error
+	var rows []row
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			a.id                                                              AS appointment_id,
+			a.barber_id                                                       AS barber_id,
+			(p.id IS NOT NULL AND p.status = 'paid')                         AS has_paid_payment,
+			(p.id IS NOT NULL AND p.status = 'paid' AND p.txid IS NOT NULL)  AS payment_is_pix
+		FROM appointments a
+		LEFT JOIN payments p ON p.appointment_id = a.id AND p.barbershop_id = ?
+		WHERE a.barbershop_id = ?
+		  AND a.status IN ('scheduled', 'awaiting_payment')
+		  AND a.end_time <= ?
+	`, barbershopID, barbershopID, cutoffUTC).Scan(&rows).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]*domain.AutoCompleteCandidate, 0, len(rows))
+	for _, row := range rows {
+		if row.BarberID == nil {
+			continue
+		}
+		paymentMethod := "pix"
+		if row.HasPaidPayment && !row.PaymentIsPix {
+			paymentMethod = "card"
+		}
+		candidates = append(candidates, &domain.AutoCompleteCandidate{
+			AppointmentID: row.AppointmentID,
+			BarberID:      *row.BarberID,
+			PaymentMethod: paymentMethod,
+		})
+	}
+
+	return candidates, nil
 }
 
 var _ domain.Repository = (*AppointmentGormRepository)(nil)

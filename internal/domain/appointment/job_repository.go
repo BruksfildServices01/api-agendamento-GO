@@ -7,6 +7,16 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
+// AutoCompleteCandidate contém os dados mínimos necessários para que o job
+// de auto-conclusão chame o use case CompleteAppointment com os defaults corretos.
+type AutoCompleteCandidate struct {
+	AppointmentID uint
+	BarberID      uint
+	// PaymentMethod derivado do pagamento existente: "pix" | "card".
+	// Padrão "pix" quando não há pagamento registrado.
+	PaymentMethod string
+}
+
 type JobRepository interface {
 	// --------------------------------------------------
 	// P0.2 — No-show candidates
@@ -30,14 +40,15 @@ type JobRepository interface {
 		noShowAtUTC time.Time,
 	) (bool, error)
 
-	// AutoCompleteAppointments marca como completed todos os agendamentos
-	// scheduled cujo end_time <= cutoffUTC. Race-safe via WHERE status='scheduled'.
-	// Retorna o número de registros atualizados.
-	AutoCompleteAppointments(
+	// ListAutoCompleteCandidates retorna agendamentos aptos para conclusão automática:
+	// status IN ('scheduled', 'awaiting_payment') e end_time <= cutoffUTC.
+	// Inclui o método de pagamento derivado do registro de pagamento existente
+	// (pix se TxID presente, card se pago sem TxID, pix como padrão).
+	ListAutoCompleteCandidates(
 		ctx context.Context,
 		barbershopID uint,
 		cutoffUTC time.Time,
-	) (int64, error)
+	) ([]*AutoCompleteCandidate, error)
 
 	// --------------------------------------------------
 	// (Opcional) se você ainda tiver algum job de lembrete

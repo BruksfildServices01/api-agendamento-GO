@@ -118,6 +118,19 @@ type Repository interface {
 		weekday int,
 	) (*models.WorkingHours, error)
 
+	// GetScheduleOverride retorna a exceção de horário de maior prioridade para
+	// a data informada: data específica primeiro, depois dia-da-semana no mês.
+	// Retorna nil se não houver nenhuma exceção configurada.
+	GetScheduleOverride(
+		ctx context.Context,
+		barbershopID uint,
+		barberID uint,
+		dateStr string, // "YYYY-MM-DD"
+		weekday int,
+		month int,
+		year int,
+	) (*models.ScheduleOverride, error)
+
 	ListAppointmentsForDay(
 		ctx context.Context,
 		barbershopID uint,

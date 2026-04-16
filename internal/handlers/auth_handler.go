@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
@@ -244,6 +245,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, gorm.ErrInvalidData) {
 			httperr.BadRequest(c, "invalid_email_domain", "invalid_email_domain")
+			return
+		}
+
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			httperr.BadRequest(c, "email_already_registered", "email_already_registered")
 			return
 		}
 

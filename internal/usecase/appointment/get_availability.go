@@ -66,7 +66,40 @@ func (uc *GetAvailability) Execute(
 	weekday := int(dateLocal.Weekday())
 
 	wh, err := uc.repo.GetWorkingHours(ctx, in.BarbershopID, in.BarberID, weekday)
-	if err != nil || wh == nil || !wh.Active {
+	if err != nil {
+		return nil, err
+	}
+
+	// 3b) Exceção de horário: data específica tem prioridade sobre dia-da-semana no mês.
+	override, err := uc.repo.GetScheduleOverride(
+		ctx,
+		in.BarbershopID,
+		in.BarberID,
+		dateLocal.Format("2006-01-02"),
+		weekday,
+		int(dateLocal.Month()),
+		dateLocal.Year(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if override != nil {
+		if override.Closed {
+			return []domain.TimeSlot{}, nil
+		}
+		if override.StartTime != "" && override.EndTime != "" {
+			// Exceção abre (ou muda horário de) um dia, mesmo que o padrão seja inativo.
+			if wh == nil {
+				wh = &models.WorkingHours{Active: true}
+			}
+			wh.StartTime = override.StartTime
+			wh.EndTime = override.EndTime
+			wh.Active = true
+		}
+	}
+
+	if wh == nil || !wh.Active {
 		return []domain.TimeSlot{}, nil
 	}
 

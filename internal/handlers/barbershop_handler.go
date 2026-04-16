@@ -24,8 +24,12 @@ func NewBarbershopHandler(db *gorm.DB) *BarbershopHandler {
 }
 
 type UpdateBarbershopConfigRequest struct {
-	MinAdvanceMinutes        *int `json:"min_advance_minutes"`
-	ScheduleToleranceMinutes *int `json:"schedule_tolerance_minutes"`
+	Name                     *string `json:"name"`
+	Phone                    *string `json:"phone"`
+	Address                  *string `json:"address"`
+	Email                    *string `json:"email"`
+	MinAdvanceMinutes        *int    `json:"min_advance_minutes"`
+	ScheduleToleranceMinutes *int    `json:"schedule_tolerance_minutes"`
 }
 
 func (h *BarbershopHandler) GetMeBarbershop(c *gin.Context) {
@@ -63,6 +67,27 @@ func (h *BarbershopHandler) UpdateMeBarbershop(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httperr.BadRequest(c, "invalid_request", "Dados inválidos na requisição.")
 		return
+	}
+
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if len(name) < 2 || len(name) > 100 {
+			httperr.BadRequest(c, "invalid_name", "Nome deve ter entre 2 e 100 caracteres.")
+			return
+		}
+		shop.Name = name
+	}
+
+	if req.Phone != nil {
+		shop.Phone = strings.TrimSpace(*req.Phone)
+	}
+
+	if req.Address != nil {
+		shop.Address = strings.TrimSpace(*req.Address)
+	}
+
+	if req.Email != nil {
+		shop.Email = strings.ToLower(strings.TrimSpace(*req.Email))
 	}
 
 	if req.MinAdvanceMinutes != nil {

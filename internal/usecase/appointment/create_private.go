@@ -39,6 +39,7 @@ type CreatePrivateAppointment struct {
 	metrics           *ucMetrics.UpdateClientMetrics
 	getCategoryUC     *ucMetrics.GetClientCategory
 	getSubscriptionUC *ucSubscription.GetActiveSubscription
+	reserveCutUC      *ucSubscription.ReserveSubscriptionCut
 	idempotency       idempotency.Store
 }
 
@@ -49,6 +50,7 @@ func NewCreatePrivateAppointment(
 	metrics *ucMetrics.UpdateClientMetrics,
 	getCategoryUC *ucMetrics.GetClientCategory,
 	getSubscriptionUC *ucSubscription.GetActiveSubscription,
+	reserveCutUC *ucSubscription.ReserveSubscriptionCut,
 	idempotency idempotency.Store,
 ) *CreatePrivateAppointment {
 	return &CreatePrivateAppointment{
@@ -58,6 +60,7 @@ func NewCreatePrivateAppointment(
 		metrics:           metrics,
 		getCategoryUC:     getCategoryUC,
 		getSubscriptionUC: getSubscriptionUC,
+		reserveCutUC:      reserveCutUC,
 		idempotency:       idempotency,
 	}
 }
@@ -219,28 +222,50 @@ func (uc *CreatePrivateAppointment) Execute(
 	// --------------------------------------------------
 	// 9) Assinatura ativa + cobertura do serviço
 	// --------------------------------------------------
-	hasActiveSubscription := false
-	subscriptionCoversService := false
+	coverageStatus := models.CoverageStatusNone
+	var subscriptionID *uint
+	reservedCut := false
 
 	if uc.getSubscriptionUC != nil {
-		sub, err := uc.getSubscriptionUC.Execute(
-			ctx,
-			in.BarbershopID,
-			client.ID,
-		)
+		sub, err := uc.getSubscriptionUC.Execute(ctx, in.BarbershopID, client.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		if sub != nil {
-			hasActiveSubscription = true
-
+			serviceAllowed := false
 			if sub.Plan != nil {
 				for _, allowedServiceID := range sub.Plan.ServiceIDs {
 					if allowedServiceID == product.ID {
-						subscriptionCoversService = true
+						serviceAllowed = true
 						break
 					}
+				}
+			}
+
+			switch {
+			case !serviceAllowed:
+				coverageStatus = models.CoverageStatusNotCoveredService
+
+			case sub.Plan != nil && sub.Plan.CutsIncluded > 0 &&
+				sub.CutsUsedInPeriod+sub.CutsReservedInPeriod >= sub.Plan.CutsIncluded:
+				coverageStatus = models.CoverageStatusNotCoveredExhausted
+
+			default:
+				// Tenta reservar; falha de concorrência → exhausted
+				if uc.reserveCutUC != nil {
+					if err := uc.reserveCutUC.Execute(ctx, in.BarbershopID, client.ID); err == nil {
+						coverageStatus = models.CoverageStatusCovered
+						subID := sub.ID
+						subscriptionID = &subID
+						reservedCut = true
+					} else {
+						coverageStatus = models.CoverageStatusNotCoveredExhausted
+					}
+				} else {
+					coverageStatus = models.CoverageStatusCovered
+					subID := sub.ID
+					subscriptionID = &subID
 				}
 			}
 		}
@@ -259,7 +284,7 @@ func (uc *CreatePrivateAppointment) Execute(
 		requirement = domainPayment.PaymentOptional
 	}
 
-	if hasActiveSubscription && subscriptionCoversService {
+	if coverageStatus == models.CoverageStatusCovered {
 		requirement = domainPayment.PaymentOptional
 	}
 
@@ -302,16 +327,19 @@ func (uc *CreatePrivateAppointment) Execute(
 	status := models.AppointmentStatus(initialStatus)
 
 	ap := &models.Appointment{
-		BarbershopID:    &barbershopID,
-		BarberID:        &barberID,
-		ClientID:        &clientID,
-		BarberProductID: &productID,
-		StartTime:       start,
-		EndTime:         end,
-		Status:          status,
-		CreatedBy:       models.CreatedByClient,
-		PaymentIntent:   models.PaymentIntentPayLater,
-		Notes:           in.Notes,
+		BarbershopID:            &barbershopID,
+		BarberID:                &barberID,
+		ClientID:                &clientID,
+		BarberProductID:         &productID,
+		StartTime:               start,
+		EndTime:                 end,
+		Status:                  status,
+		CreatedBy:               models.CreatedByClient,
+		PaymentIntent:           models.PaymentIntentPayLater,
+		Notes:                   in.Notes,
+		SubscriptionID:          subscriptionID,
+		CoverageStatus:          coverageStatus,
+		ReservedSubscriptionCut: reservedCut,
 	}
 
 	// --------------------------------------------------

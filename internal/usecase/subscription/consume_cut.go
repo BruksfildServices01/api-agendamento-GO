@@ -43,6 +43,7 @@ func (uc *ConsumeCut) Execute(
 	barbershopID uint,
 	clientID uint,
 	serviceID uint,
+	hadReservation bool,
 ) (*ConsumeCutResult, error) {
 	if barbershopID == 0 || clientID == 0 || serviceID == 0 {
 		return &ConsumeCutResult{
@@ -104,18 +105,25 @@ func (uc *ConsumeCut) Execute(
 		return result, nil
 	}
 
-	if sub.CutsUsedInPeriod >= plan.CutsIncluded {
+	totalCommitted := sub.CutsUsedInPeriod + sub.CutsReservedInPeriod
+	if totalCommitted >= plan.CutsIncluded {
 		result.Status = ConsumeCutStatusLimitExceeded
 		return result, nil
 	}
 
-	if err := uc.repo.IncrementCutsUsed(ctx, barbershopID, clientID); err != nil {
-		if err.Error() == "active_subscription_not_found" {
+	var consumeErr error
+	if hadReservation {
+		consumeErr = uc.repo.ConsumeReservedCut(ctx, barbershopID, clientID)
+	} else {
+		consumeErr = uc.repo.IncrementCutsUsed(ctx, barbershopID, clientID)
+	}
+
+	if consumeErr != nil {
+		if consumeErr.Error() == "active_subscription_not_found" {
 			result.Status = ConsumeCutStatusNoActiveSubscription
 			return result, nil
 		}
-
-		return nil, fmt.Errorf("%w: increment cuts used: %v", ErrConsumeCutInfra, err)
+		return nil, fmt.Errorf("%w: consume cut: %v", ErrConsumeCutInfra, consumeErr)
 	}
 
 	result.Status = ConsumeCutStatusConsumed

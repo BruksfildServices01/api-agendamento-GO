@@ -516,6 +516,59 @@ func (r *PaymentGormTxRepository) GetByOrderID(
 	return &p, nil
 }
 
+// ── Subscription activation inside payment Tx ─────────────────────────────
+
+func (r *PaymentGormTxRepository) GetSubscriptionForUpdate(
+	ctx context.Context,
+	id uint,
+) (*models.Subscription, error) {
+	var sub models.Subscription
+	err := r.tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", id).
+		First(&sub).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &sub, nil
+}
+
+func (r *PaymentGormTxRepository) GetPlanByID(
+	ctx context.Context,
+	id uint,
+) (*models.Plan, error) {
+	var plan models.Plan
+	err := r.tx.WithContext(ctx).Where("id = ?", id).First(&plan).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &plan, nil
+}
+
+func (r *PaymentGormTxRepository) ActivateSubscriptionTx(
+	ctx context.Context,
+	id uint,
+	periodStart, periodEnd time.Time,
+) error {
+	return r.tx.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where("id = ? AND status = ?", id, "pending_payment").
+		Updates(map[string]any{
+			"status":                  "active",
+			"current_period_start":    periodStart,
+			"current_period_end":      periodEnd,
+			"cuts_used_in_period":     0,
+			"cuts_reserved_in_period": 0,
+		}).Error
+}
+
 func (r *PaymentGormTxRepository) Commit() error {
 	return r.tx.Commit().Error
 }

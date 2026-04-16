@@ -17,6 +17,7 @@ type SubscriptionHandler struct {
 	activateUC *subscription.ActivateSubscription
 	cancelUC   *subscription.CancelSubscription
 	getUC      *subscription.GetActiveSubscription
+	listUC     *subscription.ListSubscriptions
 	audit      *audit.Dispatcher
 }
 
@@ -24,12 +25,14 @@ func NewSubscriptionHandler(
 	activateUC *subscription.ActivateSubscription,
 	cancelUC *subscription.CancelSubscription,
 	getUC *subscription.GetActiveSubscription,
+	listUC *subscription.ListSubscriptions,
 	auditDispatcher *audit.Dispatcher,
 ) *SubscriptionHandler {
 	return &SubscriptionHandler{
 		activateUC: activateUC,
 		cancelUC:   cancelUC,
 		getUC:      getUC,
+		listUC:     listUC,
 		audit:      auditDispatcher,
 	}
 }
@@ -159,4 +162,45 @@ func (h *SubscriptionHandler) GetActive(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sub)
+}
+
+func (h *SubscriptionHandler) List(c *gin.Context) {
+	barbershopID := c.GetUint(middleware.ContextBarbershopID)
+	if barbershopID == 0 {
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
+		return
+	}
+
+	items, err := h.listUC.Execute(c.Request.Context(), barbershopID)
+	if err != nil {
+		httperr.Internal(c, "failed_to_list", "failed_to_list")
+		return
+	}
+
+	type itemDTO struct {
+		ID           uint   `json:"id"`
+		ClientID     uint   `json:"client_id"`
+		ClientName   string `json:"client_name"`
+		ClientPhone  string `json:"client_phone"`
+		PlanName     string `json:"plan_name"`
+		CutsUsed     int    `json:"cuts_used"`
+		CutsIncluded int    `json:"cuts_included"`
+		PeriodEnd    string `json:"period_end"`
+	}
+
+	dtos := make([]itemDTO, len(items))
+	for i, it := range items {
+		dtos[i] = itemDTO{
+			ID:           it.ID,
+			ClientID:     it.ClientID,
+			ClientName:   it.ClientName,
+			ClientPhone:  it.ClientPhone,
+			PlanName:     it.PlanName,
+			CutsUsed:     it.CutsUsed,
+			CutsIncluded: it.CutsIncluded,
+			PeriodEnd:    it.CurrentPeriodEnd.Format("02/01/2006"),
+		}
+	}
+
+	c.JSON(http.StatusOK, dtos)
 }

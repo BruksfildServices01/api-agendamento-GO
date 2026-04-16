@@ -8,23 +8,27 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
 type MarkAppointmentNoShow struct {
-	repo    domain.Repository
-	audit   *audit.Dispatcher
-	metrics *ucMetrics.UpdateClientMetrics
+	repo      domain.Repository
+	audit     *audit.Dispatcher
+	metrics   *ucMetrics.UpdateClientMetrics
+	releaseUC *ucSubscription.ReleaseSubscriptionCut
 }
 
 func NewMarkAppointmentNoShow(
 	repo domain.Repository,
 	audit *audit.Dispatcher,
 	metrics *ucMetrics.UpdateClientMetrics,
+	releaseUC *ucSubscription.ReleaseSubscriptionCut,
 ) *MarkAppointmentNoShow {
 	return &MarkAppointmentNoShow{
-		repo:    repo,
-		audit:   audit,
-		metrics: metrics,
+		repo:      repo,
+		audit:     audit,
+		metrics:   metrics,
+		releaseUC: releaseUC,
 	}
 }
 
@@ -60,7 +64,11 @@ func (uc *MarkAppointmentNoShow) Execute(
 		return err
 	}
 
-	// 👇 ClientID agora é ponteiro
+	// Liberar reserva de assinatura (best-effort)
+	if ap.ReservedSubscriptionCut && ap.ClientID != nil && ap.BarbershopID != nil && uc.releaseUC != nil {
+		_ = uc.releaseUC.Execute(ctx, *ap.BarbershopID, *ap.ClientID)
+	}
+
 	if ap.ClientID != nil {
 		_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
 			BarbershopID: barbershopID,

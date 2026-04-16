@@ -10,23 +10,27 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
+	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
 
 type CancelAppointment struct {
-	repo    domain.Repository
-	audit   *audit.Dispatcher
-	metrics *ucMetrics.UpdateClientMetrics
+	repo       domain.Repository
+	audit      *audit.Dispatcher
+	metrics    *ucMetrics.UpdateClientMetrics
+	releaseUC  *ucSubscription.ReleaseSubscriptionCut
 }
 
 func NewCancelAppointment(
 	repo domain.Repository,
 	audit *audit.Dispatcher,
 	metrics *ucMetrics.UpdateClientMetrics,
+	releaseUC *ucSubscription.ReleaseSubscriptionCut,
 ) *CancelAppointment {
 	return &CancelAppointment{
-		repo:    repo,
-		audit:   audit,
-		metrics: metrics,
+		repo:      repo,
+		audit:     audit,
+		metrics:   metrics,
+		releaseUC: releaseUC,
 	}
 }
 
@@ -71,6 +75,16 @@ func (uc *CancelAppointment) Execute(
 	// =========================================
 	if err := uc.repo.UpdateAppointment(ctx, ap); err != nil {
 		return nil, err
+	}
+
+	// =========================================
+	// 3.5️⃣ Liberar reserva de assinatura (best-effort)
+	// =========================================
+	if ap.ReservedSubscriptionCut && ap.ClientID != nil && ap.BarbershopID != nil && uc.releaseUC != nil {
+		if err := uc.releaseUC.Execute(ctx, *ap.BarbershopID, *ap.ClientID); err != nil {
+			// best-effort: não falha o cancelamento
+			_ = err
+		}
 	}
 
 	// =========================================

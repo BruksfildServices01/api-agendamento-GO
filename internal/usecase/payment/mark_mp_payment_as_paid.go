@@ -156,6 +156,29 @@ func (uc *MarkMPPaymentAsPaid) Execute(
 
 	var ap *models.Appointment
 	var order *models.Order
+	var activatedSubID *uint
+
+	// Subscription: ativa quando o pagamento cobre uma assinatura pending_payment
+	if payment.SubscriptionID != nil {
+		sub, err := tx.GetSubscriptionForUpdate(ctx, *payment.SubscriptionID)
+		if err != nil {
+			return fmt.Errorf("failed to lock subscription: %w", err)
+		}
+		if sub != nil && sub.Status == "pending_payment" {
+			plan, err := tx.GetPlanByID(ctx, sub.PlanID)
+			if err != nil {
+				return fmt.Errorf("failed to load plan: %w", err)
+			}
+			if plan != nil {
+				periodStart := now
+				periodEnd := periodStart.AddDate(0, 0, plan.DurationDays)
+				if err := tx.ActivateSubscriptionTx(ctx, sub.ID, periodStart, periodEnd); err != nil {
+					return fmt.Errorf("failed to activate subscription: %w", err)
+				}
+				activatedSubID = &sub.ID
+			}
+		}
+	}
 
 	if payment.AppointmentID != nil {
 		ap, err = tx.GetAppointmentForUpdate(ctx, barbershopID, *payment.AppointmentID)
@@ -230,6 +253,18 @@ func (uc *MarkMPPaymentAsPaid) Execute(
 			Action:       "order_payment_confirmed",
 			Entity:       "order",
 			EntityID:     &order.ID,
+		})
+	}
+
+	if activatedSubID != nil {
+		uc.audit.Dispatch(audit.Event{
+			BarbershopID: barbershopID,
+			Action:       "subscription_activated",
+			Entity:       "subscription",
+			EntityID:     activatedSubID,
+			Metadata: map[string]any{
+				"via": "mp_webhook",
+			},
 		})
 	}
 

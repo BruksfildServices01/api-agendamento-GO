@@ -150,7 +150,7 @@ func (uc *CompleteAppointment) Execute(
 
 		// Consume subscription using the ACTUAL service performed.
 		if ap.ClientID != nil && actualServiceID != nil && uc.consumeCutUC != nil {
-			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID)
+			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, ap.ReservedSubscriptionCut)
 			if err != nil {
 				return err
 			}

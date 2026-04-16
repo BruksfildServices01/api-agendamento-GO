@@ -293,15 +293,16 @@ func (r *SubscriptionGormRepository) GetActiveSubscription(
 	}
 
 	return &domain.Subscription{
-		ID:                 model.ID,
-		BarbershopID:       model.BarbershopID,
-		ClientID:           model.ClientID,
-		PlanID:             model.PlanID,
-		Status:             domain.Status(model.Status),
-		CurrentPeriodStart: model.CurrentPeriodStart,
-		CurrentPeriodEnd:   model.CurrentPeriodEnd,
-		CutsUsedInPeriod:   model.CutsUsedInPeriod,
-		Plan:               planPtr,
+		ID:                   model.ID,
+		BarbershopID:         model.BarbershopID,
+		ClientID:             model.ClientID,
+		PlanID:               model.PlanID,
+		Status:               domain.Status(model.Status),
+		CurrentPeriodStart:   model.CurrentPeriodStart,
+		CurrentPeriodEnd:     model.CurrentPeriodEnd,
+		CutsUsedInPeriod:     model.CutsUsedInPeriod,
+		CutsReservedInPeriod: model.CutsReservedInPeriod,
+		Plan:                 planPtr,
 	}, nil
 }
 
@@ -339,6 +340,76 @@ func (r *SubscriptionGormRepository) IncrementCutsUsed(
 		return errActiveSubscriptionNotFound
 	}
 
+	return nil
+}
+
+func (r *SubscriptionGormRepository) ReserveSubscriptionCut(
+	ctx context.Context,
+	barbershopID uint,
+	clientID uint,
+) error {
+	now := time.Now().UTC()
+	res := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where(
+			`barbershop_id = ? AND client_id = ? AND status = ?
+			 AND current_period_start <= ? AND current_period_end > ?`,
+			barbershopID, clientID, "active", now, now,
+		).
+		UpdateColumn("cuts_reserved_in_period", gorm.Expr("cuts_reserved_in_period + 1"))
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errActiveSubscriptionNotFound
+	}
+	return nil
+}
+
+func (r *SubscriptionGormRepository) ReleaseSubscriptionCut(
+	ctx context.Context,
+	barbershopID uint,
+	clientID uint,
+) error {
+	now := time.Now().UTC()
+	r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where(
+			`barbershop_id = ? AND client_id = ? AND status = ?
+			 AND current_period_start <= ? AND current_period_end > ?
+			 AND cuts_reserved_in_period > 0`,
+			barbershopID, clientID, "active", now, now,
+		).
+		UpdateColumn("cuts_reserved_in_period", gorm.Expr("cuts_reserved_in_period - 1"))
+	// best-effort: ignora RowsAffected=0 (período já expirou, etc.)
+	return nil
+}
+
+func (r *SubscriptionGormRepository) ConsumeReservedCut(
+	ctx context.Context,
+	barbershopID uint,
+	clientID uint,
+) error {
+	now := time.Now().UTC()
+	res := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where(
+			`barbershop_id = ? AND client_id = ? AND status = ?
+			 AND current_period_start <= ? AND current_period_end > ?
+			 AND cuts_reserved_in_period > 0`,
+			barbershopID, clientID, "active", now, now,
+		).
+		Updates(map[string]any{
+			"cuts_used_in_period":     gorm.Expr("cuts_used_in_period + 1"),
+			"cuts_reserved_in_period": gorm.Expr("cuts_reserved_in_period - 1"),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		// Período expirou entre booking e conclusão — incrementa usado normalmente
+		return r.IncrementCutsUsed(ctx, barbershopID, clientID)
+	}
 	return nil
 }
 
@@ -384,6 +455,107 @@ func (r *SubscriptionGormRepository) UpdateCutsUsed(
 		Error
 }
 
+// ──────────────────────────────────────────────────────────────────
+// Purchase flow
+// ──────────────────────────────────────────────────────────────────
+
+func (r *SubscriptionGormRepository) CreatePendingSubscription(
+	ctx context.Context,
+	sub *domain.Subscription,
+) error {
+	model := models.Subscription{
+		BarbershopID: sub.BarbershopID,
+		ClientID:     sub.ClientID,
+		PlanID:       sub.PlanID,
+		Status:       string(domain.StatusPendingPayment),
+		// period dates are zero — will be set on activation
+	}
+
+	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
+		if isPendingSubscriptionUniqueViolation(err) {
+			return errClientAlreadyHasActiveSubscription
+		}
+		return err
+	}
+
+	sub.ID = model.ID
+	return nil
+}
+
+func (r *SubscriptionGormRepository) GetSubscriptionByID(
+	ctx context.Context,
+	id uint,
+) (*domain.Subscription, error) {
+	var model models.Subscription
+
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	plan, err := r.GetPlanByID(ctx, model.BarbershopID, model.PlanID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.Subscription{
+		ID:                   model.ID,
+		BarbershopID:         model.BarbershopID,
+		ClientID:             model.ClientID,
+		PlanID:               model.PlanID,
+		Status:               domain.Status(model.Status),
+		CurrentPeriodStart:   model.CurrentPeriodStart,
+		CurrentPeriodEnd:     model.CurrentPeriodEnd,
+		CutsUsedInPeriod:     model.CutsUsedInPeriod,
+		CutsReservedInPeriod: model.CutsReservedInPeriod,
+		Plan:                 plan,
+	}, nil
+}
+
+func (r *SubscriptionGormRepository) ActivateSubscriptionByID(
+	ctx context.Context,
+	id uint,
+	periodStart, periodEnd time.Time,
+) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.Subscription{}).
+		Where("id = ? AND status = ?", id, string(domain.StatusPendingPayment)).
+		Updates(map[string]any{
+			"status":               string(domain.StatusActive),
+			"current_period_start": periodStart,
+			"current_period_end":   periodEnd,
+			"cuts_used_in_period":  0,
+			"cuts_reserved_in_period": 0,
+		})
+
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errActiveSubscriptionNotFound
+	}
+	return nil
+}
+
+func isPendingSubscriptionUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" && pgErr.ConstraintName == "uq_subscriptions_one_pending_per_client_shop" {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "uq_subscriptions_one_pending_per_client_shop")
+}
+
 func isActiveSubscriptionUniqueViolation(err error) bool {
 	if err == nil {
 		return false
@@ -402,6 +574,77 @@ func isActiveSubscriptionUniqueViolation(err error) bool {
 
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "uq_subscriptions_one_active_per_client_shop")
+}
+
+func (r *SubscriptionGormRepository) UpdatePlan(
+	ctx context.Context,
+	barbershopID uint,
+	planID uint,
+	plan *domain.Plan,
+	serviceIDs []uint,
+	categoryIDs []uint,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Plan{}).
+			Where("id = ? AND barbershop_id = ?", planID, barbershopID).
+			Updates(map[string]any{
+				"name":                plan.Name,
+				"monthly_price_cents": plan.MonthlyPriceCents,
+				"duration_days":       plan.DurationDays,
+				"cuts_included":       plan.CutsIncluded,
+				"discount_percent":    plan.DiscountPercent,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errors.New("plan_not_found")
+		}
+
+		if err := tx.Exec(`DELETE FROM plan_services WHERE plan_id = ?`, planID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM plan_categories WHERE plan_id = ?`, planID).Error; err != nil {
+			return err
+		}
+
+		for _, serviceID := range serviceIDs {
+			if err := tx.Exec(
+				`INSERT INTO plan_services (plan_id, service_id) VALUES (?, ?)`,
+				planID, serviceID,
+			).Error; err != nil {
+				return err
+			}
+		}
+		for _, categoryID := range categoryIDs {
+			if err := tx.Exec(
+				`INSERT INTO plan_categories (plan_id, category_id) VALUES (?, ?)`,
+				planID, categoryID,
+			).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func (r *SubscriptionGormRepository) SetPlanActive(
+	ctx context.Context,
+	barbershopID uint,
+	planID uint,
+	active bool,
+) error {
+	result := r.db.WithContext(ctx).Model(&models.Plan{}).
+		Where("id = ? AND barbershop_id = ?", planID, barbershopID).
+		Update("active", active)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("plan_not_found")
+	}
+	return nil
 }
 
 func (r *SubscriptionGormRepository) DeletePlan(
@@ -509,4 +752,11 @@ func (r *SubscriptionGormRepository) CountCategoriesByIDs(
 		Where("barbershop_id = ? AND id IN ?", barbershopID, categoryIDs).
 		Count(&count).Error
 	return count, err
+}
+
+func (r *SubscriptionGormRepository) ExpireSubscriptions(ctx context.Context) (int64, error) {
+	result := r.db.WithContext(ctx).Exec(
+		`UPDATE subscriptions SET status = 'expired' WHERE status = 'active' AND current_period_end < NOW()`,
+	)
+	return result.RowsAffected, result.Error
 }

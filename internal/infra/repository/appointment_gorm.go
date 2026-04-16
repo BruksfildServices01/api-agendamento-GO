@@ -788,6 +788,50 @@ func (r *AppointmentGormRepository) ListAutoCompleteCandidates(
 	return candidates, nil
 }
 
+// ======================================================
+// SCHEDULE OVERRIDE
+// ======================================================
+
+func (r *AppointmentGormRepository) GetScheduleOverride(
+	ctx context.Context,
+	barbershopID uint,
+	barberID uint,
+	dateStr string, // "YYYY-MM-DD"
+	weekday int,
+	month int,
+	year int,
+) (*models.ScheduleOverride, error) {
+
+	// 1) Prioridade máxima: data específica
+	var dateOverride models.ScheduleOverride
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND barber_id = ? AND date = ?",
+			barbershopID, barberID, dateStr).
+		First(&dateOverride).Error
+
+	if err == nil {
+		return &dateOverride, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	// 2) Fallback: dia da semana no mês/ano
+	var weekdayOverride models.ScheduleOverride
+	err = r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND barber_id = ? AND weekday = ? AND month = ? AND year = ?",
+			barbershopID, barberID, weekday, month, year).
+		First(&weekdayOverride).Error
+
+	if err == nil {
+		return &weekdayOverride, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return nil, err
+}
+
 var _ domain.Repository = (*AppointmentGormRepository)(nil)
 var _ domain.BarbershopLister = (*AppointmentGormRepository)(nil)
 var _ domain.JobRepository = (*AppointmentGormRepository)(nil)

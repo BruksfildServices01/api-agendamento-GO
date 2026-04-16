@@ -395,6 +395,7 @@ func RegisterRoutes(
 	)
 
 	workingHoursHandler := handlers.NewWorkingHoursHandler(db, auditDispatcher)
+	scheduleOverrideHandler := handlers.NewScheduleOverrideHandler(db)
 	auditLogsHandler := handlers.NewAuditLogsHandler(db)
 
 	clientHandler := handlers.NewClientHandler(
@@ -644,6 +645,10 @@ func RegisterRoutes(
 
 		secured.GET("/me/working-hours", workingHoursHandler.Get)
 		secured.PUT("/me/working-hours", workingHoursHandler.Update)
+
+		secured.GET("/me/schedule-overrides", scheduleOverrideHandler.List)
+		secured.PUT("/me/schedule-overrides", scheduleOverrideHandler.Upsert)
+		secured.DELETE("/me/schedule-overrides/:id", scheduleOverrideHandler.Delete)
 
 		secured.GET("/me/clients", clientHandler.List)
 		secured.GET("/me/clients/:id/crm", crmHandler.Get)

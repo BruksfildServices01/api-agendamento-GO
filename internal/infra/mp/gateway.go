@@ -3,6 +3,8 @@ package mp
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/mercadopago/sdk-go/pkg/config"
 	"github.com/mercadopago/sdk-go/pkg/payment"
@@ -79,17 +81,25 @@ func (g *Gateway) CreatePayment(input domain.TransparentPaymentInput) (*domain.T
 		TransactionAmount: amountFloat,
 		Description:       input.Description,
 		ExternalReference: input.ExternalReference,
-		NotificationURL:   input.NotificationURL,
 		PaymentMethodID:   input.PaymentMethodID,
 		Token:             input.Token,
 		Installments:      input.Installments,
 		Payer: &payment.PayerRequest{
 			Email: input.PayerEmail,
-			Identification: &payment.IdentificationRequest{
-				Type:   "CPF",
-				Number: input.PayerCPF,
-			},
 		},
+	}
+
+	// Só envia NotificationURL se for uma URL pública (não localhost).
+	if isPublicURL(input.NotificationURL) {
+		req.NotificationURL = input.NotificationURL
+	}
+
+	// Só envia Identification se o CPF foi fornecido — MP rejeita número vazio.
+	if input.PayerCPF != "" {
+		req.Payer.Identification = &payment.IdentificationRequest{
+			Type:   "CPF",
+			Number: input.PayerCPF,
+		}
 	}
 
 	resp, err := g.paymentClient.Create(context.Background(), req)
@@ -105,4 +115,30 @@ func (g *Gateway) CreatePayment(input domain.TransparentPaymentInput) (*domain.T
 		QRCodeBase64: resp.PointOfInteraction.TransactionData.QRCodeBase64,
 		TicketURL:    resp.PointOfInteraction.TransactionData.TicketURL,
 	}, nil
+}
+
+// GetPaymentStatus consulta o status de um pagamento pelo ID do MP.
+func (g *Gateway) GetPaymentStatus(mpPaymentID int64) (string, error) {
+	resp, err := g.paymentClient.Get(context.Background(), int(mpPaymentID))
+	if err != nil {
+		return "", fmt.Errorf("mp get payment: %w", err)
+	}
+	return resp.Status, nil
+}
+
+// isPublicURL retorna true apenas para URLs HTTPS não-localhost.
+// MP rejeita notification_url que não seja pública e acessível.
+func isPublicURL(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return false
+	}
+	return u.Scheme == "https"
 }

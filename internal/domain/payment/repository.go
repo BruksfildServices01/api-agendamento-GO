@@ -7,6 +7,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
+
 type Repository interface {
 	GetByTxIDGlobal(
 		ctx context.Context,
@@ -171,6 +172,11 @@ type TxRepository interface {
 		productID uint,
 		quantity int,
 	) error
+
+	// Subscription activation (used when payment.SubscriptionID != nil)
+	GetSubscriptionForUpdate(ctx context.Context, id uint) (*models.Subscription, error)
+	GetPlanByID(ctx context.Context, id uint) (*models.Plan, error)
+	ActivateSubscriptionTx(ctx context.Context, id uint, periodStart, periodEnd time.Time) error
 
 	Commit() error
 	Rollback() error

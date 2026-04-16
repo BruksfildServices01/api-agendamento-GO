@@ -3,6 +3,7 @@ package models
 type UserRole string
 type AppointmentStatus string
 type AppointmentCreatedBy string
+type AppointmentCoverageStatus string
 type PaymentIntentType string
 type NoShowSourceType string
 type PaymentStatus string

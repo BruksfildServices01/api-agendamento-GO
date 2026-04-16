@@ -179,12 +179,24 @@ func RegisterRoutes(
 	// SUBSCRIPTION USE CASES
 	// ======================================================
 	consumeCutUC := ucSubscription.NewConsumeCut(subscriptionRepo)
+	reserveSubscriptionCutUC := ucSubscription.NewReserveSubscriptionCut(subscriptionRepo)
+	releaseSubscriptionCutUC := ucSubscription.NewReleaseSubscriptionCut(subscriptionRepo)
 	createPlanUC := ucSubscription.NewCreatePlan(subscriptionRepo)
+	updatePlanUC := ucSubscription.NewUpdatePlan(subscriptionRepo)
+	setPlanActiveUC := ucSubscription.NewSetPlanActive(subscriptionRepo)
 	listPlansUC := ucSubscription.NewListPlans(subscriptionRepo)
 	deletePlanUC := ucSubscription.NewDeletePlan(subscriptionRepo)
 	activateSubscriptionUC := ucSubscription.NewActivateSubscription(subscriptionRepo)
 	cancelSubscriptionUC := ucSubscription.NewCancelSubscription(subscriptionRepo)
 	getActiveSubscriptionUC := ucSubscription.NewGetActiveSubscription(subscriptionRepo)
+	purchaseSubscriptionUC := ucSubscription.NewPurchaseSubscription(
+		subscriptionRepo,
+		paymentRepo,
+		transparentGateway,
+		auditDispatcher,
+		db,
+		cfg.BackendURL,
+	)
 
 	// ======================================================
 	// PAYMENT CONFIG
@@ -240,6 +252,7 @@ func RegisterRoutes(
 		updateClientMetricsUC,
 		getClientCategoryUC,
 		getActiveSubscriptionUC,
+		reserveSubscriptionCutUC,
 		idemStore,
 	)
 
@@ -258,12 +271,14 @@ func RegisterRoutes(
 		appointmentRepo,
 		auditDispatcher,
 		updateClientMetricsUC,
+		releaseSubscriptionCutUC,
 	)
 
 	markNoShowUC := ucAppointment.NewMarkAppointmentNoShow(
 		appointmentRepo,
 		auditDispatcher,
 		updateClientMetricsUC,
+		releaseSubscriptionCutUC,
 	)
 
 	listByDateUC := ucAppointment.NewListAppointmentsByDate(appointmentRepo)
@@ -313,6 +328,9 @@ func RegisterRoutes(
 			appointmentRepo,
 		)
 
+		expireSubscriptionsUC := ucSubscription.NewExpireSubscriptions(subscriptionRepo)
+		expireSubscriptionsJob := jobs.NewExpireSubscriptionsJob(expireSubscriptionsUC)
+
 		const every = time.Minute
 		const ttl = 2 * time.Minute
 
@@ -334,6 +352,18 @@ func RegisterRoutes(
 				log.Printf("[AutoCompleteJob] error=%v\n", err)
 			}
 			_ = locker.Unlock(ctx, "job:auto_complete")
+		})
+
+		const everyHour = time.Hour
+		const ttlHour = 90 * time.Minute
+
+		scheduler.Every(everyHour, func(ctx context.Context) {
+			ok, err := locker.TryLock(ctx, "job:expire_subscriptions", ttlHour)
+			if err != nil || !ok {
+				return
+			}
+			expireSubscriptionsJob.Run(ctx)
+			_ = locker.Unlock(ctx, "job:expire_subscriptions")
 		})
 	}
 
@@ -457,7 +487,7 @@ func RegisterRoutes(
 	operationalSummaryHandler := handlers.NewOperationalSummaryHandler(
 		getOperationalSummaryUC,
 	)
-	planHandler := handlers.NewPlanHandler(createPlanUC, listPlansUC, deletePlanUC)
+	planHandler := handlers.NewPlanHandler(createPlanUC, updatePlanUC, setPlanActiveUC, listPlansUC, deletePlanUC)
 
 	dayPanelQuery := daypanel.New(db)
 	dayPanelHandler := handlers.NewDayPanelHandler(dayPanelQuery)
@@ -493,11 +523,20 @@ func RegisterRoutes(
 		log.Println("[R2] storage disabled (credentials not set)")
 	}
 
+	listSubscriptionsUC := ucSubscription.NewListSubscriptions(db)
+
 	subscriptionHandler := handlers.NewSubscriptionHandler(
 		activateSubscriptionUC,
 		cancelSubscriptionUC,
 		getActiveSubscriptionUC,
+		listSubscriptionsUC,
 		auditDispatcher,
+	)
+
+	publicSubscriptionHandler := handlers.NewPublicSubscriptionHandler(
+		db,
+		listPlansUC,
+		purchaseSubscriptionUC,
 	)
 
 	billingHandler := handlers.NewBillingHandler(db, cfg)
@@ -538,6 +577,19 @@ func RegisterRoutes(
 			}, 30, 10, cfg.RedisURL),
 			transparentPaymentHandler.CreatePayment,
 		)
+
+		publicAPI.GET("/:slug/plans", publicSubscriptionHandler.ListPlans)
+		publicAPI.GET("/:slug/subscribers/lookup", publicSubscriptionHandler.LookupSubscriber)
+
+		publicAPI.POST(
+			"/:slug/subscriptions/purchase",
+			middleware.NewRateLimitByKey(func(c *gin.Context) string {
+				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
+			}, 10, 5, cfg.RedisURL),
+			publicSubscriptionHandler.Purchase,
+		)
+
+		publicAPI.GET("/:slug/subscriptions/:id/payment/status", publicSubscriptionHandler.PaymentStatus)
 
 		publicAPI.GET("/ticket/:token", publicTicketHandler.View)
 		publicAPI.DELETE("/ticket/:token", publicTicketHandler.Cancel)
@@ -627,6 +679,8 @@ func RegisterRoutes(
 
 		secured.POST("/me/plans", planHandler.Create)
 		secured.GET("/me/plans", planHandler.List)
+		secured.PUT("/me/plans/:id", planHandler.Update)
+		secured.PATCH("/me/plans/:id/active", planHandler.SetActive)
 		secured.DELETE("/me/plans/:id", planHandler.Delete)
 
 		secured.GET("/me/dashboard", dashboardHandler.Get)
@@ -634,6 +688,7 @@ func RegisterRoutes(
 		secured.GET("/me/day-panel", dayPanelHandler.Get)
 		secured.GET("/me/impact", impactHandler.Get)
 
+		secured.GET("/me/subscriptions", subscriptionHandler.List)
 		secured.POST("/me/subscriptions", subscriptionHandler.Activate)
 		secured.DELETE("/me/subscriptions/:clientID", subscriptionHandler.Cancel)
 		secured.GET("/me/subscriptions/:clientID", subscriptionHandler.GetActive)

@@ -16,14 +16,15 @@ type Plan struct {
 }
 
 type Subscription struct {
-	ID                 uint `gorm:"primaryKey"`
-	BarbershopID       uint
-	ClientID           uint
-	PlanID             uint
-	Status             string
-	CurrentPeriodStart time.Time
-	CurrentPeriodEnd   time.Time
-	CutsUsedInPeriod   int
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                     uint `gorm:"primaryKey"`
+	BarbershopID           uint
+	ClientID               uint
+	PlanID                 uint
+	Status                 string
+	CurrentPeriodStart     time.Time
+	CurrentPeriodEnd       time.Time
+	CutsUsedInPeriod       int
+	CutsReservedInPeriod   int
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }

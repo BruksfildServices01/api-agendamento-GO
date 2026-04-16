@@ -13,7 +13,10 @@ type Payment struct {
 	// BundledOrderID: quando um pagamento de agendamento também cobre um pedido de produtos,
 	// o ID do pedido é armazenado aqui (sem violar a constraint payment_exactly_one_target).
 	BundledOrderID *uint         `gorm:"column:bundled_order_id;index"`
+	SubscriptionID *uint         `gorm:"index"`
+	Subscription   *Subscription `gorm:"constraint:OnDelete:SET NULL;"`
 	TxID           *string       `gorm:"column:txid;size:100;uniqueIndex"`
+	MPPaymentID    *int64        `gorm:"column:mp_payment_id;index"`
 	QRCode        *string       `gorm:"type:text"`
 	Amount        int64         `gorm:"type:bigint;not null"`
 	Status        PaymentStatus `gorm:"type:payment_status;not null"`

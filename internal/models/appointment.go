@@ -31,6 +31,14 @@ const (
 	NoShowSourceManual NoShowSourceType = "manual"
 )
 
+const (
+	CoverageStatusNone                AppointmentCoverageStatus = "none"
+	CoverageStatusCovered             AppointmentCoverageStatus = "covered"
+	CoverageStatusNotCoveredService   AppointmentCoverageStatus = "not_covered_service"
+	CoverageStatusNotCoveredExhausted AppointmentCoverageStatus = "not_covered_exhausted"
+	CoverageStatusNotCoveredExpired   AppointmentCoverageStatus = "not_covered_expired"
+)
+
 //
 // ======================================================
 // MODEL
@@ -61,6 +69,12 @@ type Appointment struct {
 
 	Notes          string `gorm:"size:255"`
 	RescheduleCount int    `gorm:"not null;default:0"`
+
+	// Subscription coverage snapshot — decidido no booking, não muda depois
+	SubscriptionID          *uint                     `gorm:"index"`
+	Subscription            *Subscription             `gorm:"constraint:OnDelete:SET NULL;"`
+	CoverageStatus          AppointmentCoverageStatus `gorm:"type:coverage_status;not null;default:'none'"`
+	ReservedSubscriptionCut bool                      `gorm:"not null;default:false"`
 
 	CancelledAt  *time.Time
 	CompletedAt  *time.Time

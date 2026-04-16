@@ -88,14 +88,30 @@ func (h *ClientHandler) List(c *gin.Context) {
 		clientsByCategory[cat] = append(clientsByCategory[cat], item.ClientID)
 	}
 
+	// 2. Load all active subscriber IDs upfront (used for count + optional filter).
+	now := time.Now().UTC()
+	var allPremiumIDs []uint
+	h.db.WithContext(ctx).
+		Table("subscriptions").
+		Select("client_id").
+		Where("barbershop_id = ? AND status = 'active' AND current_period_start <= ? AND current_period_end > ?",
+			barbershopID, now, now).
+		Scan(&allPremiumIDs)
+
+	premiumSet := make(map[uint]bool, len(allPremiumIDs))
+	for _, id := range allPremiumIDs {
+		premiumSet[id] = true
+	}
+
 	categoryCounts := map[string]int{
 		"at_risk": len(clientsByCategory["at_risk"]),
 		"new":     len(clientsByCategory["new"]),
 		"trusted": len(clientsByCategory["trusted"]),
 		"regular": len(clientsByCategory["regular"]),
+		"premium": len(allPremiumIDs),
 	}
 
-	// 2. Build base query.
+	// 3. Build base query.
 	q := h.db.WithContext(ctx).Model(&models.Client{}).Where("barbershop_id = ?", barbershopID)
 
 	if query != "" {
@@ -103,7 +119,21 @@ func (h *ClientHandler) List(c *gin.Context) {
 		q = q.Where("LOWER(name) LIKE ? OR phone LIKE ? OR LOWER(email) LIKE ?", like, like, like)
 	}
 
-	if categoryFilter != "" {
+	premiumFilter := c.Query("premium") == "true"
+	if premiumFilter {
+		if len(allPremiumIDs) == 0 {
+			c.JSON(http.StatusOK, ClientListResponse{
+				Clients:        []ClientListItemResponse{},
+				Total:          0,
+				Page:           page,
+				PerPage:        perPage,
+				TotalPages:     0,
+				CategoryCounts: categoryCounts,
+			})
+			return
+		}
+		q = q.Where("id IN ?", allPremiumIDs)
+	} else if categoryFilter != "" {
 		ids := clientsByCategory[categoryFilter]
 		if len(ids) == 0 {
 			c.JSON(http.StatusOK, ClientListResponse{
@@ -119,7 +149,7 @@ func (h *ClientHandler) List(c *gin.Context) {
 		q = q.Where("id IN ?", ids)
 	}
 
-	// 3. Count total matching records.
+	// 4. Count total matching records.
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_count_clients"})
@@ -128,32 +158,12 @@ func (h *ClientHandler) List(c *gin.Context) {
 
 	totalPages := int(math.Ceil(float64(total) / float64(perPage)))
 
-	// 4. Fetch the page.
+	// 5. Fetch the page.
 	offset := (page - 1) * perPage
 	var clients []models.Client
 	if err := q.Order("name ASC").Limit(perPage).Offset(offset).Find(&clients).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_list_clients"})
 		return
-	}
-
-	// 5. Batch-load active subscriptions for this page (single query instead of N+1).
-	premiumSet := make(map[uint]bool)
-	if len(clients) > 0 {
-		clientIDs := make([]uint, len(clients))
-		for i, cl := range clients {
-			clientIDs[i] = cl.ID
-		}
-		now := time.Now().UTC()
-		var premiumIDs []uint
-		h.db.WithContext(ctx).
-			Table("subscriptions").
-			Select("client_id").
-			Where("barbershop_id = ? AND client_id IN ? AND status = 'active' AND current_period_start <= ? AND current_period_end > ?",
-				barbershopID, clientIDs, now, now).
-			Scan(&premiumIDs)
-		for _, id := range premiumIDs {
-			premiumSet[id] = true
-		}
 	}
 
 	out := make([]ClientListItemResponse, 0, len(clients))

@@ -115,7 +115,7 @@ func Load() *Config {
 		// SAAS BILLING
 		PlatformMonthlyPriceCents: getEnvInt("PLATFORM_MONTHLY_PRICE_CENTS", 2190),
 		PlatformMPPublicKey:       getEnv("PLATFORM_MP_PUBLIC_KEY", ""),
-		TrialDays:                 getEnvInt("TRIAL_DAYS", 7),
+		TrialDays:                 getEnvInt("TRIAL_DAYS", 30),
 
 		// R2
 		R2AccountID:       getEnv("R2_ACCOUNT_ID", ""),

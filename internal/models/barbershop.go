@@ -8,6 +8,7 @@ type Barbershop struct {
 	Slug              string                   `gorm:"size:100;uniqueIndex;not null"`
 	Phone             string                   `gorm:"size:20"`
 	Address           string                   `gorm:"size:255"`
+	Email             string                   `gorm:"size:255"`
 	MinAdvanceMinutes          int                      `gorm:"default:120"`
 	ScheduleToleranceMinutes   int                      `gorm:"default:0"`
 	Timezone          string                   `gorm:"size:64;not null;default:'America/Sao_Paulo'"`

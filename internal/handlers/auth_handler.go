@@ -85,6 +85,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			Slug:        slug,
 			Phone:       req.BarbershopPhone,
 			Address:     req.BarbershopAddress,
+			Email:       strings.ToLower(strings.TrimSpace(req.Email)),
 			Timezone:    "America/Sao_Paulo",
 			Status:      "trial",
 			TrialEndsAt: &trialEnd,
@@ -168,20 +169,64 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		}
 
 		// -------------------------------
-		// Serviço padrão
+		// Dados de exemplo (onboarding)
 		// -------------------------------
-		defaultProduct := models.BarbershopService{
-			BarbershopID: shop.ID,
-			Name:         "Corte de cabelo",
-			Description:  "Corte masculino tradicional",
-			DurationMin:  30,
-			Price:        5000,
-			Active:       true,
-			Category:     "corte",
+
+		// Serviços
+		seedServices := []models.BarbershopService{
+			{BarbershopID: shop.ID, Name: "Corte Masculino", Description: "Corte masculino tradicional", DurationMin: 30, Price: 4500, Active: true, Category: "corte"},
+			{BarbershopID: shop.ID, Name: "Barba", Description: "Modelagem e alinhamento de barba", DurationMin: 20, Price: 3000, Active: true, Category: "barba"},
+			{BarbershopID: shop.ID, Name: "Corte + Barba", Description: "Combo completo: corte e barba", DurationMin: 50, Price: 7000, Active: true, Category: "combo"},
+			{BarbershopID: shop.ID, Name: "Degradê", Description: "Corte estilo degradê com acabamento", DurationMin: 40, Price: 5000, Active: true, Category: "corte"},
+		}
+		if err := tx.Create(&seedServices).Error; err != nil {
+			return err
 		}
 
-		if err := tx.Create(&defaultProduct).Error; err != nil {
+		// Produtos
+		seedProducts := []models.Product{
+			{BarbershopID: shop.ID, Name: "Pomada Modeladora", Description: "Modeladora para finalizar o visual", Category: "finalizadores", Price: 3500, Stock: 10, Active: true},
+			{BarbershopID: shop.ID, Name: "Shampoo Masculino", Description: "Shampoo específico para cabelos masculinos", Category: "higiene", Price: 2500, Stock: 5, Active: true},
+		}
+		if err := tx.Create(&seedProducts).Error; err != nil {
 			return err
+		}
+
+		// Sugestão: Corte Masculino → Pomada Modeladora
+		seedSuggestion := models.ServiceSuggestedProduct{
+			BarbershopID: shop.ID,
+			ServiceID:    seedServices[0].ID,
+			ProductID:    seedProducts[0].ID,
+			Active:       true,
+		}
+		if err := tx.Create(&seedSuggestion).Error; err != nil {
+			return err
+		}
+
+		// Plano de assinatura de exemplo
+		seedPlan := models.Plan{
+			BarbershopID:      shop.ID,
+			Name:              "Plano Mensal",
+			MonthlyPriceCents: 12000,
+			DurationDays:      30,
+			CutsIncluded:      4,
+			DiscountPercent:   10,
+			Active:            true,
+		}
+		if err := tx.Create(&seedPlan).Error; err != nil {
+			return err
+		}
+
+		// Vincula o plano aos serviços de corte e combo
+		for _, svc := range seedServices {
+			if svc.Category == "corte" || svc.Category == "combo" {
+				if err := tx.Exec(
+					`INSERT INTO plan_services (plan_id, service_id) VALUES (?, ?)`,
+					seedPlan.ID, svc.ID,
+				).Error; err != nil {
+					return err
+				}
+			}
 		}
 
 		token, err := h.generateToken(&user)

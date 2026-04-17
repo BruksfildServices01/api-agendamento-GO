@@ -371,6 +371,14 @@ func RegisterRoutes(
 	// HANDLERS
 	// ======================================================
 	authHandler := handlers.NewAuthHandler(db, cfg)
+
+	var pwMailer handlers.PasswordMailer
+	if cfg.EmailEnabled {
+		pwMailer = notification.NewEmailNotifier(cfg)
+	} else {
+		pwMailer = notification.NewNoopNotifier()
+	}
+	passwordResetHandler := handlers.NewPasswordResetHandler(db, cfg.AppURL, pwMailer)
 	meHandler := handlers.NewMeHandler(db)
 	barbershopHandler := handlers.NewBarbershopHandler(db)
 
@@ -612,6 +620,8 @@ func RegisterRoutes(
 
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/login", authHandler.Login)
+	api.POST("/auth/password-reset/request", passwordResetHandler.Request)
+	api.POST("/auth/password-reset/confirm", passwordResetHandler.Confirm)
 
 	// Billing webhook (public — called by Mercado Pago).
 	api.POST("/billing/webhook", middleware.MaxBodySize(64*1024), billingHandler.Webhook)

@@ -121,6 +121,29 @@ func (n *EmailNotifier) NotifyRescheduled(ctx context.Context, input domain.Appo
 	return err
 }
 
+// ── Redefinição de senha ─────────────────────────────────────────────────────
+
+func (n *EmailNotifier) SendPasswordReset(ctx context.Context, to, resetLink string) error {
+	html := fmt.Sprintf(`
+<html><body style="font-family:sans-serif;background:#f5f5f5;padding:40px 0">
+<div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 2px 8px rgba(0,0,0,0.08)">
+  <h2 style="color:#C08A3E;margin-top:0;margin-bottom:8px">Redefinição de senha</h2>
+  <p style="color:#555;margin-bottom:16px">Você solicitou a redefinição da sua senha no <strong>CorteOn</strong>.</p>
+  <p style="color:#555;margin-bottom:24px">Clique no botão abaixo para criar uma nova senha. Este link é válido por <strong>1 hora</strong>.</p>
+  <a href="%s" style="display:inline-block;background:#C08A3E;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">
+    Redefinir senha
+  </a>
+  <p style="color:#999;font-size:12px;margin-top:28px">Se você não solicitou isso, ignore este e-mail. Sua senha não será alterada.</p>
+</div>
+</body></html>`, resetLink)
+
+	err := n.send(ctx, to, "Redefinição de senha – CorteOn", html, "")
+	if err != nil {
+		log.Printf("[EMAIL] SendPasswordReset error to=%s: %v", to, err)
+	}
+	return err
+}
+
 // ── dispatcher central ───────────────────────────────────────────────────────
 
 func (n *EmailNotifier) send(ctx context.Context, to, subject, html, ics string) error {

@@ -38,12 +38,59 @@ type RegisterRequest struct {
 	BarbershopName    string `json:"barbershop_name" binding:"required"`
 	BarbershopSlug    string `json:"barbershop_slug" binding:"required"`
 	BarbershopPhone   string `json:"barbershop_phone"`
-	BarbershopAddress string `json:"barbershop_address"`
+	BarbershopAddress string `json:"barbershop_address"` // legado — mantido para retrocompatibilidade
+
+	// Endereço estruturado (novo)
+	BarbershopCEP          string `json:"barbershop_cep"`
+	BarbershopStreetName   string `json:"barbershop_street_name"`
+	BarbershopStreetNumber string `json:"barbershop_street_number"`
+	BarbershopComplement   string `json:"barbershop_complement"`
+	BarbershopNeighborhood string `json:"barbershop_neighborhood"`
+	BarbershopCity         string `json:"barbershop_city"`
+	BarbershopState        string `json:"barbershop_state"`
 
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 	Phone    string `json:"phone"`
+}
+
+// composeAddress monta a string de endereço para exibição/Google Maps.
+func composeAddress(streetName, streetNumber, complement, neighborhood, city, state, cep string) string {
+	var parts []string
+
+	street := strings.TrimSpace(streetName)
+	num := strings.TrimSpace(streetNumber)
+	if street != "" {
+		if num != "" {
+			parts = append(parts, street+", "+num)
+		} else {
+			parts = append(parts, street)
+		}
+	}
+
+	if comp := strings.TrimSpace(complement); comp != "" {
+		parts = append(parts, comp)
+	}
+	if neigh := strings.TrimSpace(neighborhood); neigh != "" {
+		parts = append(parts, neigh)
+	}
+
+	c, s := strings.TrimSpace(city), strings.TrimSpace(state)
+	switch {
+	case c != "" && s != "":
+		parts = append(parts, c+" - "+s)
+	case c != "":
+		parts = append(parts, c)
+	case s != "":
+		parts = append(parts, s)
+	}
+
+	if cp := strings.TrimSpace(cep); cp != "" {
+		parts = append(parts, cp)
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 type LoginRequest struct {
@@ -81,15 +128,36 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		// -------------------------------
 		// Barbearia
 		// -------------------------------
+		cep := strings.TrimSpace(req.BarbershopCEP)
+		streetName := strings.TrimSpace(req.BarbershopStreetName)
+		streetNumber := strings.TrimSpace(req.BarbershopStreetNumber)
+		complement := strings.TrimSpace(req.BarbershopComplement)
+		neighborhood := strings.TrimSpace(req.BarbershopNeighborhood)
+		city := strings.TrimSpace(req.BarbershopCity)
+		state := strings.TrimSpace(req.BarbershopState)
+
+		// Monta a string de exibição: prefere campos estruturados, cai para legado
+		address := strings.TrimSpace(req.BarbershopAddress)
+		if streetName != "" || city != "" {
+			address = composeAddress(streetName, streetNumber, complement, neighborhood, city, state, cep)
+		}
+
 		shop := models.Barbershop{
-			Name:        req.BarbershopName,
-			Slug:        slug,
-			Phone:       req.BarbershopPhone,
-			Address:     req.BarbershopAddress,
-			Email:       strings.ToLower(strings.TrimSpace(req.Email)),
-			Timezone:    "America/Sao_Paulo",
-			Status:      "trial",
-			TrialEndsAt: &trialEnd,
+			Name:         req.BarbershopName,
+			Slug:         slug,
+			Phone:        req.BarbershopPhone,
+			Address:      address,
+			CEP:          cep,
+			StreetName:   streetName,
+			StreetNumber: streetNumber,
+			Complement:   complement,
+			Neighborhood: neighborhood,
+			City:         city,
+			State:        state,
+			Email:        strings.ToLower(strings.TrimSpace(req.Email)),
+			Timezone:     "America/Sao_Paulo",
+			Status:       "trial",
+			TrialEndsAt:  &trialEnd,
 		}
 
 		if err := tx.Create(&shop).Error; err != nil {

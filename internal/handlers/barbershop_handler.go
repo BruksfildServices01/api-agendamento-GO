@@ -26,10 +26,19 @@ func NewBarbershopHandler(db *gorm.DB) *BarbershopHandler {
 type UpdateBarbershopConfigRequest struct {
 	Name                     *string `json:"name"`
 	Phone                    *string `json:"phone"`
-	Address                  *string `json:"address"`
+	Address                  *string `json:"address"` // legado
 	Email                    *string `json:"email"`
 	MinAdvanceMinutes        *int    `json:"min_advance_minutes"`
 	ScheduleToleranceMinutes *int    `json:"schedule_tolerance_minutes"`
+
+	// Endereço estruturado
+	CEP          *string `json:"cep"`
+	StreetName   *string `json:"street_name"`
+	StreetNumber *string `json:"street_number"`
+	Complement   *string `json:"complement"`
+	Neighborhood *string `json:"neighborhood"`
+	City         *string `json:"city"`
+	State        *string `json:"state"`
 }
 
 func (h *BarbershopHandler) GetMeBarbershop(c *gin.Context) {
@@ -88,6 +97,42 @@ func (h *BarbershopHandler) UpdateMeBarbershop(c *gin.Context) {
 
 	if req.Email != nil {
 		shop.Email = strings.ToLower(strings.TrimSpace(*req.Email))
+	}
+
+	// Campos estruturados de endereço
+	structuredChanged := false
+	if req.CEP != nil {
+		shop.CEP = strings.TrimSpace(*req.CEP)
+		structuredChanged = true
+	}
+	if req.StreetName != nil {
+		shop.StreetName = strings.TrimSpace(*req.StreetName)
+		structuredChanged = true
+	}
+	if req.StreetNumber != nil {
+		shop.StreetNumber = strings.TrimSpace(*req.StreetNumber)
+		structuredChanged = true
+	}
+	if req.Complement != nil {
+		shop.Complement = strings.TrimSpace(*req.Complement)
+		structuredChanged = true
+	}
+	if req.Neighborhood != nil {
+		shop.Neighborhood = strings.TrimSpace(*req.Neighborhood)
+		structuredChanged = true
+	}
+	if req.City != nil {
+		shop.City = strings.TrimSpace(*req.City)
+		structuredChanged = true
+	}
+	if req.State != nil {
+		shop.State = strings.TrimSpace(*req.State)
+		structuredChanged = true
+	}
+
+	// Recomputa a string de exibição quando campos estruturados são salvos
+	if structuredChanged {
+		shop.Address = composeAddress(shop.StreetName, shop.StreetNumber, shop.Complement, shop.Neighborhood, shop.City, shop.State, shop.CEP)
 	}
 
 	if req.MinAdvanceMinutes != nil {

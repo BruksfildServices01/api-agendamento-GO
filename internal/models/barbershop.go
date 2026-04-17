@@ -7,7 +7,14 @@ type Barbershop struct {
 	Name              string                   `gorm:"size:100;not null"`
 	Slug              string                   `gorm:"size:100;uniqueIndex;not null"`
 	Phone             string                   `gorm:"size:20"`
-	Address           string                   `gorm:"size:255"`
+	Address      string `gorm:"size:255"`
+	CEP          string `gorm:"size:9;column:cep"`
+	StreetName   string `gorm:"size:255;column:street_name"`
+	StreetNumber string `gorm:"size:20;column:street_number"`
+	Complement   string `gorm:"size:100"`
+	Neighborhood string `gorm:"size:100"`
+	City         string `gorm:"size:100"`
+	State        string `gorm:"size:2"`
 	Email             string                   `gorm:"size:255"`
 	MinAdvanceMinutes          int                      `gorm:"default:120"`
 	ScheduleToleranceMinutes   int                      `gorm:"default:0"`

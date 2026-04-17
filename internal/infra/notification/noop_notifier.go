@@ -31,3 +31,7 @@ func (n *NoopNotifier) NotifyCancelled(_ context.Context, _ domain.AppointmentCa
 func (n *NoopNotifier) NotifyRescheduled(_ context.Context, _ domain.AppointmentRescheduledInput) error {
 	return nil
 }
+
+func (n *NoopNotifier) SendPasswordReset(_ context.Context, _, _ string) error {
+	return nil
+}

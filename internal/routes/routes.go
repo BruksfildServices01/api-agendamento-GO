@@ -365,6 +365,19 @@ func RegisterRoutes(
 			expireSubscriptionsJob.Run(ctx)
 			_ = locker.Unlock(ctx, "job:expire_subscriptions")
 		})
+
+		pruneJob := jobs.NewPruneJob(db)
+		const everyDay = 24 * time.Hour
+		const ttlDay = 25 * time.Hour
+
+		scheduler.Every(everyDay, func(ctx context.Context) {
+			ok, err := locker.TryLock(ctx, "job:prune", ttlDay)
+			if err != nil || !ok {
+				return
+			}
+			pruneJob.Run(ctx)
+			_ = locker.Unlock(ctx, "job:prune")
+		})
 	}
 
 	// ======================================================

@@ -7,7 +7,7 @@ type BarbershopPaymentConfig struct {
 	BarbershopID uint `gorm:"uniqueIndex;not null"`
 
 	DefaultRequirement   PaymentRequirement `gorm:"type:payment_requirement;not null"`
-	PixExpirationMinutes int                `gorm:"not null;default:4"`
+	PixExpirationMinutes int                `gorm:"not null;default:15"`
 
 	// Credenciais Mercado Pago por barbearia
 	MPAccessToken string `gorm:"column:mp_access_token"`

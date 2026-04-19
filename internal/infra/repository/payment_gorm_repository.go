@@ -422,8 +422,9 @@ func (r *PaymentGormTxRepository) MarkAsPaid(
 			models.PaymentStatus("pending"),
 		).
 		Updates(map[string]any{
-			"status":  p.Status,
-			"paid_at": p.PaidAt,
+			"status":   p.Status,
+			"paid_at":  p.PaidAt,
+			"qr_code":  nil,
 		}).
 		Error
 }
@@ -442,7 +443,10 @@ func (r *PaymentGormTxRepository) MarkAsExpired(
 			barbershopID,
 			models.PaymentStatus("pending"),
 		).
-		Update("status", models.PaymentStatus("expired")).
+		Updates(map[string]any{
+			"status":  models.PaymentStatus("expired"),
+			"qr_code": nil,
+		}).
 		Error
 }
 

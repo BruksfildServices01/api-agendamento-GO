@@ -35,6 +35,17 @@ func (uc *ExpirePayments) Execute(
 	barbershopID uint,
 ) error {
 
+	// Fast-path: skip transaction overhead when there is nothing to expire.
+	// ListExpiredPending is a non-locking read; the authoritative lock happens
+	// inside the transaction via ListExpiredPendingForUpdate below.
+	pending, err := uc.paymentRepo.ListExpiredPending(ctx, barbershopID, now)
+	if err != nil {
+		return fmt.Errorf("expire job pre-check failed: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
 	tx, err := uc.paymentRepo.BeginTx(ctx, barbershopID)
 	if err != nil {
 		return fmt.Errorf("expire job begin tx failed: %w", err)

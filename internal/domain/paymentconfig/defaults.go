@@ -5,7 +5,7 @@ func Default(barbershopID uint) *Config {
 		BarbershopID:         barbershopID,
 		RequirePixOnBooking:  false,
 		DefaultRequirement:   PaymentNone,
-		PixExpirationMinutes: 3,
+		PixExpirationMinutes: 15,
 		AcceptCash:           false,
 		AcceptPix:            false,
 		AcceptCredit:         false,

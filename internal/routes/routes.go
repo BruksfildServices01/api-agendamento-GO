@@ -331,11 +331,13 @@ func RegisterRoutes(
 		expireSubscriptionsUC := ucSubscription.NewExpireSubscriptions(subscriptionRepo)
 		expireSubscriptionsJob := jobs.NewExpireSubscriptionsJob(expireSubscriptionsUC)
 
-		const every = time.Minute
-		const ttl = 2 * time.Minute
+		const everyExpire = 10 * time.Minute
+		const ttlExpire = 13 * time.Minute
+		const everyAutoComplete = 15 * time.Minute
+		const ttlAutoComplete = 20 * time.Minute
 
-		scheduler.Every(every, func(ctx context.Context) {
-			ok, err := locker.TryLock(ctx, "job:expire_payments", ttl)
+		scheduler.Every(everyExpire, func(ctx context.Context) {
+			ok, err := locker.TryLock(ctx, "job:expire_payments", ttlExpire)
 			if err != nil || !ok {
 				return
 			}
@@ -343,8 +345,8 @@ func RegisterRoutes(
 			_ = locker.Unlock(ctx, "job:expire_payments")
 		})
 
-		scheduler.Every(every, func(ctx context.Context) {
-			ok, err := locker.TryLock(ctx, "job:auto_complete", ttl)
+		scheduler.Every(everyAutoComplete, func(ctx context.Context) {
+			ok, err := locker.TryLock(ctx, "job:auto_complete", ttlAutoComplete)
 			if err != nil || !ok {
 				return
 			}

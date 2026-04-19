@@ -57,5 +57,25 @@ func (j *PruneJob) Run(ctx context.Context) {
 		log.Printf("[PruneJob] carts deleted=%d", res.RowsAffected)
 	}
 
+	// pix_events: mantém 30 dias (sem replay de webhook PIX após esse período)
+	pixCutoff := now.AddDate(0, 0, -30)
+	res = j.db.WithContext(ctx).
+		Exec("DELETE FROM pix_events WHERE created_at < ?", pixCutoff)
+	if res.Error != nil {
+		log.Printf("[PruneJob] pix_events error=%v", res.Error)
+	} else if res.RowsAffected > 0 {
+		log.Printf("[PruneJob] pix_events deleted=%d", res.RowsAffected)
+	}
+
+	// appointment_tickets: deleta os expirados com 24h de tolerância
+	ticketCutoff := now.Add(-24 * time.Hour)
+	res = j.db.WithContext(ctx).
+		Exec("DELETE FROM appointment_tickets WHERE expires_at < ?", ticketCutoff)
+	if res.Error != nil {
+		log.Printf("[PruneJob] appointment_tickets error=%v", res.Error)
+	} else if res.RowsAffected > 0 {
+		log.Printf("[PruneJob] appointment_tickets deleted=%d", res.RowsAffected)
+	}
+
 	log.Printf("[PruneJob] finished at=%s", time.Now().UTC().Format(time.RFC3339))
 }

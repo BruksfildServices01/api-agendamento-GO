@@ -44,9 +44,9 @@ func NewDB(cfg *config.Config) *gorm.DB {
 	// ======================================================
 
 	sqlDB.SetMaxOpenConns(20)
-	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxIdleConns(2)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 
 	log.Println("[DB] connected successfully (schema controlled by SQL migrations)")
 

@@ -105,8 +105,19 @@ func (uc *ConsumeCut) Execute(
 		return result, nil
 	}
 
-	totalCommitted := sub.CutsUsedInPeriod + sub.CutsReservedInPeriod
-	if totalCommitted >= plan.CutsIncluded {
+	// When hadReservation is true we are converting an existing reservation into
+	// a use (used+1, reserved-1 → net total unchanged). The relevant cap check is
+	// whether used+1 would exceed the plan limit.
+	//
+	// When there is no reservation we are consuming a fresh cut; the full
+	// committed count (used + reserved + 1) must fit within the plan.
+	var postUsed int
+	if hadReservation {
+		postUsed = sub.CutsUsedInPeriod + 1
+	} else {
+		postUsed = sub.CutsUsedInPeriod + sub.CutsReservedInPeriod + 1
+	}
+	if postUsed > plan.CutsIncluded {
 		result.Status = ConsumeCutStatusLimitExceeded
 		return result, nil
 	}

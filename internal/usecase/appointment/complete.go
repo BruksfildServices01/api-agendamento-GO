@@ -148,9 +148,12 @@ func (uc *CompleteAppointment) Execute(
 			referenceAmount = svc.Price
 		}
 
-		// Consume subscription using the ACTUAL service performed.
-		if ap.ClientID != nil && actualServiceID != nil && uc.consumeCutUC != nil {
-			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, ap.ReservedSubscriptionCut)
+		// Consume subscription cut only when a cut was explicitly reserved at
+		// booking time. Appointments created without subscription coverage
+		// (ReservedSubscriptionCut = false) complete under normal charging
+		// and must not attempt retroactive subscription consumption.
+		if ap.ReservedSubscriptionCut && ap.ClientID != nil && actualServiceID != nil && uc.consumeCutUC != nil {
+			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, true)
 			if err != nil {
 				return err
 			}

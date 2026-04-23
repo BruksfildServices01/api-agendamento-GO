@@ -645,6 +645,7 @@ func RegisterRoutes(
 	secured.Use(middleware.AuthMiddleware(cfg, db))
 	{
 		secured.GET("/me", meHandler.GetMe)
+		secured.POST("/me/tours/:screenId/seen", meHandler.MarkTourSeen)
 		secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)
 		secured.PUT("/me/barbershop", barbershopHandler.UpdateMeBarbershop)
 		secured.PATCH("/me/barbershop/slug", barbershopHandler.UpdateSlug)

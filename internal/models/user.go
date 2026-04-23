@@ -32,7 +32,19 @@ func (s *StringSlice) Scan(value interface{}) error {
 	default:
 		return fmt.Errorf("StringSlice: cannot scan type %T", value)
 	}
-	return json.Unmarshal(b, s)
+	// Remove literal control characters that invalidate JSON
+	// (can happen when value is pasted with line breaks in SQL editors)
+	cleaned := make([]byte, 0, len(b))
+	for _, c := range b {
+		if c != '\n' && c != '\r' && c != '\t' {
+			cleaned = append(cleaned, c)
+		}
+	}
+	if len(cleaned) == 0 || string(cleaned) == "null" {
+		*s = StringSlice{}
+		return nil
+	}
+	return json.Unmarshal(cleaned, s)
 }
 
 type User struct {

@@ -339,19 +339,10 @@ func RegisterRoutes(
 		expireSubscriptionsUC := ucSubscription.NewExpireSubscriptions(subscriptionRepo)
 		expireSubscriptionsJob := jobs.NewExpireSubscriptionsJob(expireSubscriptionsUC)
 
-		markNoShowJob := jobs.NewMarkNoShowJob(
-			appointmentRepo,
-			updateClientMetricsUC,
-			auditDispatcher,
-			appointmentRepo,
-		)
-
 		const everyExpire = 10 * time.Minute
 		const ttlExpire = 13 * time.Minute
 		const everyAutoComplete = 15 * time.Minute
 		const ttlAutoComplete = 20 * time.Minute
-		const everyNoShow = 15 * time.Minute
-		const ttlNoShow = 20 * time.Minute
 
 		scheduler.Every(everyExpire, func(ctx context.Context) {
 			ok, err := locker.TryLock(ctx, "job:expire_payments", ttlExpire)
@@ -371,17 +362,6 @@ func RegisterRoutes(
 				log.Printf("[AutoCompleteJob] error=%v\n", err)
 			}
 			_ = locker.Unlock(ctx, "job:auto_complete")
-		})
-
-		scheduler.Every(everyNoShow, func(ctx context.Context) {
-			ok, err := locker.TryLock(ctx, "job:mark_no_show", ttlNoShow)
-			if err != nil || !ok {
-				return
-			}
-			if err := markNoShowJob.Run(ctx); err != nil {
-				log.Printf("[MarkNoShowJob] error=%v\n", err)
-			}
-			_ = locker.Unlock(ctx, "job:mark_no_show")
 		})
 
 		const everyHour = time.Hour

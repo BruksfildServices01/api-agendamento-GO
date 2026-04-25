@@ -87,6 +87,9 @@ func (uc *CreateOrder) Execute(
 			if product == nil {
 				return productDomain.ErrProductNotFound
 			}
+			if product.Stock < item.Quantity {
+				return productDomain.ErrInsufficientStock
+			}
 
 			if err := order.AddItem(
 				product.ID,

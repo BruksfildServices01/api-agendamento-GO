@@ -42,11 +42,17 @@ func NewDB(cfg *config.Config) *gorm.DB {
 	// ======================================================
 	// CONNECTION POOL
 	// ======================================================
+	//
+	// Valores conservadores para Neon serverless:
+	//   - MaxOpenConns baixo → menos conexões mantidas abertas → compute suspende
+	//     mais rápido em períodos ociosos, reduzindo custo.
+	//   - MaxIdleConns=1 → libera conexões ociosas rapidamente.
+	//   - ConnMaxIdleTime curto → reforça a liberação para permitir suspend.
 
-	sqlDB.SetMaxOpenConns(20)
-	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetMaxOpenConns(5)
+	sqlDB.SetMaxIdleConns(1)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(3 * time.Minute)
 
 	log.Println("[DB] connected successfully (schema controlled by SQL migrations)")
 

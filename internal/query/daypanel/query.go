@@ -318,11 +318,19 @@ func (q *Query) loadPlanServiceCoverage(ctx context.Context, subscriptions map[u
 	}
 
 	var rows []coverageRow
+	// Dois caminhos de cobertura: associação direta (plan_services)
+	// e associação indireta via categoria (plan_categories → barbershop_services).
 	err := q.db.WithContext(ctx).Raw(`
-		SELECT plan_id, service_id
-		FROM plan_services
-		WHERE plan_id = ANY(`+pgIntArray(planIDs)+`)
-		  AND service_id = ANY(`+pgIntArray(serviceIDs)+`)
+		SELECT ps.plan_id, ps.service_id
+		FROM plan_services ps
+		WHERE ps.plan_id = ANY(`+pgIntArray(planIDs)+`)
+		  AND ps.service_id = ANY(`+pgIntArray(serviceIDs)+`)
+		UNION
+		SELECT pc.plan_id, bs.id AS service_id
+		FROM plan_categories pc
+		JOIN barbershop_services bs ON bs.category_id = pc.category_id
+		WHERE pc.plan_id = ANY(`+pgIntArray(planIDs)+`)
+		  AND bs.id = ANY(`+pgIntArray(serviceIDs)+`)
 	`).Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -347,6 +355,7 @@ type suggestionRow struct {
 	ProductID   uint   `gorm:"column:product_id"`
 	ProductName string `gorm:"column:product_name"`
 	PriceCents  int64  `gorm:"column:price_cents"`
+	ImageURL    string `gorm:"column:image_url"`
 }
 
 func (q *Query) loadSuggestions(ctx context.Context, barbershopID uint, serviceIDs []int64) (map[uint]suggestionRow, error) {
@@ -359,9 +368,10 @@ func (q *Query) loadSuggestions(ctx context.Context, barbershopID uint, serviceI
 	err := q.db.WithContext(ctx).Raw(`
 		SELECT
 			ssp.service_id,
-			prod.id    AS product_id,
-			prod.name  AS product_name,
-			prod.price AS price_cents
+			prod.id        AS product_id,
+			prod.name      AS product_name,
+			prod.price     AS price_cents,
+			COALESCE(prod.image_url, '') AS image_url
 		FROM service_suggested_products ssp
 		JOIN products prod ON prod.id = ssp.product_id
 		WHERE ssp.barbershop_id = ?
@@ -398,6 +408,9 @@ func (q *Query) loadPrePaidOrders(ctx context.Context, barbershopID uint, client
 	}
 
 	var rows []prePaidOrderRow
+	// Exclui orders criados pelo CompleteAppointment (additional_order_id em
+	// appointment_closures) — esses são vendas presenciais no fechamento,
+	// não pré-pagamentos. Incluí-los causaria double-display no painel.
 	err := q.db.WithContext(ctx).Raw(`
 		SELECT
 			o.client_id,
@@ -415,6 +428,10 @@ func (q *Query) loadPrePaidOrders(ctx context.Context, barbershopID uint, client
 		  AND o.status = 'paid'
 		  AND o.created_at >= ?
 		  AND o.created_at < ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM appointment_closures ac
+		      WHERE ac.additional_order_id = o.id
+		  )
 		GROUP BY o.client_id, o.id, o.total_amount, p.paid_at
 		ORDER BY o.created_at DESC
 	`, barbershopID, startUTC, endUTC).Scan(&rows).Error
@@ -486,6 +503,7 @@ func assembleCard(
 				ProductID:   sug.ProductID,
 				ProductName: sug.ProductName,
 				PriceCents:  sug.PriceCents,
+				ImageURL:    sug.ImageURL,
 			}
 		}
 	}

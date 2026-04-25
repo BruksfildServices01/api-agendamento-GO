@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -111,15 +113,33 @@ func (h *PaymentHandler) List(c *gin.Context) {
 	}
 
 	// --------------------------------------------------
-	// 4️⃣ Use case
+	// 4️⃣ Paginação
 	// --------------------------------------------------
-	payments, err := h.listPayments.Execute(
+	limit := 50
+	offset := 0
+	if v := c.Query("limit"); v != "" {
+		if n, err := parsePositiveInt(v); err == nil {
+			limit = n
+		}
+	}
+	if v := c.Query("offset"); v != "" {
+		if n, err := parseNonNegativeInt(v); err == nil {
+			offset = n
+		}
+	}
+
+	// --------------------------------------------------
+	// 5️⃣ Use case
+	// --------------------------------------------------
+	result, err := h.listPayments.Execute(
 		c.Request.Context(),
 		ucPayment.ListPaymentsInput{
 			BarbershopID: barbershopID,
 			Status:       status,
 			StartDate:    startDate,
 			EndDate:      endDate,
+			Limit:        limit,
+			Offset:       offset,
 		},
 	)
 	if err != nil {
@@ -128,11 +148,13 @@ func (h *PaymentHandler) List(c *gin.Context) {
 	}
 
 	// --------------------------------------------------
-	// 5️⃣ Response
+	// 6️⃣ Response
 	// --------------------------------------------------
 	c.JSON(http.StatusOK, gin.H{
-		"data":  payments,
-		"total": len(payments),
+		"data":   result.Payments,
+		"total":  result.Total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 
@@ -248,6 +270,22 @@ func (h *PaymentHandler) CashDue(c *gin.Context) {
 // --------------------------------------------------
 // Helpers (timezone-safe)
 // --------------------------------------------------
+
+func parsePositiveInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("not a positive integer: %s", s)
+	}
+	return n, nil
+}
+
+func parseNonNegativeInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("not a non-negative integer: %s", s)
+	}
+	return n, nil
+}
 
 // parseDateAsStartOfDayUTC interprets YYYY-MM-DD as 00:00 at barbershop timezone, converted to UTC.
 func parseDateAsStartOfDayUTC(value string, loc *time.Location) (*time.Time, error) {

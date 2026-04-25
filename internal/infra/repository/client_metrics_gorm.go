@@ -18,6 +18,10 @@ func NewClientMetricsGormRepository(db *gorm.DB) *ClientMetricsGormRepository {
 	return &ClientMetricsGormRepository{db: db}
 }
 
+func (r *ClientMetricsGormRepository) WithTx(tx *gorm.DB) *ClientMetricsGormRepository {
+	return &ClientMetricsGormRepository{db: tx}
+}
+
 func (r *ClientMetricsGormRepository) GetOrCreate(
 	ctx context.Context,
 	barbershopID uint,

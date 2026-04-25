@@ -34,6 +34,7 @@ type SuggestionDTO struct {
 	ProductID   uint   `json:"product_id"`
 	ProductName string `json:"product_name"`
 	PriceCents  int64  `json:"price_cents"`
+	ImageURL    string `json:"image_url,omitempty"`
 }
 
 // PrePaidOrderDTO is an order the client already paid (via public checkout)

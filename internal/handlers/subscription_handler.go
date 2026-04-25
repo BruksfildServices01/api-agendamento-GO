@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,14 +11,20 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
+	querySubscription "github.com/BruksfildServices01/barber-scheduler/internal/query/subscription"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
+
+// subscriptionLister é a interface mínima usada pelo handler para listar assinaturas.
+type subscriptionLister interface {
+	ListActive(ctx context.Context, barbershopID uint) ([]querySubscription.SubscriptionListItem, error)
+}
 
 type SubscriptionHandler struct {
 	activateUC *subscription.ActivateSubscription
 	cancelUC   *subscription.CancelSubscription
 	getUC      *subscription.GetActiveSubscription
-	listUC     *subscription.ListSubscriptions
+	listQ      subscriptionLister
 	audit      *audit.Dispatcher
 }
 
@@ -25,14 +32,14 @@ func NewSubscriptionHandler(
 	activateUC *subscription.ActivateSubscription,
 	cancelUC *subscription.CancelSubscription,
 	getUC *subscription.GetActiveSubscription,
-	listUC *subscription.ListSubscriptions,
+	listQ subscriptionLister,
 	auditDispatcher *audit.Dispatcher,
 ) *SubscriptionHandler {
 	return &SubscriptionHandler{
 		activateUC: activateUC,
 		cancelUC:   cancelUC,
 		getUC:      getUC,
-		listUC:     listUC,
+		listQ:      listQ,
 		audit:      auditDispatcher,
 	}
 }
@@ -171,7 +178,7 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 		return
 	}
 
-	items, err := h.listUC.Execute(c.Request.Context(), barbershopID)
+	items, err := h.listQ.ListActive(c.Request.Context(), barbershopID)
 	if err != nil {
 		httperr.Internal(c, "failed_to_list", "failed_to_list")
 		return

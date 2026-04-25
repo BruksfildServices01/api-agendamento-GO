@@ -39,14 +39,17 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/daypanel"
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/financial"
 	"github.com/BruksfildServices01/barber-scheduler/internal/query/impact"
+	subscription "github.com/BruksfildServices01/barber-scheduler/internal/query/subscription"
 )
 
+// RegisterRoutes configura todas as rotas e retorna o Dispatcher de auditoria
+// para que o main possa chamar Shutdown() no graceful shutdown.
 func RegisterRoutes(
 	r *gin.Engine,
 	db *gorm.DB,
 	cfg *config.Config,
 	scheduler *jobs.Scheduler,
-) {
+) *audit.Dispatcher {
 	// ======================================================
 	// REPOSITORIES
 	// ======================================================
@@ -170,7 +173,7 @@ func RegisterRoutes(
 	// ======================================================
 	// METRICS USE CASES
 	// ======================================================
-	updateClientMetricsUC := ucMetrics.NewUpdateClientMetrics(clientMetricsRepo)
+	updateClientMetricsUC := ucMetrics.NewUpdateClientMetrics(clientMetricsRepo, db)
 	getClientCategoryUC := ucMetrics.NewGetClientCategory(clientMetricsRepo)
 	getClientsWithCategoryUC := ucMetrics.NewGetClientsWithCategory(clientMetricsRepo)
 	setClientCategoryUC := ucMetrics.NewSetClientCategory(clientMetricsRepo)
@@ -262,20 +265,25 @@ func RegisterRoutes(
 		paymentRepo,
 		orderRepo,
 		productRepo,
+		subscriptionRepo,
 		auditDispatcher,
 		updateClientMetricsUC,
 		consumeCutUC,
 	)
 
 	cancelAppointmentUC := ucAppointment.NewCancelAppointment(
+		db,
 		appointmentRepo,
+		subscriptionRepo,
 		auditDispatcher,
 		updateClientMetricsUC,
 		releaseSubscriptionCutUC,
 	)
 
 	markNoShowUC := ucAppointment.NewMarkAppointmentNoShow(
+		db,
 		appointmentRepo,
+		subscriptionRepo,
 		auditDispatcher,
 		updateClientMetricsUC,
 		releaseSubscriptionCutUC,
@@ -331,10 +339,19 @@ func RegisterRoutes(
 		expireSubscriptionsUC := ucSubscription.NewExpireSubscriptions(subscriptionRepo)
 		expireSubscriptionsJob := jobs.NewExpireSubscriptionsJob(expireSubscriptionsUC)
 
+		markNoShowJob := jobs.NewMarkNoShowJob(
+			appointmentRepo,
+			updateClientMetricsUC,
+			auditDispatcher,
+			appointmentRepo,
+		)
+
 		const everyExpire = 10 * time.Minute
 		const ttlExpire = 13 * time.Minute
 		const everyAutoComplete = 15 * time.Minute
 		const ttlAutoComplete = 20 * time.Minute
+		const everyNoShow = 15 * time.Minute
+		const ttlNoShow = 20 * time.Minute
 
 		scheduler.Every(everyExpire, func(ctx context.Context) {
 			ok, err := locker.TryLock(ctx, "job:expire_payments", ttlExpire)
@@ -354,6 +371,17 @@ func RegisterRoutes(
 				log.Printf("[AutoCompleteJob] error=%v\n", err)
 			}
 			_ = locker.Unlock(ctx, "job:auto_complete")
+		})
+
+		scheduler.Every(everyNoShow, func(ctx context.Context) {
+			ok, err := locker.TryLock(ctx, "job:mark_no_show", ttlNoShow)
+			if err != nil || !ok {
+				return
+			}
+			if err := markNoShowJob.Run(ctx); err != nil {
+				log.Printf("[MarkNoShowJob] error=%v\n", err)
+			}
+			_ = locker.Unlock(ctx, "job:mark_no_show")
 		})
 
 		const everyHour = time.Hour
@@ -492,7 +520,7 @@ func RegisterRoutes(
 		createTransparentPaymentUC,
 	)
 
-	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken, db)
+	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken, cfg.MPWebhookSecret, db)
 
 	orderHandler := handlers.NewOrderHandler(
 		createOrderUC,
@@ -547,13 +575,13 @@ func RegisterRoutes(
 		log.Println("[R2] storage disabled (credentials not set)")
 	}
 
-	listSubscriptionsUC := ucSubscription.NewListSubscriptions(db)
+	subscriptionQuery := subscription.New(db)
 
 	subscriptionHandler := handlers.NewSubscriptionHandler(
 		activateSubscriptionUC,
 		cancelSubscriptionUC,
 		getActiveSubscriptionUC,
-		listSubscriptionsUC,
+		subscriptionQuery,
 		auditDispatcher,
 	)
 
@@ -563,182 +591,44 @@ func RegisterRoutes(
 		purchaseSubscriptionUC,
 	)
 
-	billingHandler := handlers.NewBillingHandler(db, cfg)
+	billingHandler := handlers.NewBillingHandler(db, cfg, idemStore)
 
 	// ======================================================
 	// ROUTES
 	// ======================================================
 	api := r.Group("/api")
 
-	publicAPI := api.Group("/public")
-	{
-		publicAPI.GET("/:slug/info", publicHandler.GetInfo)
-		publicAPI.GET("/:slug/services", publicHandler.ListServices)
-		publicAPI.GET("/:slug/products", publicHandler.ListProducts)
+	registerPublicRoutes(api, cfg, publicHandler, publicCheckoutHandler,
+		mpPaymentHandler, transparentPaymentHandler,
+		publicSubscriptionHandler, publicTicketHandler)
 
-		publicAPI.GET("/:slug/cart", publicHandler.GetCart)
-		publicAPI.POST("/:slug/cart/items", publicHandler.AddCartItem)
-		publicAPI.DELETE("/:slug/cart/items/:productId", publicHandler.RemoveCartItem)
-		publicAPI.POST("/:slug/cart/checkout", publicHandler.CheckoutCart)
-		publicAPI.POST("/:slug/checkout", publicCheckoutHandler.Checkout)
-
-		publicAPI.GET("/:slug/services/:id/suggestion", publicHandler.GetServiceSuggestion)
-		publicAPI.GET("/:slug/availability", publicHandler.AvailabilityForClient)
-		publicAPI.POST("/:slug/appointments", publicHandler.CreateAppointment)
-
-		publicAPI.POST(
-			"/:slug/appointments/:id/payment/mp",
-			middleware.NewRateLimitByKey(func(c *gin.Context) string {
-				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 30, 10, cfg.RedisURL),
-			mpPaymentHandler.CreatePreference,
-		)
-
-		publicAPI.POST(
-			"/:slug/appointments/:id/payment/transparent",
-			middleware.NewRateLimitByKey(func(c *gin.Context) string {
-				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 30, 10, cfg.RedisURL),
-			transparentPaymentHandler.CreatePayment,
-		)
-
-		publicAPI.GET("/:slug/plans", publicSubscriptionHandler.ListPlans)
-		publicAPI.GET("/:slug/subscribers/lookup", publicSubscriptionHandler.LookupSubscriber)
-
-		publicAPI.POST(
-			"/:slug/subscriptions/purchase",
-			middleware.NewRateLimitByKey(func(c *gin.Context) string {
-				return middleware.ClientIPKey(c) + ":" + c.Param("slug")
-			}, 10, 5, cfg.RedisURL),
-			publicSubscriptionHandler.Purchase,
-		)
-
-		publicAPI.GET("/:slug/subscriptions/:id/payment/status", publicSubscriptionHandler.PaymentStatus)
-
-		publicAPI.GET("/ticket/:token", publicTicketHandler.View)
-		publicAPI.DELETE("/ticket/:token", publicTicketHandler.Cancel)
-		publicAPI.PATCH("/ticket/:token", publicTicketHandler.Reschedule)
-	}
-
-	api.POST(
-		"/webhooks/mp",
-		middleware.MaxBodySize(64*1024),
-		mpWebhookHandler.Handle,
-	)
-
-	// Rota alternativa sem prefixo /api — o painel do MP envia para /webhooks/mp
-	r.POST(
-		"/webhooks/mp",
-		middleware.MaxBodySize(64*1024),
-		mpWebhookHandler.Handle,
-	)
-
-	api.POST("/auth/register", authHandler.Register)
-	api.POST("/auth/login", authHandler.Login)
-	api.POST("/auth/password-reset/request", passwordResetHandler.Request)
-	api.POST("/auth/password-reset/confirm", passwordResetHandler.Confirm)
-
-	// Billing webhook (public — called by Mercado Pago).
-	api.POST("/billing/webhook", middleware.MaxBodySize(64*1024), billingHandler.Webhook)
+	registerWebhookAndAuthRoutes(r, api, cfg, mpWebhookHandler, billingHandler,
+		authHandler, passwordResetHandler)
 
 	secured := api.Group("/")
 	secured.Use(middleware.AuthMiddleware(cfg, db))
-	{
-		secured.GET("/me", meHandler.GetMe)
-		secured.POST("/me/tours/:screenId/seen", meHandler.MarkTourSeen)
-		secured.GET("/me/barbershop", barbershopHandler.GetMeBarbershop)
-		secured.PUT("/me/barbershop", barbershopHandler.UpdateMeBarbershop)
-		secured.PATCH("/me/barbershop/slug", barbershopHandler.UpdateSlug)
 
-		secured.GET("/me/services", serviceHandler.List)
-		secured.POST("/me/services", serviceHandler.Create)
-		secured.PUT("/me/services/:id", serviceHandler.Update)
-		secured.DELETE("/me/services/:id", serviceHandler.Delete)
+	registerCatalogRoutes(secured, meHandler, barbershopHandler,
+		serviceHandler, serviceCategoryHandler, serviceSuggestionHandler,
+		productHandler, workingHoursHandler, scheduleOverrideHandler)
 
-		secured.GET("/me/service-categories", serviceCategoryHandler.List)
-		secured.POST("/me/service-categories", serviceCategoryHandler.Create)
-		secured.PUT("/me/service-categories/:id", serviceCategoryHandler.Update)
-		secured.DELETE("/me/service-categories/:id", serviceCategoryHandler.Delete)
+	registerClientRoutes(secured, clientHandler, clientHistoryHandler,
+		clientCategoryHandler, clientCategoryOverrideHandler, crmHandler,
+		paymentPolicyHandler)
 
-		secured.GET("/me/services/:id/suggestion", serviceSuggestionHandler.Get)
-		secured.PUT("/me/services/:id/suggestion", serviceSuggestionHandler.Set)
-		secured.DELETE("/me/services/:id/suggestion", serviceSuggestionHandler.Remove)
+	registerAppointmentRoutes(secured, appointmentHandler, internalAppointmentHandler,
+		closureAdjustmentHandler, paymentHandler, operationalSummaryHandler,
+		paymentReportHandler, orderHandler, closureListHandler, auditLogsHandler)
 
-		secured.GET("/me/products", productHandler.List)
-		secured.POST("/me/products", productHandler.Create)
-		secured.PUT("/me/products/:id", productHandler.Update)
-		secured.DELETE("/me/products/:id", productHandler.Delete)
+	registerAdminRoutes(secured, planHandler, dashboardHandler, financialHandler,
+		dayPanelHandler, impactHandler, subscriptionHandler, billingHandler, imageHandler)
 
-		secured.GET("/me/working-hours", workingHoursHandler.Get)
-		secured.PUT("/me/working-hours", workingHoursHandler.Update)
-
-		secured.GET("/me/schedule-overrides", scheduleOverrideHandler.List)
-		secured.PUT("/me/schedule-overrides", scheduleOverrideHandler.Upsert)
-		secured.DELETE("/me/schedule-overrides/:id", scheduleOverrideHandler.Delete)
-
-		secured.GET("/me/clients", clientHandler.List)
-		secured.GET("/me/clients/:id/crm", crmHandler.Get)
-		secured.GET("/me/clients/:id/history", clientHistoryHandler.Get)
-		secured.GET("/me/clients/:id/category", clientCategoryHandler.Get)
-		secured.PUT("/me/clients/:id/category", clientCategoryOverrideHandler.Update)
-
-		secured.GET("/me/payment-policies", paymentPolicyHandler.Get)
-		secured.PUT("/me/payment-policies", paymentPolicyHandler.Update)
-
-		secured.POST("/me/appointments", appointmentHandler.Create)
-		secured.PUT("/me/appointments/:id/complete", appointmentHandler.Complete)
-		secured.PUT("/me/appointments/:id/cancel", appointmentHandler.Cancel)
-		secured.PUT("/me/appointments/:id/no-show", appointmentHandler.MarkNoShow)
-		secured.POST("/me/appointments/:id/closure/adjustment", closureAdjustmentHandler.Create)
-		secured.GET("/me/appointments/date", appointmentHandler.ListByDate)
-		secured.GET("/me/appointments/month", appointmentHandler.ListByMonth)
-
-		secured.POST("/me/internal-appointments", internalAppointmentHandler.Create)
-
-		secured.GET("/me/payments", paymentHandler.List)
-		secured.GET("/me/payments/cash-due", paymentHandler.CashDue)
-		secured.GET("/me/summary", operationalSummaryHandler.Get)
-		secured.GET("/me/payments/summary", paymentReportHandler.Summary)
-
-		secured.POST("/me/orders", orderHandler.Create)
-		secured.GET("/me/orders", orderHandler.List)
-		secured.GET("/me/orders/:id", orderHandler.GetByID)
-		secured.GET("/me/closures", closureListHandler.List)
-		secured.GET("/me/closures/:id", closureListHandler.GetByID)
-
-		secured.GET("/me/audit-logs", auditLogsHandler.List)
-
-		secured.POST("/me/plans", planHandler.Create)
-		secured.GET("/me/plans", planHandler.List)
-		secured.PUT("/me/plans/:id", planHandler.Update)
-		secured.PATCH("/me/plans/:id/active", planHandler.SetActive)
-		secured.DELETE("/me/plans/:id", planHandler.Delete)
-
-		secured.GET("/me/dashboard", dashboardHandler.Get)
-		secured.GET("/me/financial", financialHandler.Get)
-		secured.GET("/me/day-panel", dayPanelHandler.Get)
-		secured.GET("/me/impact", impactHandler.Get)
-
-		secured.GET("/me/subscriptions", subscriptionHandler.List)
-		secured.POST("/me/subscriptions", subscriptionHandler.Activate)
-		secured.DELETE("/me/subscriptions/:clientID", subscriptionHandler.Cancel)
-		secured.GET("/me/subscriptions/:clientID", subscriptionHandler.GetActive)
-
-		// Billing (subscription check bypassed in AuthMiddleware for these paths).
-		secured.GET("/me/billing/status", billingHandler.Status)
-		secured.POST("/me/billing/checkout", billingHandler.Checkout)
-		secured.POST("/me/billing/pay", billingHandler.Pay)
-
-		// Image upload (only registered when R2 is configured).
-		if imageHandler != nil {
-			secured.POST("/me/services/:id/images", imageHandler.AddServiceImage)
-			secured.DELETE("/me/services/:id/images/:imageId", imageHandler.DeleteServiceImage)
-
-			secured.PUT("/me/products/:id/image", imageHandler.SetProductImage)
-			secured.DELETE("/me/products/:id/image", imageHandler.DeleteProductImage)
-
-			secured.PUT("/me/profile/photo", imageHandler.SetProfilePhoto)
-			secured.DELETE("/me/profile/photo", imageHandler.DeleteProfilePhoto)
-		}
+	// Endpoint de bypass de pagamento — apenas em modo mock (nunca em produção).
+	if cfg.MPProvider != "mp" {
+		devPaymentHandler := handlers.NewDevPaymentHandler(markMPPaymentAsPaidUC)
+		api.POST("/dev/payments/:id/confirm", devPaymentHandler.ConfirmPayment)
+		log.Println("[DEV] rota POST /api/dev/payments/:id/confirm ativa (mock mode)")
 	}
+
+	return auditDispatcher
 }

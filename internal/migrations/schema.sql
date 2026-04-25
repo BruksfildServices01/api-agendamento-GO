@@ -173,6 +173,7 @@ CREATE TABLE users (
   password_hash VARCHAR(255) NOT NULL,
   phone         VARCHAR(20),
   role          user_role NOT NULL DEFAULT 'owner',
+  seen_tours    TEXT      NOT NULL DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -215,6 +216,12 @@ CREATE TABLE clients (
 CREATE INDEX idx_clients_barbershop        ON clients(barbershop_id);
 CREATE INDEX idx_clients_phone             ON clients(barbershop_id, phone);
 CREATE INDEX idx_clients_name_lower        ON clients(barbershop_id, LOWER(name::text));
+
+-- Índice único parcial: impede clientes duplicados pelo mesmo telefone na mesma
+-- barbearia. NULL/vazio continua permitido (clientes sem telefone cadastrado).
+CREATE UNIQUE INDEX uq_clients_barbershop_phone
+  ON clients(barbershop_id, phone)
+  WHERE phone IS NOT NULL AND phone <> '';
 
 CREATE TRIGGER trg_clients_updated
 BEFORE UPDATE ON clients
@@ -663,6 +670,10 @@ CREATE TABLE working_hours (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Um barbeiro pode ter apenas um registro de horário por dia da semana.
+ALTER TABLE working_hours
+  ADD CONSTRAINT uq_working_hours_barber_weekday UNIQUE (barber_id, weekday);
 
 CREATE TRIGGER trg_working_hours_updated
 BEFORE UPDATE ON working_hours

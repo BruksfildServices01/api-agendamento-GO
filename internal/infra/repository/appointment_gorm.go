@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -13,6 +15,38 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// workingHoursCache evita queries repetidas para o mesmo barber+weekday.
+// Horários de trabalho mudam raramente (atualização manual pelo barbeiro),
+// então um TTL de 5 minutos reduz substancialmente o load no Neon.
+const workingHoursCacheTTL = 5 * time.Minute
+
+type whCacheEntry struct {
+	wh        *models.WorkingHours // nil = não existe
+	expiresAt time.Time
+}
+
+var (
+	whCacheMu sync.RWMutex
+	whCache   = make(map[string]*whCacheEntry)
+)
+
+func whCacheKey(barbershopID, barberID uint, weekday int) string {
+	return fmt.Sprintf("%d:%d:%d", barbershopID, barberID, weekday)
+}
+
+// EvictWorkingHoursCache remove todas as entradas de cache para um barbeiro.
+// Deve ser chamado quando os horários de trabalho são atualizados.
+func EvictWorkingHoursCache(barberID uint) {
+	prefix := fmt.Sprintf(":%d:", barberID)
+	whCacheMu.Lock()
+	defer whCacheMu.Unlock()
+	for k := range whCache {
+		if strings.Contains(k, prefix) {
+			delete(whCache, k)
+		}
+	}
+}
 
 type AppointmentGormRepository struct {
 	db *gorm.DB
@@ -119,10 +153,30 @@ func (r *AppointmentGormRepository) GetOrCreateClient(
 	}
 
 	if err := r.db.WithContext(ctx).Create(&client).Error; err != nil {
+		if isClientPhoneUniqueViolation(err) {
+			// Corrida: outra request criou o cliente primeiro — retorna o existente.
+			if err2 := r.db.WithContext(ctx).
+				Where("barbershop_id = ? AND phone = ?", barbershopID, phone).
+				First(&client).Error; err2 != nil {
+				return nil, err2
+			}
+			return &client, nil
+		}
 		return nil, err
 	}
 
 	return &client, nil
+}
+
+func isClientPhoneUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" && pgErr.ConstraintName == "uq_clients_barbershop_phone"
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "uq_clients_barbershop_phone")
 }
 
 //
@@ -345,23 +399,39 @@ func (r *AppointmentGormRepository) GetWorkingHours(
 	weekday int,
 ) (*models.WorkingHours, error) {
 
-	var wh models.WorkingHours
+	key := whCacheKey(barbershopID, barberID, weekday)
 
+	whCacheMu.RLock()
+	entry, hit := whCache[key]
+	valid := hit && time.Now().Before(entry.expiresAt)
+	whCacheMu.RUnlock()
+
+	if valid {
+		return entry.wh, nil
+	}
+
+	var wh models.WorkingHours
 	err := r.db.WithContext(ctx).
 		Where(
 			"barbershop_id = ? AND barber_id = ? AND weekday = ?",
-			barbershopID,
-			barberID,
-			weekday,
+			barbershopID, barberID, weekday,
 		).
-		First(&wh).
-		Error
+		First(&wh).Error
 
+	var result *models.WorkingHours
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		result = nil
+	} else if err != nil {
+		return nil, err
+	} else {
+		result = &wh
 	}
 
-	return &wh, err
+	whCacheMu.Lock()
+	whCache[key] = &whCacheEntry{wh: result, expiresAt: time.Now().Add(workingHoursCacheTTL)}
+	whCacheMu.Unlock()
+
+	return result, nil
 }
 
 // DEPRECATED: timezone-unsafe.
@@ -559,9 +629,15 @@ func (r *AppointmentGormRepository) ListBarbershops(
 
 	var rows []result
 
+	// Só processa barbearias com assinatura ativa ou em período de trial válido.
+	// Barbearias inactive/suspended/expired nunca terão dados novos nos jobs.
 	err := r.db.WithContext(ctx).
 		Model(&models.Barbershop{}).
 		Select("id, timezone").
+		Where(`
+			status = 'active'
+			OR (status = 'trial' AND (trial_ends_at IS NULL OR trial_ends_at > NOW()))
+		`).
 		Find(&rows).
 		Error
 

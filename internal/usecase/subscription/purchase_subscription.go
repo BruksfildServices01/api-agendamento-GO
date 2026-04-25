@@ -228,9 +228,26 @@ func (uc *PurchaseSubscription) findOrCreateClient(
 		Phone:        phone,
 	}
 	if err := uc.db.WithContext(ctx).Create(&client).Error; err != nil {
+		if isClientPhoneUniqueViolation(err) {
+			// Corrida: outra request criou o cliente primeiro — retorna o existente.
+			if err2 := uc.db.WithContext(ctx).
+				Where("barbershop_id = ? AND phone = ?", barbershopID, phone).
+				First(&client).Error; err2 != nil {
+				return nil, err2
+			}
+			return &client, nil
+		}
 		return nil, err
 	}
 	return &client, nil
+}
+
+func isClientPhoneUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "uq_clients_barbershop_phone")
 }
 
 func isNotFound(err error) bool {

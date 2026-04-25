@@ -21,6 +21,9 @@ var ErrCancellationWindowClosed = errors.New("cancellation window has passed")
 // são considerados tardios e geram penalidade na métrica do cliente.
 const lateCancelWindow = 24 * time.Hour
 
+// minCancelWindow: janela mínima para permitir cancelamento (2h antes).
+const minCancelWindow = 2 * time.Hour
+
 type CancelViaTicket struct {
 	db       *gorm.DB
 	repo     domainTicket.Repository
@@ -52,17 +55,21 @@ func (uc *CancelViaTicket) Execute(ctx context.Context, token string) error {
 	}
 
 	type apptRow struct {
-		ID           uint      `gorm:"column:id"`
-		Status       string    `gorm:"column:status"`
-		StartTime    time.Time `gorm:"column:start_time"`
-		BarberID     uint      `gorm:"column:barber_id"`
-		BarbershopID uint      `gorm:"column:barbershop_id"`
-		ClientID     *uint     `gorm:"column:client_id"`
+		ID                    uint      `gorm:"column:id"`
+		Status                string    `gorm:"column:status"`
+		StartTime             time.Time `gorm:"column:start_time"`
+		BarberID              uint      `gorm:"column:barber_id"`
+		BarbershopID          uint      `gorm:"column:barbershop_id"`
+		ClientID              *uint     `gorm:"column:client_id"`
+		ReservedSubscriptionCut bool    `gorm:"column:reserved_subscription_cut"`
+		SubscriptionID        *uint     `gorm:"column:subscription_id"`
 	}
 
 	var appt apptRow
 	err = uc.db.WithContext(ctx).
-		Raw("SELECT id, status, start_time, barber_id, barbershop_id, client_id FROM appointments WHERE id = ?", ticket.AppointmentID).
+		Raw(`SELECT id, status, start_time, barber_id, barbershop_id, client_id,
+		     reserved_subscription_cut, subscription_id
+		     FROM appointments WHERE id = ?`, ticket.AppointmentID).
 		Scan(&appt).Error
 	if err != nil {
 		return err
@@ -71,19 +78,39 @@ func (uc *CancelViaTicket) Execute(ctx context.Context, token string) error {
 		return ErrCannotCancel
 	}
 
-	if appt.Status != "scheduled" && appt.Status != "awaiting_payment" {
-		return ErrCannotCancel
-	}
-
 	now := time.Now().UTC()
-	if !appt.StartTime.After(now.Add(2 * time.Hour)) {
+	if !appt.StartTime.After(now.Add(minCancelWindow)) {
 		return ErrCancellationWindowClosed
 	}
 
-	if err := uc.db.WithContext(ctx).
-		Exec("UPDATE appointments SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?", appt.ID).
-		Error; err != nil {
-		return err
+	// Cancela de forma atômica: o UPDATE verifica o status diretamente no banco,
+	// eliminando a race condition de TOCTOU entre a leitura e a escrita.
+	res := uc.db.WithContext(ctx).Exec(
+		`UPDATE appointments
+		 SET status = 'cancelled', cancelled_at = NOW()
+		 WHERE id = ? AND barbershop_id = ? AND status IN ('scheduled', 'awaiting_payment')`,
+		appt.ID, appt.BarbershopID,
+	)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrCannotCancel
+	}
+
+	// Libera reserva de assinatura se existia (best-effort).
+	if appt.ReservedSubscriptionCut && appt.ClientID != nil {
+		releaseRes := uc.db.WithContext(ctx).Exec(`
+			UPDATE subscriptions
+			SET cuts_reserved_in_period = cuts_reserved_in_period - 1
+			WHERE barbershop_id = ? AND client_id = ? AND status = 'active'
+			  AND current_period_start <= NOW() AND current_period_end > NOW()
+			  AND cuts_reserved_in_period > 0
+		`, appt.BarbershopID, *appt.ClientID)
+		if releaseRes.Error != nil {
+			log.Printf("[CancelViaTicket] release subscription cut failed client=%d: %v",
+				*appt.ClientID, releaseRes.Error)
+		}
 	}
 
 	// Auditoria
@@ -124,7 +151,8 @@ func (uc *CancelViaTicket) Execute(ctx context.Context, token string) error {
 		}
 		var notifyData notifyRow
 		queryErr := uc.db.WithContext(ctx).Raw(`
-			SELECT c.name as client_name, c.email as client_email, b.name as barbershop_name, b.timezone
+			SELECT c.name AS client_name, c.email AS client_email,
+			       b.name AS barbershop_name, b.timezone
 			FROM appointments a
 			JOIN clients c ON c.id = a.client_id
 			JOIN barbershops b ON b.id = a.barbershop_id

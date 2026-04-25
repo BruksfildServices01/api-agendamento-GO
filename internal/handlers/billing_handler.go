@@ -17,17 +17,20 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
+	infraMP "github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
 type BillingHandler struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db   *gorm.DB
+	cfg  *config.Config
+	idem idempotency.Store
 }
 
-func NewBillingHandler(db *gorm.DB, cfg *config.Config) *BillingHandler {
-	return &BillingHandler{db: db, cfg: cfg}
+func NewBillingHandler(db *gorm.DB, cfg *config.Config, idem idempotency.Store) *BillingHandler {
+	return &BillingHandler{db: db, cfg: cfg, idem: idem}
 }
 
 // GET /api/me/billing/status
@@ -173,6 +176,19 @@ func (h *BillingHandler) Webhook(c *gin.Context) {
 		return
 	}
 
+	// Valida assinatura HMAC quando o secret estiver configurado.
+	if h.cfg.MPWebhookSecret != "" {
+		xSig := c.GetHeader("x-signature")
+		xReqID := c.GetHeader("x-request-id")
+		if !infraMP.VerifyWebhookSignature(h.cfg.MPWebhookSecret, xSig, xReqID, idStr) {
+			log.Printf("[BillingWebhook] invalid signature for payment %s", idStr)
+			c.Status(http.StatusOK)
+			return
+		}
+	} else {
+		log.Printf("[BillingWebhook] MP_WEBHOOK_SECRET não configurado — assinatura não validada")
+	}
+
 	paymentID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		c.Status(http.StatusOK)
@@ -221,10 +237,28 @@ func (h *BillingHandler) Webhook(c *gin.Context) {
 		return
 	}
 
+	idemKey := "billing:webhook:" + idStr
+	if h.idem != nil {
+		exists, err := h.idem.Exists(context.Background(), idemKey)
+		if err != nil {
+			log.Printf("[BillingWebhook] idempotency check error: %v", err)
+		} else if exists {
+			log.Printf("[BillingWebhook] payment %s already processed — skipping", idStr)
+			c.Status(http.StatusOK)
+			return
+		}
+	}
+
 	if err := h.activateBarbershop(uint(barbershopID)); err != nil {
 		log.Printf("[BillingWebhook] failed to activate barbershop %d: %v", barbershopID, err)
 		c.Status(http.StatusInternalServerError)
 		return
+	}
+
+	if h.idem != nil {
+		if err := h.idem.Save(context.Background(), idemKey); err != nil {
+			log.Printf("[BillingWebhook] failed to save idempotency key: %v", err)
+		}
 	}
 
 	log.Printf("[BillingWebhook] activated barbershop %d", barbershopID)
@@ -305,8 +339,23 @@ func (h *BillingHandler) Pay(c *gin.Context) {
 	}
 
 	if pay.Status == "approved" {
-		if err := h.activateBarbershop(barbershopID); err != nil {
-			log.Printf("[BillingPay] failed to activate barbershop %d: %v", barbershopID, err)
+		idemKey := "billing:pay:" + strconv.Itoa(pay.ID)
+		alreadyDone := false
+		if h.idem != nil {
+			if exists, err := h.idem.Exists(context.Background(), idemKey); err != nil {
+				log.Printf("[BillingPay] idempotency check error: %v", err)
+			} else {
+				alreadyDone = exists
+			}
+		}
+		if !alreadyDone {
+			if err := h.activateBarbershop(barbershopID); err != nil {
+				log.Printf("[BillingPay] failed to activate barbershop %d: %v", barbershopID, err)
+			} else if h.idem != nil {
+				if err := h.idem.Save(context.Background(), idemKey); err != nil {
+					log.Printf("[BillingPay] failed to save idempotency key: %v", err)
+				}
+			}
 		}
 	}
 

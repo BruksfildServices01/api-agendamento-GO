@@ -8,27 +8,27 @@ import (
 )
 
 type SubscriptionListItem struct {
-	ID                 uint
-	ClientID           uint
-	Status             string
-	ClientName         string
-	ClientPhone        string
-	PlanName           string
-	CutsUsed           int
-	CutsIncluded       int
-	CurrentPeriodStart time.Time
-	CurrentPeriodEnd   time.Time
+	ID                 uint      `json:"id"`
+	ClientID           uint      `json:"client_id"`
+	Status             string    `json:"status"`
+	ClientName         string    `json:"client_name"`
+	ClientPhone        string    `json:"client_phone"`
+	PlanName           string    `json:"plan_name"`
+	CutsUsed           int       `json:"cuts_used"`
+	CutsIncluded       int       `json:"cuts_included"`
+	CurrentPeriodStart time.Time `json:"current_period_start"`
+	CurrentPeriodEnd   time.Time `json:"current_period_end"`
 }
 
-type ListSubscriptions struct {
+type Query struct {
 	db *gorm.DB
 }
 
-func NewListSubscriptions(db *gorm.DB) *ListSubscriptions {
-	return &ListSubscriptions{db: db}
+func New(db *gorm.DB) *Query {
+	return &Query{db: db}
 }
 
-func (uc *ListSubscriptions) Execute(ctx context.Context, barbershopID uint) ([]SubscriptionListItem, error) {
+func (q *Query) ListActive(ctx context.Context, barbershopID uint) ([]SubscriptionListItem, error) {
 	type row struct {
 		ID                 uint      `gorm:"column:id"`
 		ClientID           uint      `gorm:"column:client_id"`
@@ -45,7 +45,7 @@ func (uc *ListSubscriptions) Execute(ctx context.Context, barbershopID uint) ([]
 	var rows []row
 	now := time.Now().UTC()
 
-	err := uc.db.WithContext(ctx).Raw(`
+	err := q.db.WithContext(ctx).Raw(`
 		SELECT
 			s.id,
 			s.client_id,

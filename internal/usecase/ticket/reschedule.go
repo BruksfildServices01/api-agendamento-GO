@@ -78,7 +78,7 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 		return "", ErrRescheduleNotAllowed
 	}
 
-	if appt.Status != "scheduled" || appt.RescheduleCount >= 1 {
+	if (appt.Status != "scheduled" && appt.Status != "awaiting_payment") || appt.RescheduleCount >= 1 {
 		return "", ErrRescheduleNotAllowed
 	}
 
@@ -190,7 +190,7 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 			SELECT COUNT(*) FROM appointments
 			WHERE barbershop_id = ?
 			  AND barber_id = ?
-			  AND status NOT IN ('cancelled', 'no_show')
+			  AND status IN ('scheduled', 'awaiting_payment')
 			  AND id != ?
 			  AND start_time < ?
 			  AND end_time > ?

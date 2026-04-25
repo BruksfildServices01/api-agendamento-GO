@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
@@ -75,7 +76,9 @@ func (uc *CreatePaymentForAppointment) Execute(
 		// legacy fix: se existir e não tiver expires_at (e ainda estiver pending), setamos
 		if existing.Status == models.PaymentStatus(domain.StatusPending) && existing.ExpiresAt == nil {
 			existing.ExpiresAt = &expiresAt
-			_ = uc.paymentRepo.Update(ctx, existing) // best-effort
+			if err := uc.paymentRepo.Update(ctx, existing); err != nil {
+				log.Printf("[CreatePaymentForAppointment] failed to set expires_at on legacy payment %d: %v", existing.ID, err)
+			}
 		}
 
 		return existing, nil

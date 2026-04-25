@@ -449,6 +449,7 @@ CREATE TABLE payments (
   appointment_id BIGINT REFERENCES appointments(id) ON DELETE CASCADE,
   order_id BIGINT REFERENCES orders(id) ON DELETE CASCADE,
   bundled_order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+  subscription_id BIGINT, -- FK adicionado via ALTER TABLE abaixo, após CREATE TABLE subscriptions
   txid VARCHAR(100) UNIQUE,
   qr_code TEXT,
   amount BIGINT NOT NULL CHECK (amount >= 0),
@@ -458,9 +459,9 @@ CREATE TABLE payments (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT payment_exactly_one_target CHECK (
-    (appointment_id IS NOT NULL AND order_id IS NULL)
-    OR
-    (appointment_id IS NULL AND order_id IS NOT NULL)
+    (appointment_id IS NOT NULL AND order_id IS NULL          AND subscription_id IS NULL)
+    OR (appointment_id IS NULL  AND order_id IS NOT NULL      AND subscription_id IS NULL)
+    OR (appointment_id IS NULL  AND order_id IS NULL          AND subscription_id IS NOT NULL)
   )
 );
 
@@ -659,6 +660,16 @@ WHERE status = 'active';
 CREATE TRIGGER trg_subscriptions_updated
 BEFORE UPDATE ON subscriptions
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- FK de payments → subscriptions (não pôde ser declarado inline pois subscriptions
+-- é criado após payments neste arquivo).
+ALTER TABLE payments
+  ADD CONSTRAINT fk_payments_subscription
+  FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_payments_subscription
+  ON payments(barbershop_id, subscription_id)
+  WHERE subscription_id IS NOT NULL;
 
 -- ============================================================
 -- APPOINTMENT CLOSURES

@@ -4,6 +4,10 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 	_ "time/tzdata" // embeds timezone database for Alpine containers
 
 	"github.com/gin-gonic/gin"
@@ -22,13 +26,12 @@ func main() {
 	cfg := config.Load()
 	db := dbpkg.NewDB(cfg)
 
+	// Contexto raiz: cancelado no início do graceful shutdown para parar os jobs.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Scheduler único
 	scheduler := jobs.NewScheduler(ctx)
 
-	// Gin
 	if gin.Mode() == gin.ReleaseMode {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -42,17 +45,49 @@ func main() {
 
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowedOrigins))
 
-	// Health check
+	sqlDB, _ := db.DB()
 	r.GET("/health", func(c *gin.Context) {
+		if err := sqlDB.PingContext(c.Request.Context()); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "db": "unreachable"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// ✅ Agora routes também registra os jobs (sem duplicação)
-	routes.RegisterRoutes(r, db, cfg, scheduler)
+	auditDispatcher := routes.RegisterRoutes(r, db, cfg, scheduler)
 
-	log.Printf("Server running on %s", cfg.Addr())
-
-	if err := r.Run(cfg.Addr()); err != nil {
-		log.Fatalf("failed to start server: %v", err)
+	srv := &http.Server{
+		Addr:    cfg.Addr(),
+		Handler: r,
 	}
+
+	// Inicia o servidor em goroutine separada.
+	go func() {
+		log.Printf("Server running on %s", cfg.Addr())
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	// Aguarda sinal de encerramento (SIGTERM do Kubernetes ou SIGINT do terminal).
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	log.Printf("Received signal %s — shutting down gracefully...", sig)
+
+	// 1. Para os jobs (cancela o contexto do scheduler).
+	cancel()
+
+	// 2. Para de aceitar novas requests e aguarda as em andamento (até 30s).
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
+
+	// 3. Persiste todos os eventos de auditoria pendentes antes de fechar o DB.
+	auditDispatcher.Shutdown()
+
+	log.Println("Server exited cleanly.")
 }

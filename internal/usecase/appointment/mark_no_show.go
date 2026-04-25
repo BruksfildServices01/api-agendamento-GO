@@ -2,7 +2,10 @@ package appointment
 
 import (
 	"context"
+	"log"
 	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
@@ -12,23 +15,29 @@ import (
 )
 
 type MarkAppointmentNoShow struct {
-	repo      domain.Repository
-	audit     *audit.Dispatcher
-	metrics   *ucMetrics.UpdateClientMetrics
-	releaseUC *ucSubscription.ReleaseSubscriptionCut
+	db               *gorm.DB
+	repo             txableRepository
+	subscriptionRepo txableSubscriptionRepo
+	audit            *audit.Dispatcher
+	metrics          *ucMetrics.UpdateClientMetrics
+	releaseUC        *ucSubscription.ReleaseSubscriptionCut
 }
 
 func NewMarkAppointmentNoShow(
-	repo domain.Repository,
+	db *gorm.DB,
+	repo txableRepository,
+	subscriptionRepo txableSubscriptionRepo,
 	audit *audit.Dispatcher,
 	metrics *ucMetrics.UpdateClientMetrics,
 	releaseUC *ucSubscription.ReleaseSubscriptionCut,
 ) *MarkAppointmentNoShow {
 	return &MarkAppointmentNoShow{
-		repo:      repo,
-		audit:     audit,
-		metrics:   metrics,
-		releaseUC: releaseUC,
+		db:               db,
+		repo:             repo,
+		subscriptionRepo: subscriptionRepo,
+		audit:            audit,
+		metrics:          metrics,
+		releaseUC:        releaseUC,
 	}
 }
 
@@ -39,42 +48,55 @@ func (uc *MarkAppointmentNoShow) Execute(
 	appointmentID uint,
 ) error {
 
-	ap, err := uc.repo.GetAppointmentForBarber(
-		ctx,
-		barbershopID,
-		appointmentID,
-		barberID,
-	)
-	if err != nil || ap == nil {
-		return httperr.ErrBusiness("appointment_not_found")
-	}
+	var noShowAt time.Time
+	var clientID *uint
+	var apID uint
 
-	// Segurança extra multi-tenant
-	if ap.BarbershopID == nil || *ap.BarbershopID != barbershopID {
-		return httperr.ErrBusiness("invalid_barbershop")
-	}
+	err := uc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := uc.repo.WithTx(tx)
 
-	now := time.Now().UTC()
+		ap, err := txRepo.GetAppointmentForBarber(ctx, barbershopID, appointmentID, barberID)
+		if err != nil || ap == nil {
+			return httperr.ErrBusiness("appointment_not_found")
+		}
 
-	if err := domain.MarkNoShow(ap, now, "manual"); err != nil {
+		if ap.BarbershopID == nil || *ap.BarbershopID != barbershopID {
+			return httperr.ErrBusiness("invalid_barbershop")
+		}
+
+		noShowAt = time.Now().UTC()
+		clientID = ap.ClientID
+		apID = ap.ID
+
+		if err := domain.MarkNoShow(ap, noShowAt, "manual"); err != nil {
+			return err
+		}
+
+		if err := txRepo.UpdateAppointment(ctx, ap); err != nil {
+			return err
+		}
+
+		// Liberar reserva de assinatura dentro da mesma transação.
+		if ap.ReservedSubscriptionCut && ap.ClientID != nil && ap.BarbershopID != nil && uc.releaseUC != nil {
+			txSubRepo := uc.subscriptionRepo.WithTx(tx)
+			if err := uc.releaseUC.Execute(ctx, *ap.BarbershopID, *ap.ClientID, txSubRepo); err != nil {
+				log.Printf("[MarkNoShow] release subscription cut failed for client %d: %v", *ap.ClientID, err)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
 		return err
 	}
 
-	if err := uc.repo.UpdateAppointment(ctx, ap); err != nil {
-		return err
-	}
-
-	// Liberar reserva de assinatura (best-effort)
-	if ap.ReservedSubscriptionCut && ap.ClientID != nil && ap.BarbershopID != nil && uc.releaseUC != nil {
-		_ = uc.releaseUC.Execute(ctx, *ap.BarbershopID, *ap.ClientID)
-	}
-
-	if ap.ClientID != nil {
+	if clientID != nil {
 		_ = uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
 			BarbershopID: barbershopID,
-			ClientID:     *ap.ClientID,
+			ClientID:     *clientID,
 			EventType:    ucMetrics.EventAppointmentNoShow,
-			OccurredAt:   now,
+			OccurredAt:   noShowAt,
 		})
 	}
 
@@ -83,7 +105,7 @@ func (uc *MarkAppointmentNoShow) Execute(
 		UserID:       &barberID,
 		Action:       "appointment_no_show",
 		Entity:       "appointment",
-		EntityID:     &ap.ID,
+		EntityID:     &apID,
 	})
 
 	return nil

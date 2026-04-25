@@ -26,6 +26,12 @@ func NewReleaseSubscriptionCut(repo domain.Repository) *ReleaseSubscriptionCut {
 	return &ReleaseSubscriptionCut{repo: repo}
 }
 
-func (uc *ReleaseSubscriptionCut) Execute(ctx context.Context, barbershopID, clientID uint) error {
-	return uc.repo.ReleaseSubscriptionCut(ctx, barbershopID, clientID)
+// Execute libera a reserva de crédito de assinatura.
+// repoOverride permite passar um repo vinculado a uma transação externa.
+func (uc *ReleaseSubscriptionCut) Execute(ctx context.Context, barbershopID, clientID uint, repoOverride ...domain.Repository) error {
+	repo := uc.repo
+	if len(repoOverride) > 0 && repoOverride[0] != nil {
+		repo = repoOverride[0]
+	}
+	return repo.ReleaseSubscriptionCut(ctx, barbershopID, clientID)
 }

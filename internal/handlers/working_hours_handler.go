@@ -10,6 +10,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 )
 
 type WorkingHoursHandler struct {
@@ -96,6 +97,9 @@ func (h *WorkingHoursHandler) Update(c *gin.Context) {
 			return
 		}
 	}
+
+	// Invalida cache de horários para este barbeiro imediatamente.
+	infraRepo.EvictWorkingHoursCache(barberID)
 
 	h.audit.Dispatch(audit.Event{
 		BarbershopID: barbershopID,

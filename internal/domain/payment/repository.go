@@ -70,6 +70,12 @@ type Repository interface {
 		filter PaymentListFilter,
 	) ([]models.Payment, error)
 
+	CountForBarbershop(
+		ctx context.Context,
+		barbershopID uint,
+		filter PaymentListFilter,
+	) (int64, error)
+
 	GetSummaryForBarbershop(
 		ctx context.Context,
 		barbershopID uint,

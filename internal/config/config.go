@@ -49,6 +49,9 @@ type Config struct {
 	// MPProvider: "mock" (padrão) | "mp"
 	MPProvider    string
 	MPAccessToken string
+	// MPWebhookSecret: segredo configurado no painel do MP para validação HMAC dos
+	// webhooks (x-signature). Se vazio, a validação é ignorada (dev/mock).
+	MPWebhookSecret string
 	// BackendURL é usado para montar a notification_url enviada ao Mercado Pago.
 	// Ex: https://api.seudominio.com
 	BackendURL string
@@ -108,9 +111,10 @@ func Load() *Config {
 		RedisURL: getEnv("REDIS_URL", ""),
 
 		// MERCADO PAGO
-		MPProvider:    getEnv("MP_PROVIDER", "mock"),
-		MPAccessToken: getEnv("MP_ACCESS_TOKEN", ""),
-		BackendURL:    strings.TrimRight(getEnv("BACKEND_URL", "http://localhost:8080"), "/"),
+		MPProvider:      getEnv("MP_PROVIDER", "mock"),
+		MPAccessToken:   getEnv("MP_ACCESS_TOKEN", ""),
+		MPWebhookSecret: getEnv("MP_WEBHOOK_SECRET", ""),
+		BackendURL:      strings.TrimRight(getEnv("BACKEND_URL", "http://localhost:8080"), "/"),
 
 		// SAAS BILLING
 		PlatformMonthlyPriceCents: getEnvInt("PLATFORM_MONTHLY_PRICE_CENTS", 5490),

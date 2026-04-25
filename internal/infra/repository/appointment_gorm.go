@@ -850,8 +850,12 @@ func (r *AppointmentGormRepository) ListAutoCompleteCandidates(
 		if row.BarberID == nil {
 			continue
 		}
-		paymentMethod := "pix"
-		if row.HasPaidPayment && !row.PaymentIsPix {
+		// Sem pagamento online registrado = atendimento presencial → dinheiro.
+		// PIX confirmado (txid presente) → pix. Pago sem txid → cartão.
+		paymentMethod := "cash"
+		if row.HasPaidPayment && row.PaymentIsPix {
+			paymentMethod = "pix"
+		} else if row.HasPaidPayment {
 			paymentMethod = "card"
 		}
 		candidates = append(candidates, &domain.AutoCompleteCandidate{

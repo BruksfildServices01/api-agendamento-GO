@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -9,14 +10,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 )
 
-// barbershopCacheEntry caches the subscription-status fields fetched per request.
-// Entries expire after barbershopCacheTTL to keep billing state up-to-date.
-const barbershopCacheTTL = 60 * time.Second
+// barbershopCacheTTL controla por quanto tempo o status da barbearia é mantido em
+// memória. 30s é um equilíbrio razoável: reduz round-trips sem deixar uma janela
+// longa para que uma assinatura expirada continue sendo aceita.
+const barbershopCacheTTL = 30 * time.Second
 
 type barbershopCacheEntry struct {
 	status                string
@@ -26,8 +29,9 @@ type barbershopCacheEntry struct {
 }
 
 var (
-	barbershopCacheMu sync.Mutex
+	barbershopCacheMu sync.RWMutex
 	barbershopCache   = make(map[uint]*barbershopCacheEntry)
+	barbershopSFGroup singleflight.Group
 )
 
 const (
@@ -84,60 +88,77 @@ func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 		}
 
 		// Fetch barbershop to verify existence and check subscription status.
-		// Results are cached in-process for barbershopCacheTTL to avoid one DB
-		// round-trip per authenticated request.
+		// Results are cached in-process for barbershopCacheTTL.
+		// singleflight garante que requests concorrentes para o mesmo barbershop_id
+		// disparam apenas uma query ao banco no cache miss (sem thundering herd).
 		bid := uint(barbershopID)
 
 		var shopStatus string
 		var shopTrialEndsAt *time.Time
 		var shopSubscriptionExpiresAt *time.Time
 
-		barbershopCacheMu.Lock()
+		barbershopCacheMu.RLock()
 		cached, hit := barbershopCache[bid]
-		if hit && time.Now().Before(cached.expiresAt) {
+		validHit := hit && time.Now().Before(cached.expiresAt)
+		barbershopCacheMu.RUnlock()
+
+		if validHit {
 			shopStatus = cached.status
 			shopTrialEndsAt = cached.trialEndsAt
 			shopSubscriptionExpiresAt = cached.subscriptionExpiresAt
-			barbershopCacheMu.Unlock()
 		} else {
-			// Evict stale entry before releasing the lock so only one goroutine queries.
-			delete(barbershopCache, bid)
-			barbershopCacheMu.Unlock()
-
-			var shop struct {
-				ID                    uint
-				Status                string
-				TrialEndsAt           *time.Time
-				SubscriptionExpiresAt *time.Time
+			type shopResult struct {
+				status                string
+				trialEndsAt           *time.Time
+				subscriptionExpiresAt *time.Time
 			}
-			err = db.WithContext(c.Request.Context()).
-				Table("barbershops").
-				Select("id, status, trial_ends_at, subscription_expires_at").
-				Where("id = ?", bid).
-				First(&shop).Error
 
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
+			sfKey := fmt.Sprintf("barbershop:%d", bid)
+			v, sfErr, _ := barbershopSFGroup.Do(sfKey, func() (any, error) {
+				var shop struct {
+					ID                    uint
+					Status                string
+					TrialEndsAt           *time.Time
+					SubscriptionExpiresAt *time.Time
+				}
+				if err := db.WithContext(c.Request.Context()).
+					Table("barbershops").
+					Select("id, status, trial_ends_at, subscription_expires_at").
+					Where("id = ?", bid).
+					First(&shop).Error; err != nil {
+					return nil, err
+				}
+
+				entry := &barbershopCacheEntry{
+					status:                shop.Status,
+					trialEndsAt:           shop.TrialEndsAt,
+					subscriptionExpiresAt: shop.SubscriptionExpiresAt,
+					expiresAt:             time.Now().Add(barbershopCacheTTL),
+				}
+				barbershopCacheMu.Lock()
+				barbershopCache[bid] = entry
+				barbershopCacheMu.Unlock()
+
+				return shopResult{
+					status:                shop.Status,
+					trialEndsAt:           shop.TrialEndsAt,
+					subscriptionExpiresAt: shop.SubscriptionExpiresAt,
+				}, nil
+			})
+
+			if sfErr != nil {
+				if errors.Is(sfErr, gorm.ErrRecordNotFound) {
 					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
 					return
 				}
-				// DB unavailable — fail closed to prevent unauthorized access.
 				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "service_unavailable"})
 				return
 			}
 
-			shopStatus = shop.Status
-			shopTrialEndsAt = shop.TrialEndsAt
-			shopSubscriptionExpiresAt = shop.SubscriptionExpiresAt
-
-			barbershopCacheMu.Lock()
-			barbershopCache[bid] = &barbershopCacheEntry{
-				status:                shop.Status,
-				trialEndsAt:           shop.TrialEndsAt,
-				subscriptionExpiresAt: shop.SubscriptionExpiresAt,
-				expiresAt:             time.Now().Add(barbershopCacheTTL),
-			}
-			barbershopCacheMu.Unlock()
+			res := v.(shopResult)
+			shopStatus = res.status
+			shopTrialEndsAt = res.trialEndsAt
+			shopSubscriptionExpiresAt = res.subscriptionExpiresAt
 		}
 
 		// Check subscription status (skip for billing and basic me endpoints).

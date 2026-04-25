@@ -13,14 +13,16 @@ import (
 )
 
 // redisLimiter implementa rate limit distribuído usando Redis INCR + EXPIRE.
-// Algoritmo: janela fixa de 1 minuto; cada chave tem um contador INCR.
-// Adequado para múltiplas réplicas — o limite é global, não por instância.
+// Algoritmo: janela deslizante baseada em segundos — elimina o burst duplo
+// da janela fixa por minuto. A chave usa time.Now().Unix()/windowSecs,
+// garantindo que cada janela seja isolada e proporcional ao tamanho configurado.
 type redisLimiter struct {
-	client            *redis.Client
-	requestsPerMinute int
+	client     *redis.Client
+	maxReqs    int
+	windowSecs int64
 }
 
-func newRedisLimiter(redisURL string, requestsPerMinute int) (*redisLimiter, error) {
+func newRedisLimiter(redisURL string, maxReqs int, windowSecs int) (*redisLimiter, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid REDIS_URL: %w", err)
@@ -33,53 +35,69 @@ func newRedisLimiter(redisURL string, requestsPerMinute int) (*redisLimiter, err
 		return nil, fmt.Errorf("redis ping failed: %w", err)
 	}
 
-	return &redisLimiter{client: client, requestsPerMinute: requestsPerMinute}, nil
+	return &redisLimiter{
+		client:     client,
+		maxReqs:    maxReqs,
+		windowSecs: int64(windowSecs),
+	}, nil
 }
 
 func (r *redisLimiter) allow(key string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	redisKey := fmt.Sprintf("rl:%s:%d", key, time.Now().Minute())
+	// A janela desliza de windowSecs em windowSecs — burst na virada é
+	// no máximo de 2 segundos (apenas no momento em que a janela troca),
+	// não de 1 minuto inteiro como na implementação anterior.
+	windowID := time.Now().Unix() / r.windowSecs
+	redisKey := fmt.Sprintf("rl:%s:%d", key, windowID)
 
 	cnt, err := r.client.Incr(ctx, redisKey).Result()
 	if err != nil {
-		// Em caso de falha do Redis, permite a requisição (fail-open)
+		// Falha do Redis → fail-open (não bloqueia a API)
 		log.Printf("[RATELIMIT-REDIS] error: %v — allowing request", err)
 		return true
 	}
 
 	if cnt == 1 {
-		// Primeira requisição neste minuto — define TTL de 2 minutos (janela + folga)
-		r.client.Expire(ctx, redisKey, 2*time.Minute)
+		// Primeira req nesta janela — TTL = janela + folga de 1 janela
+		r.client.Expire(ctx, redisKey, time.Duration(r.windowSecs*2)*time.Second)
 	}
 
-	return int(cnt) <= r.requestsPerMinute
+	return int(cnt) <= r.maxReqs
 }
 
-// NewRateLimitByKey cria o middleware de rate limit.
-// Se redisURL estiver configurado, usa Redis (distribuído).
-// Caso contrário, usa o bucket in-memory por instância.
+// NewRateLimitByKey cria o middleware de rate limit com semântica clara:
+//   - maxRequests: máximo de requisições permitidas na janela
+//   - windowSeconds: tamanho da janela em segundos
+//
+// Exemplos:
+//
+//	NewRateLimitByKey(keyFn, 30, 60, redisURL)   → 30 req/minuto
+//	NewRateLimitByKey(keyFn, 10, 300, redisURL)  → 10 req/5min
+//	NewRateLimitByKey(keyFn, 5, 3600, redisURL)  → 5 req/hora
+//
+// Se redisURL estiver configurado usa Redis distribuído; caso contrário usa
+// token bucket in-memory por instância.
 func NewRateLimitByKey(
 	keyFn func(*gin.Context) string,
-	requestsPerMinute int,
-	burst int,
+	maxRequests int,
+	windowSeconds int,
 	redisURL string,
 ) gin.HandlerFunc {
-	if requestsPerMinute <= 0 {
-		requestsPerMinute = 60
+	if maxRequests <= 0 {
+		maxRequests = 60
 	}
-	if burst <= 0 {
-		burst = 10
+	if windowSeconds <= 0 {
+		windowSeconds = 60
 	}
 
-	// Tenta Redis primeiro
 	if redisURL != "" {
-		rl, err := newRedisLimiter(redisURL, requestsPerMinute)
+		rl, err := newRedisLimiter(redisURL, maxRequests, windowSeconds)
 		if err != nil {
 			log.Printf("[RATELIMIT] Redis indisponível (%v) — fallback para in-memory", err)
 		} else {
-			log.Println("[RATELIMIT] usando Redis distribuído")
+			log.Printf("[RATELIMIT] usando Redis distribuído (%d req/%ds)", maxRequests, windowSeconds)
 			return func(c *gin.Context) {
 				key := keyFn(c)
 				if strings.TrimSpace(key) == "" || !rl.allow(key) {
@@ -94,7 +112,6 @@ func NewRateLimitByKey(
 		}
 	}
 
-	// Fallback: in-memory
-	log.Println("[RATELIMIT] usando in-memory (não distribuído)")
-	return RateLimitByKey(keyFn, requestsPerMinute, burst)
+	log.Printf("[RATELIMIT] usando in-memory (%d req/%ds)", maxRequests, windowSeconds)
+	return newInMemoryRateLimit(keyFn, maxRequests, windowSeconds)
 }

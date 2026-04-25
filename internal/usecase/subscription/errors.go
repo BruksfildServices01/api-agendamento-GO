@@ -1,6 +1,10 @@
 package subscription
 
-import "errors"
+import (
+	"errors"
+
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
+)
 
 var (
 	ErrInvalidInput                       = errors.New("invalid_input")
@@ -9,8 +13,10 @@ var (
 	ErrPlanInactive                       = errors.New("plan_inactive")
 	ErrInvalidPlanDuration                = errors.New("invalid_plan_duration")
 	ErrClientAlreadyHasActiveSubscription = errors.New("client_already_has_active_subscription")
-	ErrActiveSubscriptionNotFound         = errors.New("active_subscription_not_found")
-	ErrInvalidBarbershop                  = errors.New("invalid_barbershop")
+	// Aponta para o domínio — errors.Is funciona com domain.ErrActiveSubscriptionNotFound
+	ErrActiveSubscriptionNotFound = domain.ErrActiveSubscriptionNotFound
+	ErrCutsLimitExceeded          = domain.ErrCutsLimitExceeded
+	ErrInvalidBarbershop          = errors.New("invalid_barbershop")
 	ErrInvalidName                        = errors.New("invalid_name")
 	ErrInvalidPrice                       = errors.New("invalid_price")
 	ErrInvalidDurationDays                = errors.New("invalid_duration_days")

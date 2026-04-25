@@ -4,24 +4,23 @@ import (
 	"context"
 	"time"
 
+	"gorm.io/gorm"
+
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 )
 
 type UpdateClientMetrics struct {
-	repo domain.ClientMetricsRepository
+	repo *infraRepo.ClientMetricsGormRepository
+	db   *gorm.DB
 }
 
 func NewUpdateClientMetrics(
-	repo domain.ClientMetricsRepository,
+	repo *infraRepo.ClientMetricsGormRepository,
+	db *gorm.DB,
 ) *UpdateClientMetrics {
-	return &UpdateClientMetrics{
-		repo: repo,
-	}
+	return &UpdateClientMetrics{repo: repo, db: db}
 }
-
-// --------------------------------
-// INPUT
-// --------------------------------
 
 type UpdateClientMetricsInput struct {
 	BarbershopID uint
@@ -43,15 +42,13 @@ const (
 	EventAppointmentLateRescheduled EventType = "appointment_late_rescheduled"
 )
 
-// --------------------------------
-// EXECUTE
-// --------------------------------
-
+// Execute atualiza as métricas do cliente de forma atômica.
+// O SELECT FOR UPDATE dentro da transação impede que dois eventos simultâneos
+// para o mesmo cliente se sobreponham e percam um incremento.
 func (uc *UpdateClientMetrics) Execute(
 	ctx context.Context,
 	in UpdateClientMetricsInput,
 ) error {
-
 	if in.BarbershopID == 0 || in.ClientID == 0 {
 		return nil
 	}
@@ -61,45 +58,39 @@ func (uc *UpdateClientMetrics) Execute(
 		occurredAt = time.Now().UTC()
 	}
 
-	m, err := uc.repo.GetOrCreate(
-		ctx,
-		in.BarbershopID,
-		in.ClientID,
-	)
-	if err != nil {
-		return err
-	}
+	return uc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := uc.repo.WithTx(tx)
 
-	switch in.EventType {
+		m, err := txRepo.GetOrCreate(ctx, in.BarbershopID, in.ClientID)
+		if err != nil {
+			return err
+		}
 
-	case EventAppointmentCreated:
-		m.OnAppointmentCreated(occurredAt)
+		switch in.EventType {
+		case EventAppointmentCreated:
+			m.OnAppointmentCreated(occurredAt)
+		case EventAppointmentCompleted:
+			m.OnAppointmentCompleted(occurredAt, in.Amount)
+		case EventAppointmentCanceled:
+			m.OnAppointmentCanceled(occurredAt)
+		case EventAppointmentNoShow:
+			m.OnAppointmentNoShow(occurredAt)
+		case EventAppointmentRescheduled:
+			m.OnAppointmentRescheduled(occurredAt, false)
+		case EventAppointmentLateCanceled:
+			m.OnAppointmentCanceled(occurredAt)
+			m.OnLateCancellation(occurredAt)
+		case EventAppointmentLateRescheduled:
+			m.OnAppointmentRescheduled(occurredAt, true)
+		default:
+			return nil
+		}
 
-	case EventAppointmentCompleted:
-		m.OnAppointmentCompleted(
-			occurredAt,
-			in.Amount,
-		)
+		return txRepo.Save(ctx, m)
+	})
+}
 
-	case EventAppointmentCanceled:
-		m.OnAppointmentCanceled(occurredAt)
-
-	case EventAppointmentNoShow:
-		m.OnAppointmentNoShow(occurredAt)
-
-	case EventType("appointment_rescheduled"):
-		m.OnAppointmentRescheduled(occurredAt, false)
-
-	case EventType("appointment_late_canceled"):
-		m.OnAppointmentCanceled(occurredAt)
-		m.OnLateCancellation(occurredAt)
-
-	case EventType("appointment_late_rescheduled"):
-		m.OnAppointmentRescheduled(occurredAt, true)
-
-	default:
-		return nil
-	}
-
-	return uc.repo.Save(ctx, m)
+// ManualCategoryExpiresAt helper para o usecase de override de categoria.
+func ManualCategoryExpiresAt(m *domain.ClientMetrics) *time.Time {
+	return m.ManualCategoryExpiresAt
 }

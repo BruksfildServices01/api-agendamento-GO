@@ -9,6 +9,7 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 )
 
+
 var ErrConsumeCutInfra = errors.New("consume_cut_infra_error")
 
 type ConsumeCutStatus string
@@ -38,20 +39,29 @@ func NewConsumeCut(repo domain.Repository) *ConsumeCut {
 	}
 }
 
+// Execute consome um crédito de assinatura do cliente.
+// repoOverride permite passar um repo vinculado a uma transação externa,
+// garantindo que o consumo seja revertido se a transação falhar.
 func (uc *ConsumeCut) Execute(
 	ctx context.Context,
 	barbershopID uint,
 	clientID uint,
 	serviceID uint,
 	hadReservation bool,
+	repoOverride ...domain.Repository,
 ) (*ConsumeCutResult, error) {
+	repo := uc.repo
+	if len(repoOverride) > 0 && repoOverride[0] != nil {
+		repo = repoOverride[0]
+	}
+
 	if barbershopID == 0 || clientID == 0 || serviceID == 0 {
 		return &ConsumeCutResult{
 			Status: ConsumeCutStatusNoActiveSubscription,
 		}, nil
 	}
 
-	sub, err := uc.repo.GetActiveSubscription(ctx, barbershopID, clientID)
+	sub, err := repo.GetActiveSubscription(ctx, barbershopID, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: get active subscription: %v", ErrConsumeCutInfra, err)
 	}
@@ -72,7 +82,7 @@ func (uc *ConsumeCut) Execute(
 		return result, nil
 	}
 
-	plan, err := uc.repo.GetPlanByID(ctx, barbershopID, sub.PlanID)
+	plan, err := repo.GetPlanByID(ctx, barbershopID, sub.PlanID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: get plan: %v", ErrConsumeCutInfra, err)
 	}
@@ -87,22 +97,28 @@ func (uc *ConsumeCut) Execute(
 		return result, nil
 	}
 
-	allowedServices, err := uc.repo.ListAllowedServiceIDs(ctx, sub.PlanID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: list allowed services: %v", ErrConsumeCutInfra, err)
-	}
-
-	isAllowed := false
-	for _, id := range allowedServices {
-		if id == serviceID {
-			isAllowed = true
-			break
+	// Quando hadReservation=true, o serviço foi validado contra o plano no momento
+	// do booking. Se o dono alterou o plano depois, honramos a reserva original —
+	// o cliente foi informado que o atendimento seria coberto.
+	// Quando não há reserva (consumo direto), validamos o serviço atual do plano.
+	if !hadReservation {
+		allowedServices, err := repo.ListAllowedServiceIDs(ctx, sub.PlanID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: list allowed services: %v", ErrConsumeCutInfra, err)
 		}
-	}
 
-	if !isAllowed {
-		result.Status = ConsumeCutStatusServiceNotAllowed
-		return result, nil
+		isAllowed := false
+		for _, id := range allowedServices {
+			if id == serviceID {
+				isAllowed = true
+				break
+			}
+		}
+
+		if !isAllowed {
+			result.Status = ConsumeCutStatusServiceNotAllowed
+			return result, nil
+		}
 	}
 
 	// When hadReservation is true we are converting an existing reservation into
@@ -124,14 +140,19 @@ func (uc *ConsumeCut) Execute(
 
 	var consumeErr error
 	if hadReservation {
-		consumeErr = uc.repo.ConsumeReservedCut(ctx, barbershopID, clientID)
+		consumeErr = repo.ConsumeReservedCut(ctx, barbershopID, clientID)
 	} else {
-		consumeErr = uc.repo.IncrementCutsUsed(ctx, barbershopID, clientID)
+		consumeErr = repo.IncrementCutsUsed(ctx, barbershopID, clientID)
 	}
 
 	if consumeErr != nil {
-		if consumeErr.Error() == "active_subscription_not_found" {
+		switch {
+		case errors.Is(consumeErr, domain.ErrActiveSubscriptionNotFound):
 			result.Status = ConsumeCutStatusNoActiveSubscription
+			return result, nil
+		case errors.Is(consumeErr, domain.ErrCutsLimitExceeded):
+			// Cap atingido no nível do banco (race condition prevenida atomicamente).
+			result.Status = ConsumeCutStatusLimitExceeded
 			return result, nil
 		}
 		return nil, fmt.Errorf("%w: consume cut: %v", ErrConsumeCutInfra, consumeErr)

@@ -192,6 +192,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		return
 	}
 
+	EvictPublicProductsCache(barbershopID)
 	c.JSON(http.StatusCreated, product)
 }
 
@@ -248,6 +249,7 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 		return
 	}
 
+	EvictPublicProductsCache(barbershopID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -313,5 +315,6 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
+	EvictPublicProductsCache(barbershopID)
 	c.JSON(http.StatusOK, product)
 }

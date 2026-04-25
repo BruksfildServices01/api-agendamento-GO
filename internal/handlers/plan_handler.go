@@ -55,7 +55,7 @@ func (h *PlanHandler) Create(c *gin.Context) {
 		return
 	}
 
-	err := h.createUC.Execute(c.Request.Context(), subscription.CreatePlanInput{
+	plan, err := h.createUC.Execute(c.Request.Context(), subscription.CreatePlanInput{
 		BarbershopID:      barbershopID,
 		Name:              req.Name,
 		MonthlyPriceCents: req.MonthlyPriceCents,
@@ -69,38 +69,29 @@ func (h *PlanHandler) Create(c *gin.Context) {
 		switch {
 		case errors.Is(err, subscription.ErrInvalidBarbershop):
 			httperr.BadRequest(c, "invalid_barbershop", "invalid_barbershop")
-
 		case errors.Is(err, subscription.ErrInvalidName):
 			httperr.BadRequest(c, "invalid_name", "invalid_name")
-
 		case errors.Is(err, subscription.ErrInvalidPrice):
 			httperr.BadRequest(c, "invalid_price", "invalid_price")
-
 		case errors.Is(err, subscription.ErrInvalidPlanDuration):
 			httperr.BadRequest(c, "invalid_duration_days", "invalid_duration_days")
-
 		case errors.Is(err, subscription.ErrInvalidCutsIncluded):
 			httperr.BadRequest(c, "invalid_cuts_included", "invalid_cuts_included")
-
 		case errors.Is(err, subscription.ErrInvalidDiscount):
 			httperr.BadRequest(c, "invalid_discount", "invalid_discount")
-
 		case errors.Is(err, subscription.ErrServiceIDsRequired):
 			httperr.BadRequest(c, "service_ids_required", "service_ids_required")
-
 		case errors.Is(err, subscription.ErrInvalidServiceID):
 			httperr.BadRequest(c, "invalid_service_id", "invalid_service_id")
-
 		case errors.Is(err, subscription.ErrInvalidServiceIDs):
 			httperr.BadRequest(c, "invalid_service_ids", "invalid_service_ids")
-
 		default:
 			httperr.Internal(c, "failed_to_create_plan", "failed_to_create_plan")
 		}
 		return
 	}
 
-	c.Status(http.StatusCreated)
+	c.JSON(http.StatusCreated, plan)
 }
 
 func (h *PlanHandler) Update(c *gin.Context) {

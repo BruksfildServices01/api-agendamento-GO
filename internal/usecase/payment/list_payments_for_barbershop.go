@@ -15,6 +15,8 @@ type ListPaymentsInput struct {
 	Status    *string
 	StartDate *time.Time
 	EndDate   *time.Time
+	Limit     int
+	Offset    int
 }
 
 type ListPaymentsForBarbershop struct {
@@ -29,10 +31,15 @@ func NewListPaymentsForBarbershop(
 	}
 }
 
+type ListPaymentsResult struct {
+	Payments []models.Payment
+	Total    int64
+}
+
 func (uc *ListPaymentsForBarbershop) Execute(
 	ctx context.Context,
 	input ListPaymentsInput,
-) ([]models.Payment, error) {
+) (*ListPaymentsResult, error) {
 
 	if input.BarbershopID == 0 {
 		return nil, errors.New("invalid barbershop id")
@@ -42,11 +49,19 @@ func (uc *ListPaymentsForBarbershop) Execute(
 		Status:    input.Status,
 		StartDate: input.StartDate,
 		EndDate:   input.EndDate,
+		Limit:     input.Limit,
+		Offset:    input.Offset,
 	}
 
-	return uc.repo.ListForBarbershop(
-		ctx,
-		input.BarbershopID,
-		filter,
-	)
+	payments, err := uc.repo.ListForBarbershop(ctx, input.BarbershopID, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	total, err := uc.repo.CountForBarbershop(ctx, input.BarbershopID, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ListPaymentsResult{Payments: payments, Total: total}, nil
 }

@@ -245,6 +245,33 @@ func (r *PaymentGormRepository) ListForBarbershop(
 	return payments, err
 }
 
+func (r *PaymentGormRepository) CountForBarbershop(
+	ctx context.Context,
+	barbershopID uint,
+	filter domainPayment.PaymentListFilter,
+) (int64, error) {
+
+	q := r.db.WithContext(ctx).
+		Model(&models.Payment{}).
+		Where("barbershop_id = ?", barbershopID)
+
+	if filter.Status != nil {
+		q = q.Where("status = ?", *filter.Status)
+	} else {
+		q = q.Where("status = ?", "paid")
+	}
+	if filter.StartDate != nil {
+		q = q.Where("created_at >= ?", *filter.StartDate)
+	}
+	if filter.EndDate != nil {
+		q = q.Where("created_at < ?", *filter.EndDate)
+	}
+
+	var count int64
+	err := q.Count(&count).Error
+	return count, err
+}
+
 func (r *PaymentGormRepository) GetSummaryForBarbershop(
 	ctx context.Context,
 	barbershopID uint,
@@ -255,41 +282,53 @@ func (r *PaymentGormRepository) GetSummaryForBarbershop(
 	type row struct {
 		Status string
 		Count  int64
-		Total  int64 // centavos
-	}
-
-	var rows []row
-
-	q := r.db.WithContext(ctx).
-		Model(&models.Payment{}).
-		Select("status, COUNT(*) as count, COALESCE(SUM(amount),0) as total").
-		Where("barbershop_id = ?", barbershopID).
-		Group("status")
-
-	if from != nil {
-		q = q.Where("created_at >= ?", *from)
-	}
-	if to != nil {
-		q = q.Where("created_at < ?", *to)
-	}
-
-	if err := q.Scan(&rows).Error; err != nil {
-		return nil, err
+		Total  int64
 	}
 
 	summary := &domainPayment.PaymentSummary{}
 
-	for _, r := range rows {
-		switch r.Status {
-		case "paid":
-			summary.TotalPaid = r.Total
-			summary.CountPaid = r.Count
+	// Pagamentos confirmados: filtrados por paid_at (quando o dinheiro entrou de fato).
+	paidQ := r.db.WithContext(ctx).
+		Model(&models.Payment{}).
+		Select("COUNT(*) as count, COALESCE(SUM(amount),0) as total").
+		Where("barbershop_id = ? AND status = 'paid'", barbershopID)
+	if from != nil {
+		paidQ = paidQ.Where("paid_at >= ?", *from)
+	}
+	if to != nil {
+		paidQ = paidQ.Where("paid_at < ?", *to)
+	}
+	var paidRow row
+	if err := paidQ.Scan(&paidRow).Error; err != nil {
+		return nil, err
+	}
+	summary.TotalPaid = paidRow.Total
+	summary.CountPaid = paidRow.Count
+
+	// Pagamentos pendentes e expirados: filtrados por created_at (criados no período).
+	var otherRows []row
+	otherQ := r.db.WithContext(ctx).
+		Model(&models.Payment{}).
+		Select("status, COUNT(*) as count, COALESCE(SUM(amount),0) as total").
+		Where("barbershop_id = ? AND status IN ('pending','expired')", barbershopID).
+		Group("status")
+	if from != nil {
+		otherQ = otherQ.Where("created_at >= ?", *from)
+	}
+	if to != nil {
+		otherQ = otherQ.Where("created_at < ?", *to)
+	}
+	if err := otherQ.Scan(&otherRows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range otherRows {
+		switch row.Status {
 		case "pending":
-			summary.TotalPending = r.Total
-			summary.CountPending = r.Count
+			summary.TotalPending = row.Total
+			summary.CountPending = row.Count
 		case "expired":
-			summary.TotalExpired = r.Total
-			summary.CountExpired = r.Count
+			summary.TotalExpired = row.Total
+			summary.CountExpired = row.Count
 		}
 	}
 

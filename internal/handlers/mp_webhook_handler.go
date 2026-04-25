@@ -14,6 +14,7 @@ import (
 	"github.com/mercadopago/sdk-go/pkg/payment"
 	"gorm.io/gorm"
 
+	infraMP "github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
@@ -24,17 +25,20 @@ import (
 type MPWebhookHandler struct {
 	markMPPaid        *ucPayment.MarkMPPaymentAsPaid
 	globalAccessToken string
+	webhookSecret     string
 	db                *gorm.DB
 }
 
 func NewMPWebhookHandler(
 	markMPPaid *ucPayment.MarkMPPaymentAsPaid,
 	globalAccessToken string,
+	webhookSecret string,
 	db *gorm.DB,
 ) *MPWebhookHandler {
 	return &MPWebhookHandler{
 		markMPPaid:        markMPPaid,
 		globalAccessToken: globalAccessToken,
+		webhookSecret:     webhookSecret,
 		db:                db,
 	}
 }
@@ -60,6 +64,20 @@ func (h *MPWebhookHandler) Handle(c *gin.Context) {
 	if notif.Type != "payment" || notif.Data.ID == "" {
 		c.Status(http.StatusOK)
 		return
+	}
+
+	// Valida assinatura HMAC quando o secret estiver configurado.
+	// Em dev/mock (secret vazio), a validação é ignorada com aviso.
+	if h.webhookSecret != "" {
+		xSig := c.GetHeader("x-signature")
+		xReqID := c.GetHeader("x-request-id")
+		if !infraMP.VerifyWebhookSignature(h.webhookSecret, xSig, xReqID, notif.Data.ID) {
+			log.Printf("[MP WEBHOOK] invalid signature for payment %s", notif.Data.ID)
+			c.Status(http.StatusOK) // retorna 200 para não gerar retries desnecessários do MP
+			return
+		}
+	} else {
+		log.Printf("[MP WEBHOOK] MP_WEBHOOK_SECRET não configurado — assinatura não validada")
 	}
 
 	mpPaymentID := notif.Data.ID

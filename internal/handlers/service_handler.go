@@ -188,6 +188,7 @@ func (h *ServiceHandler) Create(c *gin.Context) {
 		return
 	}
 
+	EvictPublicServicesCache(barbershopID)
 	c.JSON(http.StatusCreated, svc)
 }
 
@@ -244,6 +245,7 @@ func (h *ServiceHandler) Delete(c *gin.Context) {
 		return
 	}
 
+	EvictPublicServicesCache(barbershopID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -310,5 +312,6 @@ func (h *ServiceHandler) Update(c *gin.Context) {
 		return
 	}
 
+	EvictPublicServicesCache(barbershopID)
 	c.JSON(http.StatusOK, svc)
 }

@@ -8,10 +8,11 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
-	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
+	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	domainSubscription "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
@@ -26,15 +27,23 @@ type txableRepository interface {
 	WithTx(tx *gorm.DB) domain.Repository
 }
 
+// txableSubscriptionRepo is the minimal interface needed to scope a
+// subscription repository to an existing transaction.
+type txableSubscriptionRepo interface {
+	domainSubscription.Repository
+	WithTx(tx *gorm.DB) *infraRepo.SubscriptionGormRepository
+}
+
 type CompleteAppointment struct {
-	db           *gorm.DB
-	repo         txableRepository
-	paymentRepo  domainPayment.Repository
-	orderRepo    *infraRepo.OrderGormRepository
-	productRepo  *infraRepo.ProductGormRepository
-	audit        *audit.Dispatcher
-	metrics      *ucMetrics.UpdateClientMetrics
-	consumeCutUC *ucSubscription.ConsumeCut
+	db               *gorm.DB
+	repo             txableRepository
+	paymentRepo      domainPayment.Repository
+	orderRepo        *infraRepo.OrderGormRepository
+	productRepo      *infraRepo.ProductGormRepository
+	subscriptionRepo txableSubscriptionRepo
+	audit            *audit.Dispatcher
+	metrics          *ucMetrics.UpdateClientMetrics
+	consumeCutUC     *ucSubscription.ConsumeCut
 }
 
 func NewCompleteAppointment(
@@ -43,19 +52,21 @@ func NewCompleteAppointment(
 	paymentRepo domainPayment.Repository,
 	orderRepo *infraRepo.OrderGormRepository,
 	productRepo *infraRepo.ProductGormRepository,
+	subscriptionRepo txableSubscriptionRepo,
 	audit *audit.Dispatcher,
 	metrics *ucMetrics.UpdateClientMetrics,
 	consumeCutUC *ucSubscription.ConsumeCut,
 ) *CompleteAppointment {
 	return &CompleteAppointment{
-		db:           db,
-		repo:         repo,
-		paymentRepo:  paymentRepo,
-		orderRepo:    orderRepo,
-		productRepo:  productRepo,
-		audit:        audit,
-		metrics:      metrics,
-		consumeCutUC: consumeCutUC,
+		db:               db,
+		repo:             repo,
+		paymentRepo:      paymentRepo,
+		orderRepo:        orderRepo,
+		productRepo:      productRepo,
+		subscriptionRepo: subscriptionRepo,
+		audit:            audit,
+		metrics:          metrics,
+		consumeCutUC:     consumeCutUC,
 	}
 }
 
@@ -152,8 +163,12 @@ func (uc *CompleteAppointment) Execute(
 		// booking time. Appointments created without subscription coverage
 		// (ReservedSubscriptionCut = false) complete under normal charging
 		// and must not attempt retroactive subscription consumption.
+		//
+		// O repo é vinculado ao tx para que o consumo seja revertido junto
+		// com o restante da transação em caso de falha.
 		if ap.ReservedSubscriptionCut && ap.ClientID != nil && actualServiceID != nil && uc.consumeCutUC != nil {
-			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, true)
+			txSubRepo := uc.subscriptionRepo.WithTx(tx)
+			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, true, txSubRepo)
 			if err != nil {
 				return err
 			}
@@ -162,12 +177,26 @@ func (uc *CompleteAppointment) Execute(
 
 		now := time.Now().UTC()
 
+		// Captura o status antes de domain.Complete modificá-lo.
+		wasAwaitingPayment := ap.Status == models.AppointmentStatus(domain.StatusAwaitingPayment)
+
 		if err := domain.Complete(ap, now); err != nil {
 			return err
 		}
 
 		if err := txRepo.UpdateAppointment(ctx, ap); err != nil {
 			return err
+		}
+
+		// Se o agendamento estava aguardando pagamento (PIX não confirmado), expira
+		// o payment pendente dentro da mesma transação para manter consistência.
+		// Best-effort: se não existir payment, RowsAffected=0 e seguimos normalmente.
+		if wasAwaitingPayment {
+			tx.WithContext(ctx).
+				Model(&models.Payment{}).
+				Where("barbershop_id = ? AND appointment_id = ? AND status = ?",
+					barbershopID, ap.ID, "pending").
+				Updates(map[string]any{"status": "expired", "qr_code": nil})
 		}
 
 		subscriptionCovered := false
@@ -228,6 +257,12 @@ func (uc *CompleteAppointment) Execute(
 
 			if err := txOrderRepo.Create(ctx, order); err != nil {
 				return err
+			}
+
+			for _, item := range input.AdditionalItems {
+				if err := txProductRepo.DecreaseStock(ctx, barbershopID, item.ProductID, item.Quantity); err != nil {
+					return err
+				}
 			}
 
 			additionalOrderID = &order.ID

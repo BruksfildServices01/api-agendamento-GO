@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
@@ -190,6 +192,11 @@ func (h *BarbershopHandler) UpdateSlug(c *gin.Context) {
 	if err := h.db.Model(&models.Barbershop{}).
 		Where("id = ?", barbershopID).
 		Update("slug", slug).Error; err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			httperr.Write(c, http.StatusConflict, "slug_already_exists", "Este endereço já está em uso.")
+			return
+		}
 		httperr.Internal(c, "failed_to_update_slug", "Erro ao salvar.")
 		return
 	}

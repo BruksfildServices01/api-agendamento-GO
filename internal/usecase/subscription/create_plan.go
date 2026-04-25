@@ -29,39 +29,39 @@ type CreatePlanInput struct {
 func (uc *CreatePlan) Execute(
 	ctx context.Context,
 	input CreatePlanInput,
-) error {
+) (*domain.Plan, error) {
 	if input.BarbershopID == 0 {
-		return ErrInvalidBarbershop
+		return nil, ErrInvalidBarbershop
 	}
 
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return ErrInvalidName
+		return nil, ErrInvalidName
 	}
 
 	if input.MonthlyPriceCents < 0 {
-		return ErrInvalidPrice
+		return nil, ErrInvalidPrice
 	}
 
 	if input.DurationDays <= 0 {
-		return ErrInvalidPlanDuration
+		return nil, ErrInvalidPlanDuration
 	}
 
 	if input.CutsIncluded < 0 {
-		return ErrInvalidCutsIncluded
+		return nil, ErrInvalidCutsIncluded
 	}
 
 	if input.DiscountPercent < 0 || input.DiscountPercent > 100 {
-		return ErrInvalidDiscount
+		return nil, ErrInvalidDiscount
 	}
 
 	if len(input.ServiceIDs) == 0 && len(input.CategoryIDs) == 0 {
-		return ErrServiceIDsRequired
+		return nil, ErrServiceIDsRequired
 	}
 
 	for _, serviceID := range input.ServiceIDs {
 		if serviceID == 0 {
-			return ErrInvalidServiceID
+			return nil, ErrInvalidServiceID
 		}
 	}
 
@@ -72,26 +72,25 @@ func (uc *CreatePlan) Execute(
 			input.ServiceIDs,
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
-
 		if count != int64(len(input.ServiceIDs)) {
-			return ErrInvalidServiceIDs
+			return nil, ErrInvalidServiceIDs
 		}
 	}
 
 	if len(input.CategoryIDs) > 0 {
 		for _, catID := range input.CategoryIDs {
 			if catID == 0 {
-				return ErrInvalidServiceID
+				return nil, ErrInvalidServiceID
 			}
 		}
 		count, err := uc.repo.CountCategoriesByIDs(ctx, input.BarbershopID, input.CategoryIDs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if count != int64(len(input.CategoryIDs)) {
-			return ErrInvalidServiceIDs
+			return nil, ErrInvalidServiceIDs
 		}
 	}
 
@@ -105,5 +104,8 @@ func (uc *CreatePlan) Execute(
 		Active:            true,
 	}
 
-	return uc.repo.CreatePlan(ctx, plan, input.ServiceIDs, input.CategoryIDs)
+	if err := uc.repo.CreatePlan(ctx, plan, input.ServiceIDs, input.CategoryIDs); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }

@@ -6,13 +6,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
+	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httpresp"
@@ -25,6 +28,59 @@ import (
 	serviceUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/service"
 	serviceSuggestionUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
 )
+
+// slugCache evita queries repetidas ao banco para lookup de barbearia por slug.
+const slugCacheTTL = 60 * time.Second
+
+type slugCacheEntry struct {
+	shop      *models.Barbershop
+	expiresAt time.Time
+}
+
+var (
+	slugCacheMu sync.RWMutex
+	slugCache   = make(map[string]*slugCacheEntry)
+	slugSFGroup singleflight.Group
+)
+
+// publicListCache armazena a listagem sem filtros de serviços e produtos públicos.
+// TTL de 5 minutos — invalidação explícita quando o dono edita o catálogo.
+// Só é usado quando não há filtros de categoria ou busca (caso mais comum).
+const publicListCacheTTL = 5 * time.Minute
+
+type publicServicesCacheEntry struct {
+	services  []*domainService.Service
+	expiresAt time.Time
+}
+
+type publicProductsCacheEntry struct {
+	products  []dto.PublicProductListItemDTO
+	expiresAt time.Time
+}
+
+var (
+	pubServicesCacheMu sync.RWMutex
+	pubServicesCache   = make(map[uint]*publicServicesCacheEntry)
+
+	pubProductsCacheMu sync.RWMutex
+	pubProductsCache   = make(map[uint]*publicProductsCacheEntry)
+)
+
+// EvictPublicServicesCache invalida o cache de serviços de uma barbearia.
+// Deve ser chamado sempre que um serviço for criado, atualizado ou deletado.
+func EvictPublicServicesCache(barbershopID uint) {
+	pubServicesCacheMu.Lock()
+	delete(pubServicesCache, barbershopID)
+	pubServicesCacheMu.Unlock()
+}
+
+// EvictPublicProductsCache invalida o cache de produtos de uma barbearia.
+// Deve ser chamado sempre que um produto for criado, atualizado ou deletado.
+func EvictPublicProductsCache(barbershopID uint) {
+	pubProductsCacheMu.Lock()
+	delete(pubProductsCache, barbershopID)
+	pubProductsCacheMu.Unlock()
+}
 
 ////////////////////////////////////////////////////////
 // HANDLER
@@ -98,6 +154,25 @@ func (h *PublicHandler) ListServices(c *gin.Context) {
 	category := strings.TrimSpace(strings.ToLower(c.Query("category")))
 	query := strings.TrimSpace(c.Query("query"))
 
+	// Cache somente para listagem sem filtros (caso mais comum no fluxo de booking).
+	useCache := category == "" && query == ""
+
+	if useCache {
+		pubServicesCacheMu.RLock()
+		entry, hit := pubServicesCache[shop.ID]
+		valid := hit && time.Now().Before(entry.expiresAt)
+		pubServicesCacheMu.RUnlock()
+
+		if valid {
+			setCacheControl(c, 120)
+			c.JSON(http.StatusOK, gin.H{
+				"barbershop": gin.H{"id": shop.ID, "name": shop.Name, "slug": shop.Slug},
+				"services":   entry.services,
+			})
+			return
+		}
+	}
+
 	services, err := h.listPublicServices.Execute(
 		c.Request.Context(),
 		serviceUC.ListPublicServicesInput{
@@ -111,14 +186,19 @@ func (h *PublicHandler) ListServices(c *gin.Context) {
 		return
 	}
 
+	if useCache {
+		pubServicesCacheMu.Lock()
+		pubServicesCache[shop.ID] = &publicServicesCacheEntry{
+			services:  services,
+			expiresAt: time.Now().Add(publicListCacheTTL),
+		}
+		pubServicesCacheMu.Unlock()
+	}
+
 	setCacheControl(c, 120)
 	c.JSON(http.StatusOK, gin.H{
-		"barbershop": gin.H{
-			"id":   shop.ID,
-			"name": shop.Name,
-			"slug": shop.Slug,
-		},
-		"services": services,
+		"barbershop": gin.H{"id": shop.ID, "name": shop.Name, "slug": shop.Slug},
+		"services":   services,
 	})
 }
 
@@ -199,6 +279,25 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 	category := strings.TrimSpace(strings.ToLower(c.Query("category")))
 	query := strings.TrimSpace(c.Query("query"))
 
+	useCache := category == "" && query == ""
+
+	if useCache {
+		pubProductsCacheMu.RLock()
+		entry, hit := pubProductsCache[shop.ID]
+		valid := hit && time.Now().Before(entry.expiresAt)
+		pubProductsCacheMu.RUnlock()
+
+		if valid {
+			setCacheControl(c, 60)
+			c.JSON(http.StatusOK, gin.H{
+				"barbershop": gin.H{"id": shop.ID, "name": shop.Name, "slug": shop.Slug},
+				"products":   entry.products,
+				"total":      len(entry.products),
+			})
+			return
+		}
+	}
+
 	products, err := h.listPublicProducts.Execute(
 		c.Request.Context(),
 		productUC.ListPublicProductsInput{
@@ -212,15 +311,20 @@ func (h *PublicHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
+	if useCache {
+		pubProductsCacheMu.Lock()
+		pubProductsCache[shop.ID] = &publicProductsCacheEntry{
+			products:  products,
+			expiresAt: time.Now().Add(publicListCacheTTL),
+		}
+		pubProductsCacheMu.Unlock()
+	}
+
 	setCacheControl(c, 60)
 	c.JSON(http.StatusOK, gin.H{
-		"barbershop": gin.H{
-			"id":   shop.ID,
-			"name": shop.Name,
-			"slug": shop.Slug,
-		},
-		"products": products,
-		"total":    len(products),
+		"barbershop": gin.H{"id": shop.ID, "name": shop.Name, "slug": shop.Slug},
+		"products":   products,
+		"total":      len(products),
 	})
 }
 
@@ -625,13 +729,35 @@ func (h *PublicHandler) GetBarbershopIDBySlug(c *gin.Context, slug string) (uint
 }
 
 func (h *PublicHandler) getPublicBarbershopBySlug(ctx context.Context, slug string) (*models.Barbershop, error) {
-	var shop models.Barbershop
-	err := h.db.WithContext(ctx).Where("slug = ?", slug).First(&shop).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+	slugCacheMu.RLock()
+	entry, hit := slugCache[slug]
+	valid := hit && time.Now().Before(entry.expiresAt)
+	slugCacheMu.RUnlock()
+
+	if valid {
+		return entry.shop, nil
+	}
+
+	// singleflight: múltiplas goroutines buscando o mesmo slug disparam uma query.
+	v, err, _ := slugSFGroup.Do("slug:"+slug, func() (any, error) {
+		var shop models.Barbershop
+		if err := h.db.WithContext(ctx).Where("slug = ?", slug).First(&shop).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				slugCacheMu.Lock()
+				slugCache[slug] = &slugCacheEntry{shop: nil, expiresAt: time.Now().Add(slugCacheTTL)}
+				slugCacheMu.Unlock()
+				return (*models.Barbershop)(nil), nil
+			}
+			return nil, err
 		}
+		slugCacheMu.Lock()
+		slugCache[slug] = &slugCacheEntry{shop: &shop, expiresAt: time.Now().Add(slugCacheTTL)}
+		slugCacheMu.Unlock()
+		return &shop, nil
+	})
+
+	if err != nil {
 		return nil, err
 	}
-	return &shop, nil
+	return v.(*models.Barbershop), nil
 }

@@ -102,6 +102,14 @@ func (uc *UpdatePaymentPolicies) Execute(
 			return err
 		}
 
+		// Categoria idêntica ao default é redundante: o default já a cobre e
+		// salvar explicitamente impede que mudanças futuras no default reflitam.
+		// O frontend pode enviar todas as 4 categorias com o valor do default
+		// antigo — descartá-las garante que o novo default valha imediatamente.
+		if p.Requirement == in.DefaultRequirement {
+			continue
+		}
+
 		if err := uc.repo.UpsertCategoryPolicy(ctx, barbershopID, p); err != nil {
 			return err
 		}

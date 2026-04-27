@@ -54,9 +54,14 @@ func (h *WhatsAppWebhookHandler) Receive(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[WhatsApp webhook] event=%q instance=%q fromMe=%v jid=%q",
+		payload.Event, payload.Instance, payload.Data.Key.FromMe, payload.Data.Key.RemoteJid)
+
 	// Ignora mensagens enviadas por nós, grupos e eventos que não são mensagens
+	// v1.x usa "MESSAGES_UPSERT", v2.x usa "messages.upsert"
+	eventLower := strings.ToLower(payload.Event)
 	if payload.Data.Key.FromMe ||
-		payload.Event != "messages.upsert" ||
+		(eventLower != "messages.upsert" && eventLower != "messages_upsert") ||
 		strings.HasSuffix(payload.Data.Key.RemoteJid, "@g.us") {
 		c.Status(http.StatusOK)
 		return

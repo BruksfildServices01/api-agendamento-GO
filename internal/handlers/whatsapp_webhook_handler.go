@@ -172,40 +172,42 @@ func (h *WhatsAppWebhookHandler) buildReply(d appointmentForReply) string {
 	start := d.StartTime.In(loc)
 	end := d.EndTime.In(loc)
 
-	weekdays := [...]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"}
+	weekdays := [...]string{"Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"}
 	months   := [...]string{"janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"}
 
 	dateStr := fmt.Sprintf("%s, %d de %s", weekdays[start.Weekday()], start.Day(), months[start.Month()-1])
 	timeStr := fmt.Sprintf("%02d:%02d – %02d:%02d", start.Hour(), start.Minute(), end.Hour(), end.Minute())
 
 	lines := []string{
-		fmt.Sprintf("✅ *Olá, %s! Comprovante recebido.*", d.ClientName),
+		fmt.Sprintf("✅ *Agendamento confirmado, %s!*", d.ClientName),
 		"",
-		"Confirmamos seu agendamento:",
+		fmt.Sprintf("✂️  *%s*", d.ServiceName),
+		fmt.Sprintf("📅  %s", dateStr),
+		fmt.Sprintf("🕐  %s", timeStr),
 		"",
-		fmt.Sprintf("✂️ *%s*", d.ServiceName),
-		fmt.Sprintf("📅 %s", dateStr),
-		fmt.Sprintf("🕐 %s", timeStr),
+		"━━━━━━━━━━━━━━━━━",
 	}
 
 	if d.Token != "" {
 		lines = append(lines,
 			"",
-			"🔗 *Seu ticket (cancelar ou remarcar):*",
+			"🎫 *Seu ticket:*",
 			fmt.Sprintf("https://corteon.app/ticket/%s", d.Token),
+			"_(cancelar ou remarcar pelo link acima)_",
 		)
 	}
 
 	lines = append(lines,
 		"",
-		"📌 *Informações importantes:*",
-		"• Chegue 5 min antes do horário",
-		"• Faltas sem aviso afetam sua prioridade futura",
-		"• Cancelamentos pelo link acima",
+		"━━━━━━━━━━━━━━━━━",
+		"",
+		"📌 *Lembre-se:*",
+		"• Chegue 5 minutos antes",
+		"• Faltas sem aviso afetam sua prioridade",
 	)
 
 	if d.BarbershopPhone != "" {
-		lines = append(lines, "", fmt.Sprintf("📞 Dúvidas: %s", d.BarbershopPhone))
+		lines = append(lines, "", fmt.Sprintf("📞  *Dúvidas:* %s", d.BarbershopPhone))
 	}
 
 	lines = append(lines, "", fmt.Sprintf("_Mensagem automática · %s_", d.BarbershopName))

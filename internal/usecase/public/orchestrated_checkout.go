@@ -112,16 +112,18 @@ func (uc *OrchestratedCheckout) Execute(
 
 	// Fire async appointment confirmation notification
 	// Only notify after confirmed payment — skip if appointment is awaiting payment.
-	if uc.apptNotifier != nil && input.ClientEmail != "" &&
+	if uc.apptNotifier != nil &&
+		(input.ClientEmail != "" || input.ClientPhone != "") &&
 		appointment.Status != models.AppointmentStatusAwaitingPayment {
 		type bsRow struct {
 			Name     string `gorm:"column:name"`
 			Phone    string `gorm:"column:phone"`
+			Slug     string `gorm:"column:slug"`
 			Timezone string `gorm:"column:timezone"`
 		}
 		var bs bsRow
 		if dbErr := uc.db.WithContext(ctx).
-			Raw("SELECT name, phone, timezone FROM barbershops WHERE id = ?", barbershopID).
+			Raw("SELECT name, phone, slug, timezone FROM barbershops WHERE id = ?", barbershopID).
 			Scan(&bs).Error; dbErr != nil {
 			log.Printf("[OrchestratedCheckout] failed to query barbershop for notification: %v", dbErr)
 		} else {
@@ -132,8 +134,10 @@ func (uc *OrchestratedCheckout) Execute(
 			notifyInput := domainNotification.AppointmentConfirmedInput{
 				ClientName:      input.ClientName,
 				ClientEmail:     input.ClientEmail,
+				ClientPhone:     input.ClientPhone,
 				BarbershopName:  bs.Name,
 				BarbershopPhone: bs.Phone,
+				BarbershopSlug:  bs.Slug,
 				ServiceName:     service.Name,
 				StartTime:       appointment.StartTime,
 				EndTime:         appointment.EndTime,

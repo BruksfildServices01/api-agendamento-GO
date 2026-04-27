@@ -146,25 +146,33 @@ func (uc *CancelViaTicket) Execute(ctx context.Context, token string) error {
 		type notifyRow struct {
 			ClientName     string `gorm:"column:client_name"`
 			ClientEmail    string `gorm:"column:client_email"`
+			ClientPhone    string `gorm:"column:client_phone"`
 			BarbershopName string `gorm:"column:barbershop_name"`
+			BarbershopSlug string `gorm:"column:barbershop_slug"`
 			Timezone       string `gorm:"column:timezone"`
 		}
 		var notifyData notifyRow
 		queryErr := uc.db.WithContext(ctx).Raw(`
-			SELECT c.name AS client_name, c.email AS client_email,
-			       b.name AS barbershop_name, b.timezone
+			SELECT c.name  AS client_name,
+			       c.email AS client_email,
+			       c.phone AS client_phone,
+			       b.name  AS barbershop_name,
+			       b.slug  AS barbershop_slug,
+			       b.timezone
 			FROM appointments a
-			JOIN clients c ON c.id = a.client_id
+			JOIN clients     c ON c.id = a.client_id
 			JOIN barbershops b ON b.id = a.barbershop_id
 			WHERE a.id = ?
 		`, appt.ID).Scan(&notifyData).Error
 		if queryErr != nil {
 			log.Printf("[CancelViaTicket] failed to query notification data: %v", queryErr)
-		} else if notifyData.ClientEmail != "" {
+		} else if notifyData.ClientEmail != "" || notifyData.ClientPhone != "" {
 			_ = uc.notifier.NotifyCancelled(ctx, domainNotification.AppointmentCancelledInput{
 				ClientName:     notifyData.ClientName,
 				ClientEmail:    notifyData.ClientEmail,
+				ClientPhone:    notifyData.ClientPhone,
 				BarbershopName: notifyData.BarbershopName,
+				BarbershopSlug: notifyData.BarbershopSlug,
 				StartTime:      appt.StartTime,
 				Timezone:       notifyData.Timezone,
 			})

@@ -263,28 +263,39 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 		type notifyRow struct {
 			ClientName      string `gorm:"column:client_name"`
 			ClientEmail     string `gorm:"column:client_email"`
+			ClientPhone     string `gorm:"column:client_phone"`
 			BarbershopName  string `gorm:"column:barbershop_name"`
 			BarbershopPhone string `gorm:"column:barbershop_phone"`
+			BarbershopSlug  string `gorm:"column:barbershop_slug"`
 			ServiceName     string `gorm:"column:service_name"`
 			Timezone        string `gorm:"column:timezone"`
 		}
 		var notifyData notifyRow
 		queryErr := uc.db.WithContext(ctx).Raw(`
-			SELECT c.name as client_name, c.email as client_email, b.name as barbershop_name, b.phone as barbershop_phone, bs.name as service_name, b.timezone
+			SELECT c.name  AS client_name,
+			       c.email AS client_email,
+			       c.phone AS client_phone,
+			       b.name  AS barbershop_name,
+			       b.phone AS barbershop_phone,
+			       b.slug  AS barbershop_slug,
+			       bs.name AS service_name,
+			       b.timezone
 			FROM appointments a
-			JOIN clients c ON c.id = a.client_id
-			JOIN barbershops b ON b.id = a.barbershop_id
+			JOIN clients             c  ON c.id  = a.client_id
+			JOIN barbershops         b  ON b.id  = a.barbershop_id
 			JOIN barbershop_services bs ON bs.id = a.barber_product_id
 			WHERE a.id = ?
 		`, appt.ID).Scan(&notifyData).Error
 		if queryErr != nil {
 			log.Printf("[RescheduleViaTicket] failed to query notification data: %v", queryErr)
-		} else if notifyData.ClientEmail != "" {
+		} else if notifyData.ClientEmail != "" || notifyData.ClientPhone != "" {
 			_ = uc.notifier.NotifyRescheduled(ctx, domainNotification.AppointmentRescheduledInput{
 				ClientName:      notifyData.ClientName,
 				ClientEmail:     notifyData.ClientEmail,
+				ClientPhone:     notifyData.ClientPhone,
 				BarbershopName:  notifyData.BarbershopName,
 				BarbershopPhone: notifyData.BarbershopPhone,
+				BarbershopSlug:  notifyData.BarbershopSlug,
 				ServiceName:     notifyData.ServiceName,
 				OldStartTime:    appt.StartTime,
 				NewStartTime:    newStartUTC,

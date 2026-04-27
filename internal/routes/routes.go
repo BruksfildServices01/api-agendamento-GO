@@ -456,6 +456,9 @@ func RegisterRoutes(
 		auditDispatcher,
 	)
 
+	whatsappHandler        := handlers.NewWhatsAppHandler(db, cfg.EvolutionURL, cfg.EvolutionAPIKey, cfg.BackendURL)
+	whatsappWebhookHandler := handlers.NewWhatsAppWebhookHandler(db, cfg.EvolutionURL, cfg.EvolutionAPIKey)
+
 	appointmentHandler := handlers.NewAppointmentHandler(
 		createAppointmentUC,
 		completeAppointmentUC,
@@ -595,6 +598,15 @@ func RegisterRoutes(
 	registerClientRoutes(secured, clientHandler, clientHistoryHandler,
 		clientCategoryHandler, clientCategoryOverrideHandler, crmHandler,
 		paymentPolicyHandler)
+
+	// ── WhatsApp ────────────────────────────────────────────────────────────
+	secured.GET("/whatsapp/status",          whatsappHandler.Status)
+	secured.POST("/whatsapp/connect",        whatsappHandler.Connect)
+	secured.POST("/whatsapp/pairing-code",   whatsappHandler.PairingCode)
+	secured.DELETE("/whatsapp/connect",      whatsappHandler.Disconnect)
+
+	// Webhook público — Evolution API dispara aqui quando cliente manda mensagem
+	api.POST("/webhooks/whatsapp", whatsappWebhookHandler.Receive)
 
 	registerAppointmentRoutes(secured, appointmentHandler, internalAppointmentHandler,
 		closureAdjustmentHandler, paymentHandler, operationalSummaryHandler,

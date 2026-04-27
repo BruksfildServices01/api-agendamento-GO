@@ -137,14 +137,24 @@ func (h *WhatsAppHandler) Connect(c *gin.Context) {
 	webhookURL := h.backendURL + "/api/webhooks/whatsapp"
 	_ = client.SetWebhook(ctx, name, webhookURL)
 
-	// Busca QR code
-	qr, err := client.GetQRCode(ctx, name)
-	if err != nil {
-		log.Printf("[WhatsApp] GetQRCode error: %v", err)
-		httperr.Internal(c, "qrcode_failed", "Não foi possível gerar o QR code.")
+	// Busca QR code — tenta até 5x com intervalo de 1s (instância precisa inicializar)
+	var qr *notification.QRCodeResponse
+	for attempt := 1; attempt <= 5; attempt++ {
+		time.Sleep(time.Duration(attempt) * time.Second)
+		qr, err = client.GetQRCode(ctx, name)
+		if err != nil {
+			log.Printf("[WhatsApp] GetQRCode attempt %d error: %v", attempt, err)
+			continue
+		}
+		log.Printf("[WhatsApp] GetQRCode attempt %d base64_len=%d code_len=%d", attempt, len(qr.Base64), len(qr.Code))
+		if qr.Base64 != "" || qr.Code != "" {
+			break
+		}
+	}
+	if qr == nil || (qr.Base64 == "" && qr.Code == "") {
+		httperr.Internal(c, "qrcode_failed", "Não foi possível gerar o QR code. Tente novamente.")
 		return
 	}
-	log.Printf("[WhatsApp] QR code base64 len=%d code_len=%d", len(qr.Base64), len(qr.Code))
 
 	// Atualiza status para connecting
 	h.db.WithContext(ctx).Model(&inst).Updates(map[string]any{

@@ -74,6 +74,14 @@ type Config struct {
 	R2SecretAccessKey string
 	R2BucketName      string
 	R2PublicURL       string // ex: https://pub-xxx.r2.dev
+
+	// =========================
+	// WHATSAPP (Evolution API)
+	// =========================
+	// EvolutionURL: URL da instância Evolution API (ex: https://evolution.railway.app)
+	// EvolutionAPIKey: chave de autenticação definida em AUTHENTICATION_API_KEY
+	EvolutionURL    string
+	EvolutionAPIKey string
 }
 
 func Load() *Config {
@@ -127,6 +135,9 @@ func Load() *Config {
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2BucketName:      getEnv("R2_BUCKET_NAME", ""),
 		R2PublicURL:       strings.TrimRight(getEnv("R2_PUBLIC_URL", ""), "/"),
+
+		EvolutionURL:    strings.TrimRight(getEnv("EVOLUTION_URL", ""), "/"),
+		EvolutionAPIKey: getEnv("EVOLUTION_API_KEY", ""),
 	}
 
 	cfg.AppURL = strings.TrimRight(cfg.AppURL, "/")

@@ -261,7 +261,7 @@ func (uc *CreateTransparentPayment) Execute(
 	// Send confirmation email only when payment is immediately approved (card).
 	if result.Status == "approved" && payment.AppointmentID != nil &&
 		uc.apptNotifier != nil && uc.db != nil {
-		sendAppointmentConfirmedEmail(ctx, uc.db, uc.apptNotifier, uc.ticketRepo, uc.appURL, *payment.AppointmentID)
+		sendAppointmentConfirmedNotification(ctx, uc.db, uc.apptNotifier, uc.ticketRepo, uc.appURL, *payment.AppointmentID)
 	}
 
 	return payment, result, nil

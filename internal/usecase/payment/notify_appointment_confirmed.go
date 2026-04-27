@@ -14,17 +14,20 @@ import (
 type appointmentNotifyRow struct {
 	ClientName      string    `gorm:"column:client_name"`
 	ClientEmail     string    `gorm:"column:client_email"`
+	ClientPhone     string    `gorm:"column:client_phone"`
 	BarbershopName  string    `gorm:"column:barbershop_name"`
 	BarbershopPhone string    `gorm:"column:barbershop_phone"`
+	BarbershopSlug  string    `gorm:"column:barbershop_slug"`
 	ServiceName     string    `gorm:"column:service_name"`
 	Timezone        string    `gorm:"column:timezone"`
 	StartTime       time.Time `gorm:"column:start_time"`
 	EndTime         time.Time `gorm:"column:end_time"`
 }
 
-// sendAppointmentConfirmedEmail queries the necessary data and fires the confirmation email.
-// Errors are logged but never propagated — notification failures must not fail the payment flow.
-func sendAppointmentConfirmedEmail(
+// sendAppointmentConfirmedNotification dispara a notificação de confirmação.
+// Suporta email e WhatsApp — o notifier ativo decide o canal.
+// Nunca propaga erros: falhas de notificação não devem afetar o fluxo de pagamento.
+func sendAppointmentConfirmedNotification(
 	ctx context.Context,
 	db *gorm.DB,
 	apptNotifier domainNotification.AppointmentNotifier,
@@ -37,8 +40,10 @@ func sendAppointmentConfirmedEmail(
 		SELECT
 			c.name  AS client_name,
 			c.email AS client_email,
+			c.phone AS client_phone,
 			b.name  AS barbershop_name,
 			b.phone AS barbershop_phone,
+			b.slug  AS barbershop_slug,
 			bs.name AS service_name,
 			b.timezone,
 			a.start_time,
@@ -53,7 +58,8 @@ func sendAppointmentConfirmedEmail(
 		log.Printf("[NOTIFY] failed to query notification data for appointment %d: %v", appointmentID, err)
 		return
 	}
-	if row.ClientEmail == "" {
+	// Requer pelo menos email ou telefone para notificar
+	if row.ClientEmail == "" && row.ClientPhone == "" {
 		return
 	}
 
@@ -67,8 +73,10 @@ func sendAppointmentConfirmedEmail(
 	_ = apptNotifier.NotifyConfirmed(ctx, domainNotification.AppointmentConfirmedInput{
 		ClientName:      row.ClientName,
 		ClientEmail:     row.ClientEmail,
+		ClientPhone:     row.ClientPhone,
 		BarbershopName:  row.BarbershopName,
 		BarbershopPhone: row.BarbershopPhone,
+		BarbershopSlug:  row.BarbershopSlug,
 		ServiceName:     row.ServiceName,
 		StartTime:       row.StartTime,
 		EndTime:         row.EndTime,

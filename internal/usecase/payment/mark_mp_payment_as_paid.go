@@ -270,7 +270,7 @@ func (uc *MarkMPPaymentAsPaid) Execute(
 
 	// Send appointment confirmation email after payment is confirmed.
 	if ap != nil && uc.apptNotifier != nil && uc.db != nil {
-		sendAppointmentConfirmedEmail(ctx, uc.db, uc.apptNotifier, uc.ticketRepo, uc.appURL, ap.ID)
+		sendAppointmentConfirmedNotification(ctx, uc.db, uc.apptNotifier, uc.ticketRepo, uc.appURL, ap.ID)
 	}
 
 	return nil

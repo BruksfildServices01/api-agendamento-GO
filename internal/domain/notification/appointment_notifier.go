@@ -14,8 +14,10 @@ type AppointmentNotifier interface {
 type AppointmentConfirmedInput struct {
 	ClientName      string
 	ClientEmail     string
+	ClientPhone     string // usado pelo WhatsApp notifier
 	BarbershopName  string
 	BarbershopPhone string
+	BarbershopSlug  string // para link público no WhatsApp
 	ServiceName     string
 	StartTime       time.Time
 	EndTime         time.Time
@@ -24,18 +26,22 @@ type AppointmentConfirmedInput struct {
 }
 
 type AppointmentCancelledInput struct {
-	ClientName     string
-	ClientEmail    string
-	BarbershopName string
-	StartTime      time.Time
-	Timezone       string
+	ClientName      string
+	ClientEmail     string
+	ClientPhone     string
+	BarbershopName  string
+	BarbershopSlug  string
+	StartTime       time.Time
+	Timezone        string
 }
 
 type AppointmentRescheduledInput struct {
 	ClientName      string
 	ClientEmail     string
+	ClientPhone     string
 	BarbershopName  string
 	BarbershopPhone string
+	BarbershopSlug  string
 	ServiceName     string
 	OldStartTime    time.Time
 	NewStartTime    time.Time

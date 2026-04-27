@@ -252,7 +252,7 @@ func (h *MPOAuthHandler) Disconnect(c *gin.Context) {
 
 	// Usa Exec para garantir que strings vazias e falsos sejam gravados
 	// (GORM pode ignorar zero-values em Updates com struct ou map)
-	h.db.WithContext(c.Request.Context()).Exec(
+	result := h.db.WithContext(c.Request.Context()).Exec(
 		`UPDATE barbershop_payment_configs
 		 SET mp_access_token = '', mp_public_key = '',
 		     accept_pix = false, accept_credit = false, accept_debit = false,
@@ -260,6 +260,10 @@ func (h *MPOAuthHandler) Disconnect(c *gin.Context) {
 		 WHERE barbershop_id = ?`,
 		barbershopID,
 	)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to disconnect"})
+		return
+	}
 
 	c.Status(http.StatusNoContent)
 }

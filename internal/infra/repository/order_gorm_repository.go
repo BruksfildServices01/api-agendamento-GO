@@ -188,7 +188,7 @@ func (r *OrderGormRepository) ListAdminByBarbershop(
 		      o.status = 'paid'
 		      OR ac.id IS NOT NULL
 		  )
-		GROUP BY o.id, ac.id, c.name
+		GROUP BY o.id, c.name
 		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, barbershopID, params.Limit, offset).Scan(&rows).Error

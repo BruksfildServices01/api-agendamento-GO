@@ -92,7 +92,7 @@ func (h *WhatsAppHandler) Status(c *gin.Context) {
 		if phone, err := h.client().GetConnectedPhone(c.Request.Context(), inst.InstanceName); err == nil && phone != "" {
 			updates["phone"] = phone
 			inst.Phone = phone
-			log.Printf("[WhatsApp] captured connected phone %s for instance %s", phone, inst.InstanceName)
+			log.Printf("[WhatsApp] captured connected phone %s for instance %s", maskPhone(phone), inst.InstanceName)
 		}
 	}
 

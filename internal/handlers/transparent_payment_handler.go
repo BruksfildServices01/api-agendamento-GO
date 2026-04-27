@@ -102,6 +102,34 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		httperr.BadRequest(c, "invalid_body", err.Error())
 		return
 	}
+
+	// Normaliza installments: 0 ou não informado → 1 (padrão à vista).
+	// PIX não usa installments, mas normalizamos para evitar enviar 0 ao MP.
+	if req.Installments <= 0 {
+		req.Installments = 1
+	}
+
+	// Para cartão de crédito/débito, installments deve ser 1–12.
+	// Para PIX, o campo não tem significado prático mas o range ainda vale.
+	if req.Installments > 12 {
+		httperr.BadRequest(c, "invalid_installments", "Número de parcelas deve ser entre 1 e 12.")
+		return
+	}
+
+	// Validação defensiva de valores monetários do pedido.
+	// O valor final do serviço vem sempre do banco (via payment record).
+	// order_amount_cents é o valor adicional de produtos — não pode ser negativo.
+	if req.OrderAmountCents < 0 {
+		httperr.BadRequest(c, "invalid_order_amount", "Valor do pedido não pode ser negativo.")
+		return
+	}
+	// Limite defensivo: R$ 50.000,00 por transação
+	const maxTransactionCents int64 = 5_000_000
+	if req.OrderAmountCents > maxTransactionCents {
+		httperr.BadRequest(c, "invalid_order_amount", "Valor do pedido excede o limite permitido.")
+		return
+	}
+
 	ctx := c.Request.Context()
 
 	// Garante que existe um registro de pagamento para o agendamento

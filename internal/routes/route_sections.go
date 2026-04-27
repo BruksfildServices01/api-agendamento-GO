@@ -83,16 +83,17 @@ func registerWebhookAndAuthRoutes(
 	// Rate limit por IP: proteção contra brute force e spam de registro.
 	ipKey := func(c *gin.Context) string { return middleware.ClientIPKey(c) }
 
+	// Endpoints de auth: fail-closed — se Redis cair, bloqueia para evitar brute force
 	api.POST("/auth/register",
-		middleware.NewRateLimitByKey(ipKey, 5, 3600, cfg.RedisURL), // 5/hora
+		middleware.NewRateLimitByKeyStrict(ipKey, 5, 3600, cfg.RedisURL), // 5/hora
 		auth.Register,
 	)
 	api.POST("/auth/login",
-		middleware.NewRateLimitByKey(ipKey, 10, 300, cfg.RedisURL), // 10/5min
+		middleware.NewRateLimitByKeyStrict(ipKey, 10, 300, cfg.RedisURL), // 10/5min
 		auth.Login,
 	)
 	api.POST("/auth/password-reset/request",
-		middleware.NewRateLimitByKey(ipKey, 5, 300, cfg.RedisURL), // 5/5min
+		middleware.NewRateLimitByKeyStrict(ipKey, 5, 300, cfg.RedisURL), // 5/5min
 		pwReset.Request,
 	)
 	api.POST("/auth/password-reset/confirm",
@@ -156,6 +157,7 @@ func registerClientRoutes(
 	clientCategory *handlers.ClientCategoryHandler,
 	clientCategoryOverride *handlers.ClientCategoryOverrideHandler,
 	crm *handlers.CRMHandler,
+	clientAnonymize *handlers.ClientAnonymizeHandler,
 	paymentPolicy *handlers.PaymentPolicyHandler,
 ) {
 	g.GET("/me/clients", client.List)
@@ -163,6 +165,8 @@ func registerClientRoutes(
 	g.GET("/me/clients/:id/history", clientHistory.Get)
 	g.GET("/me/clients/:id/category", clientCategory.Get)
 	g.PUT("/me/clients/:id/category", clientCategoryOverride.Update)
+	// LGPD — anonimização de dados pessoais a pedido do titular
+	g.POST("/me/clients/:id/anonymize", middleware.RequireOwner, clientAnonymize.Anonymize)
 
 	g.GET("/me/payment-policies", middleware.RequireOwner, paymentPolicy.Get)
 	g.PUT("/me/payment-policies", middleware.RequireOwner, paymentPolicy.Update)

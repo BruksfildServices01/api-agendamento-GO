@@ -22,6 +22,9 @@ func New(db *gorm.DB) *Query {
 	return &Query{db: db}
 }
 
+// DB expõe o *gorm.DB para checagens pontuais no handler sem duplicar dependência.
+func (q *Query) DB() *gorm.DB { return q.db }
+
 // ----------------------------------------------------------------
 // Execute
 // ----------------------------------------------------------------

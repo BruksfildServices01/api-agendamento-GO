@@ -16,6 +16,24 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
 
+// maskPhone mascara um número de telefone para logs, mantendo apenas os
+// últimos 4 dígitos visíveis. Nunca loga número completo (LGPD).
+// Aceita número puro ou JID do WhatsApp ("5511999991234@s.whatsapp.net").
+// Exemplos: "5511999991234" → "**********1234"
+func maskPhone(raw string) string {
+	// Extrai só dígitos (aceita também JID como "5511...@s.whatsapp.net")
+	digits := ""
+	for _, ch := range strings.Split(raw, "@")[0] {
+		if ch >= '0' && ch <= '9' {
+			digits += string(ch)
+		}
+	}
+	if len(digits) <= 4 {
+		return strings.Repeat("*", len(digits))
+	}
+	return strings.Repeat("*", len(digits)-4) + digits[len(digits)-4:]
+}
+
 // WhatsAppWebhookHandler recebe mensagens da Evolution API e responde
 // automaticamente com o comprovante de agendamento do cliente.
 type WhatsAppWebhookHandler struct {
@@ -48,14 +66,25 @@ type evolutionWebhookPayload struct {
 // Receive recebe o webhook da Evolution API.
 // POST /api/webhooks/whatsapp
 func (h *WhatsAppWebhookHandler) Receive(c *gin.Context) {
+	// Valida autenticidade do webhook verificando o header "apikey" enviado
+	// pela Evolution API — mesmo valor configurado em EVOLUTION_API_KEY.
+	// Só valida se a chave estiver configurada (evita bloquear em dev sem Evolution).
+	if h.evolutionKey != "" {
+		if c.GetHeader("apikey") != h.evolutionKey {
+			// Não loga o valor recebido para não vazar chaves em logs
+			log.Printf("[WhatsApp webhook] header apikey inválido — requisição rejeitada")
+			c.Status(http.StatusUnauthorized)
+			return
+		}
+	}
+
 	var payload evolutionWebhookPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[WhatsApp webhook] event=%q instance=%q fromMe=%v jid=%q",
-		payload.Event, payload.Instance, payload.Data.Key.FromMe, payload.Data.Key.RemoteJid)
+	log.Printf("[WhatsApp webhook] event=%q instance=%q", payload.Event, payload.Instance)
 
 	// Ignora mensagens enviadas por nós, grupos e eventos que não são mensagens
 	// v1.x usa "MESSAGES_UPSERT", v2.x usa "messages.upsert"
@@ -148,7 +177,7 @@ func (h *WhatsAppWebhookHandler) processMessage(inst models.BarbershopWhatsAppIn
 	`, inst.BarbershopID, inst.BarbershopID, "%"+suffix).Scan(&data).Error
 
 	if err != nil || data.ClientName == "" {
-		log.Printf("[WhatsApp webhook] no active appointment for phone %s (barbershop %d)", clientPhone, inst.BarbershopID)
+		log.Printf("[WhatsApp webhook] no active appointment for phone %s (barbershop %d)", maskPhone(clientPhone), inst.BarbershopID)
 		return
 	}
 
@@ -168,7 +197,7 @@ func (h *WhatsAppWebhookHandler) processMessage(inst models.BarbershopWhatsAppIn
 		sendErr = client.SendText(ctx, inst.InstanceName, clientPhone, msg)
 	}
 	if sendErr != nil {
-		log.Printf("[WhatsApp webhook] reply failed for %s: %v", clientPhone, sendErr)
+		log.Printf("[WhatsApp webhook] reply failed for %s: %v", maskPhone(clientPhone), sendErr)
 	}
 }
 

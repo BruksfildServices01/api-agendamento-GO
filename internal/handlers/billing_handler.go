@@ -176,17 +176,22 @@ func (h *BillingHandler) Webhook(c *gin.Context) {
 		return
 	}
 
-	// Valida assinatura HMAC quando o secret estiver configurado.
+	// Valida assinatura HMAC.
 	if h.cfg.MPWebhookSecret != "" {
 		xSig := c.GetHeader("x-signature")
 		xReqID := c.GetHeader("x-request-id")
 		if !infraMP.VerifyWebhookSignature(h.cfg.MPWebhookSecret, xSig, xReqID, idStr) {
-			log.Printf("[BillingWebhook] invalid signature for payment %s", idStr)
+			log.Printf("[BillingWebhook] assinatura inválida para pagamento %s — ignorado", idStr)
 			c.Status(http.StatusOK)
 			return
 		}
+	} else if h.cfg.MPProvider == "mp" {
+		// Produção sem secret configurado — bloqueia sem processar.
+		log.Printf("[BillingWebhook] ALERTA: MP_WEBHOOK_SECRET não configurado em modo produção — webhook rejeitado sem processar")
+		c.Status(http.StatusOK)
+		return
 	} else {
-		log.Printf("[BillingWebhook] MP_WEBHOOK_SECRET não configurado — assinatura não validada")
+		log.Printf("[BillingWebhook] MP_WEBHOOK_SECRET não configurado — validação ignorada (modo dev)")
 	}
 
 	paymentID, err := strconv.ParseInt(idStr, 10, 64)

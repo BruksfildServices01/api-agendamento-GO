@@ -13,16 +13,24 @@ import (
 )
 
 // redisLimiter implementa rate limit distribuído usando Redis INCR + EXPIRE.
-// Algoritmo: janela deslizante baseada em segundos — elimina o burst duplo
-// da janela fixa por minuto. A chave usa time.Now().Unix()/windowSecs,
-// garantindo que cada janela seja isolada e proporcional ao tamanho configurado.
+// failOpen=true  → permite a requisição quando Redis está indisponível (padrão).
+// failOpen=false → bloqueia a requisição quando Redis está indisponível (auth sensível).
 type redisLimiter struct {
 	client     *redis.Client
 	maxReqs    int
 	windowSecs int64
+	failOpen   bool
 }
 
 func newRedisLimiter(redisURL string, maxReqs int, windowSecs int) (*redisLimiter, error) {
+	return newRedisLimiterWithPolicy(redisURL, maxReqs, windowSecs, true)
+}
+
+func newRedisLimiterStrict(redisURL string, maxReqs int, windowSecs int) (*redisLimiter, error) {
+	return newRedisLimiterWithPolicy(redisURL, maxReqs, windowSecs, false)
+}
+
+func newRedisLimiterWithPolicy(redisURL string, maxReqs int, windowSecs int, failOpen bool) (*redisLimiter, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid REDIS_URL: %w", err)
@@ -39,6 +47,7 @@ func newRedisLimiter(redisURL string, maxReqs int, windowSecs int) (*redisLimite
 		client:     client,
 		maxReqs:    maxReqs,
 		windowSecs: int64(windowSecs),
+		failOpen:   failOpen,
 	}, nil
 }
 
@@ -46,21 +55,20 @@ func (r *redisLimiter) allow(key string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	// A janela desliza de windowSecs em windowSecs — burst na virada é
-	// no máximo de 2 segundos (apenas no momento em que a janela troca),
-	// não de 1 minuto inteiro como na implementação anterior.
 	windowID := time.Now().Unix() / r.windowSecs
 	redisKey := fmt.Sprintf("rl:%s:%d", key, windowID)
 
 	cnt, err := r.client.Incr(ctx, redisKey).Result()
 	if err != nil {
-		// Falha do Redis → fail-open (não bloqueia a API)
-		log.Printf("[RATELIMIT-REDIS] error: %v — allowing request", err)
-		return true
+		if r.failOpen {
+			log.Printf("[RATELIMIT-REDIS] error: %v — fail-open, allowing request", err)
+			return true
+		}
+		log.Printf("[RATELIMIT-REDIS] error: %v — fail-closed, blocking request", err)
+		return false
 	}
 
 	if cnt == 1 {
-		// Primeira req nesta janela — TTL = janela + folga de 1 janela
 		r.client.Expire(ctx, redisKey, time.Duration(r.windowSecs*2)*time.Second)
 	}
 
@@ -113,5 +121,52 @@ func NewRateLimitByKey(
 	}
 
 	log.Printf("[RATELIMIT] usando in-memory (%d req/%ds)", maxRequests, windowSeconds)
+	return newInMemoryRateLimit(keyFn, maxRequests, windowSeconds)
+}
+
+// NewRateLimitByKeyStrict é idêntico a NewRateLimitByKey mas com fail-closed:
+// se Redis estiver indisponível, a requisição é bloqueada com 503.
+// Usar apenas em endpoints de autenticação sensível (login, registro, senha).
+func NewRateLimitByKeyStrict(
+	keyFn func(*gin.Context) string,
+	maxRequests int,
+	windowSeconds int,
+	redisURL string,
+) gin.HandlerFunc {
+	if maxRequests <= 0 {
+		maxRequests = 60
+	}
+	if windowSeconds <= 0 {
+		windowSeconds = 60
+	}
+
+	if redisURL != "" {
+		rl, err := newRedisLimiterStrict(redisURL, maxRequests, windowSeconds)
+		if err != nil {
+			log.Printf("[RATELIMIT-STRICT] Redis indisponível (%v) — bloqueando endpoint por segurança", err)
+			// Se Redis nem conecta, bloqueia tudo neste endpoint
+			return func(c *gin.Context) {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+					"error_code": "service_unavailable",
+					"message":    "Serviço temporariamente indisponível.",
+				})
+			}
+		}
+		log.Printf("[RATELIMIT-STRICT] usando Redis fail-closed (%d req/%ds)", maxRequests, windowSeconds)
+		return func(c *gin.Context) {
+			key := keyFn(c)
+			if strings.TrimSpace(key) == "" || !rl.allow(key) {
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+					"error_code": "rate_limited",
+					"message":    "Muitas requisições. Tente novamente em instantes.",
+				})
+				return
+			}
+			c.Next()
+		}
+	}
+
+	// Sem Redis: in-memory é fail-safe por natureza (não tem estado distribuído)
+	log.Printf("[RATELIMIT-STRICT] usando in-memory (%d req/%ds)", maxRequests, windowSeconds)
 	return newInMemoryRateLimit(keyFn, maxRequests, windowSeconds)
 }

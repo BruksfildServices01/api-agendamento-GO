@@ -179,11 +179,18 @@ CREATE TABLE clients (
   name VARCHAR(100) NOT NULL,
   phone VARCHAR(20),
   email VARCHAR(100),
+  -- LGPD: campos de anonimização — preenchidos quando dados pessoais são removidos a pedido do titular
+  anonymized_at     TIMESTAMPTZ,
+  anonymized_reason VARCHAR(50)
+    CHECK (anonymized_reason IN ('lgpd_request', 'admin', 'inactivity')),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX idx_clients_barbershop ON clients(barbershop_id);
+-- Índice parcial para jobs de manutenção e relatórios de privacidade
+CREATE INDEX idx_clients_anonymized ON clients(barbershop_id, anonymized_at)
+  WHERE anonymized_at IS NOT NULL;
 
 CREATE TRIGGER trg_clients_updated
 BEFORE UPDATE ON clients

@@ -132,8 +132,41 @@ func (uc *CreateTransparentPayment) Execute(
 
 	// Se há um pedido associado, combina o valor e vincula via BundledOrderID.
 	// Idempotente: só atualiza se ainda não vinculado.
-	if input.OrderID != nil && input.OrderAmountCents > 0 && payment.BundledOrderID == nil {
-		payment.Amount += input.OrderAmountCents
+	//
+	// SEGURANÇA: o valor do pedido é lido do banco (order.TotalAmount), nunca do frontend.
+	// input.OrderAmountCents é ignorado quando OrderID está presente — o frontend
+	// não pode definir o valor de cobrança de um pedido.
+	if input.OrderID != nil && payment.BundledOrderID == nil {
+		order, err := tx.GetOrderForUpdate(ctx, input.BarbershopID, *input.OrderID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load order for payment: %w", err)
+		}
+		if order == nil {
+			return nil, nil, httperr.ErrBusiness("order_not_found")
+		}
+		// Só pedidos pendentes podem ser vinculados a um pagamento.
+		// Pedidos já pagos ou cancelados não devem gerar nova cobrança.
+		if order.Status != models.OrderStatusPending {
+			return nil, nil, httperr.ErrBusiness("order_not_linkable")
+		}
+		if order.TotalAmount <= 0 {
+			return nil, nil, httperr.ErrBusiness("invalid_order_amount")
+		}
+
+		// Validação parcial de ownership: se o agendamento e o pedido tiverem
+		// ClientID preenchidos, eles devem ser do mesmo cliente.
+		// Se qualquer um for nil (encaixe manual, pedido anônimo), a checagem é ignorada
+		// para evitar falso positivo — risco residual documentado abaixo.
+		if payment.AppointmentID != nil && order.ClientID != nil {
+			ap, err := tx.GetAppointmentForUpdate(ctx, input.BarbershopID, *payment.AppointmentID)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to load appointment for order validation: %w", err)
+			}
+			if ap != nil && ap.ClientID != nil && *ap.ClientID != *order.ClientID {
+				return nil, nil, httperr.ErrBusiness("order_not_linkable")
+			}
+		}
+		payment.Amount += order.TotalAmount
 		payment.BundledOrderID = input.OrderID
 		if err := tx.UpdatePaymentTx(ctx, input.BarbershopID, payment); err != nil {
 			return nil, nil, fmt.Errorf("failed to update payment with order amount: %w", err)

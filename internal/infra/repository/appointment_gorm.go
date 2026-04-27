@@ -828,18 +828,32 @@ func (r *AppointmentGormRepository) ListAutoCompleteCandidates(
 	}
 
 	var rows []row
+	// Subqueries instead of LEFT JOIN to avoid duplicate rows when an appointment
+	// has multiple payment records (e.g. expired PIX + new pending PIX). A JOIN
+	// would produce N rows per appointment and the job would attempt to complete
+	// the same appointment N times, causing spurious "invalid_state" errors.
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
-			a.id                                                              AS appointment_id,
-			a.barber_id                                                       AS barber_id,
-			(p.id IS NOT NULL AND p.status = 'paid')                         AS has_paid_payment,
-			(p.id IS NOT NULL AND p.status = 'paid' AND p.txid IS NOT NULL)  AS payment_is_pix
+			a.id         AS appointment_id,
+			a.barber_id  AS barber_id,
+			EXISTS(
+				SELECT 1 FROM payments p
+				WHERE p.appointment_id = a.id
+				  AND p.barbershop_id = ?
+				  AND p.status = 'paid'
+			) AS has_paid_payment,
+			EXISTS(
+				SELECT 1 FROM payments p
+				WHERE p.appointment_id = a.id
+				  AND p.barbershop_id = ?
+				  AND p.status = 'paid'
+				  AND p.txid IS NOT NULL
+			) AS payment_is_pix
 		FROM appointments a
-		LEFT JOIN payments p ON p.appointment_id = a.id AND p.barbershop_id = ?
 		WHERE a.barbershop_id = ?
 		  AND a.status IN ('scheduled', 'awaiting_payment')
 		  AND a.end_time <= ?
-	`, barbershopID, barbershopID, cutoffUTC).Scan(&rows).Error
+	`, barbershopID, barbershopID, barbershopID, cutoffUTC).Scan(&rows).Error
 
 	if err != nil {
 		return nil, err

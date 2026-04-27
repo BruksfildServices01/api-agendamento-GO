@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -139,9 +140,11 @@ func (h *WhatsAppHandler) Connect(c *gin.Context) {
 	// Busca QR code
 	qr, err := client.GetQRCode(ctx, name)
 	if err != nil {
+		log.Printf("[WhatsApp] GetQRCode error: %v", err)
 		httperr.Internal(c, "qrcode_failed", "Não foi possível gerar o QR code.")
 		return
 	}
+	log.Printf("[WhatsApp] QR code base64 len=%d code_len=%d", len(qr.Base64), len(qr.Code))
 
 	// Atualiza status para connecting
 	h.db.WithContext(ctx).Model(&inst).Updates(map[string]any{

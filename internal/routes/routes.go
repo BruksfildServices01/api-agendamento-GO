@@ -605,6 +605,14 @@ func RegisterRoutes(
 		mpPaymentHandler, transparentPaymentHandler,
 		publicSubscriptionHandler, publicTicketHandler)
 
+	// Fallback para quando o webhook MP não chega: frontend consulta status diretamente.
+	api.GET("/public/:slug/appointments/:id/payment/status",
+		middleware.NewRateLimitByKey(func(c *gin.Context) string {
+			return middleware.ClientIPKey(c) + ":" + c.Param("slug")
+		}, 10, 60, cfg.RedisURL),
+		mpWebhookHandler.CheckPaymentStatus,
+	)
+
 	registerWebhookAndAuthRoutes(r, api, cfg, mpWebhookHandler, billingHandler,
 		authHandler, passwordResetHandler)
 

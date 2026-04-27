@@ -133,6 +133,63 @@ func (h *MPWebhookHandler) resolveAccessToken(ctx context.Context, mpPaymentIDSt
 	return cfg.MPAccessToken
 }
 
+// CheckPaymentStatus é chamado pelo frontend como fallback quando o webhook demora.
+// GET /api/public/:slug/appointments/:id/payment/status
+func (h *MPWebhookHandler) CheckPaymentStatus(c *gin.Context) {
+	appointmentID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || appointmentID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_appointment_id"})
+		return
+	}
+
+	slug := c.Param("slug")
+	var shop models.Barbershop
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("slug = ?", slug).Select("id").First(&shop).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "not_found"})
+		return
+	}
+
+	var p models.Payment
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("barbershop_id = ? AND appointment_id = ?", shop.ID, uint(appointmentID)).
+		First(&p).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "no_payment"})
+		return
+	}
+
+	if p.Status == "paid" {
+		c.JSON(http.StatusOK, gin.H{"status": "confirmed"})
+		return
+	}
+
+	if p.MPPaymentID == nil {
+		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
+		return
+	}
+
+	mpPaymentIDStr := strconv.FormatInt(*p.MPPaymentID, 10)
+	if err := h.processPayment(c.Request.Context(), mpPaymentIDStr); err != nil {
+		log.Printf("[CheckPaymentStatus] appointment=%d mp_payment=%s error=%v", appointmentID, mpPaymentIDStr, err)
+		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
+		return
+	}
+
+	// Relê o status após tentar confirmar
+	var updated models.Payment
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("id = ?", p.ID).Select("status").First(&updated).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
+		return
+	}
+
+	status := string(updated.Status)
+	if status == "paid" {
+		status = "confirmed"
+	}
+	c.JSON(http.StatusOK, gin.H{"status": status})
+}
+
 func (h *MPWebhookHandler) processPayment(ctx context.Context, mpPaymentIDStr string) error {
 	accessToken := h.resolveAccessToken(ctx, mpPaymentIDStr)
 	if accessToken == "" {

@@ -97,7 +97,8 @@ func (h *MPOAuthHandler) parseState(state string) (uint, error) {
 
 // ── Start ─────────────────────────────────────────────────────────
 
-// Start redireciona o barbeiro para a página de autorização do Mercado Pago.
+// Start retorna a URL de autorização do Mercado Pago como JSON.
+// O frontend faz window.location.href = url para navegar no browser.
 // GET /api/me/mercadopago/oauth/start
 func (h *MPOAuthHandler) Start(c *gin.Context) {
 	if h.clientID == "" {
@@ -115,7 +116,7 @@ func (h *MPOAuthHandler) Start(c *gin.Context) {
 		url.QueryEscape(h.callbackURL),
 	)
 
-	c.Redirect(http.StatusTemporaryRedirect, authURL)
+	c.JSON(http.StatusOK, gin.H{"url": authURL})
 }
 
 // ── Callback ──────────────────────────────────────────────────────

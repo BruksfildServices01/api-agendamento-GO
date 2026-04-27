@@ -84,9 +84,20 @@ func (h *WhatsAppHandler) Status(c *gin.Context) {
 	if state == "open" {
 		newStatus = "connected"
 	}
-	if inst.Status != newStatus {
-		h.db.WithContext(c.Request.Context()).
-			Model(&inst).Update("status", newStatus)
+
+	updates := map[string]any{"status": newStatus, "updated_at": time.Now()}
+
+	// Quando conectado, captura o número real do WhatsApp para usar no wa.me
+	if state == "open" && inst.Phone == "" {
+		if phone, err := h.client().GetConnectedPhone(c.Request.Context(), inst.InstanceName); err == nil && phone != "" {
+			updates["phone"] = phone
+			inst.Phone = phone
+			log.Printf("[WhatsApp] captured connected phone %s for instance %s", phone, inst.InstanceName)
+		}
+	}
+
+	if inst.Status != newStatus || (state == "open" && inst.Phone == "") {
+		h.db.WithContext(c.Request.Context()).Model(&inst).Updates(updates)
 		inst.Status = newStatus
 	}
 

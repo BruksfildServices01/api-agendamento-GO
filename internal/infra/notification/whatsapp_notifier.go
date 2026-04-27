@@ -138,6 +138,47 @@ func (c *EvolutionClient) SetWebhook(ctx context.Context, instanceName, webhookU
 	return nil
 }
 
+// GetConnectedPhone retorna o número de telefone conectado na instância.
+// Retorna vazio se a instância não estiver conectada ou o número não estiver disponível.
+func (c *EvolutionClient) GetConnectedPhone(ctx context.Context, instanceName string) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/instance/fetchInstances", nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var instances []struct {
+		InstanceName string `json:"instanceName"`
+		OwnerJid     string `json:"ownerJid"`
+		ProfileName  string `json:"profileName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&instances); err != nil {
+		return "", err
+	}
+
+	for _, inst := range instances {
+		if inst.InstanceName == instanceName && inst.OwnerJid != "" {
+			// ownerJid format: "5511999999999@s.whatsapp.net"
+			return extractPhone(inst.OwnerJid), nil
+		}
+	}
+	return "", nil
+}
+
+func extractPhone(jid string) string {
+	parts := strings.Split(jid, "@")
+	if len(parts) == 0 {
+		return ""
+	}
+	digits := ""
+	for _, ch := range parts[0] {
+		if ch >= '0' && ch <= '9' {
+			digits += string(ch)
+		}
+	}
+	return digits
+}
+
 // GetPairingCode retorna o código de 8 dígitos para conectar pelo telefone.
 // O usuário digita esse código no WhatsApp em vez de escanear o QR code.
 func (c *EvolutionClient) GetPairingCode(ctx context.Context, instanceName, phoneNumber string) (string, error) {

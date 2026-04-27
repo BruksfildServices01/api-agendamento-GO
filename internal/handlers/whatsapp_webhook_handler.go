@@ -203,5 +203,22 @@ func extractPhone(remoteJid string) string {
 			digits += string(ch)
 		}
 	}
+
+	// WhatsApp às vezes inclui o código do servidor na frente (ex: "21664" antes do DDI)
+	// Normaliza para número brasileiro: remove prefixo até encontrar "55" + DDD (2 dígitos) + número (8-9 dígitos)
+	if len(digits) > 13 {
+		// Tenta encontrar "55" seguido de DDD válido
+		for i := 0; i <= len(digits)-13; i++ {
+			if digits[i] == '5' && i+1 < len(digits) && digits[i+1] == '5' {
+				candidate := digits[i:]
+				if len(candidate) >= 12 && len(candidate) <= 13 {
+					return candidate
+				}
+				if len(candidate) > 13 {
+					return candidate[:13]
+				}
+			}
+		}
+	}
 	return digits
 }

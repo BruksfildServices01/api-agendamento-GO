@@ -42,7 +42,7 @@ func (j *AutoCompleteJob) Run(ctx context.Context) error {
 		return err
 	}
 
-	const autoCompleteAfter = 1 * time.Hour
+	const autoCompleteAfter = 90 * time.Minute
 
 	for _, shop := range shops {
 		cutoff := time.Now().UTC().Add(-autoCompleteAfter)

@@ -84,15 +84,16 @@ func (h *WhatsAppWebhookHandler) Receive(c *gin.Context) {
 // ── Processamento assíncrono ───────────────────────────────────────────────────
 
 type appointmentForReply struct {
-	ClientName      string    `gorm:"column:client_name"`
-	ClientPhone     string    `gorm:"column:client_phone"`
-	BarbershopName  string    `gorm:"column:barbershop_name"`
-	BarbershopPhone string    `gorm:"column:barbershop_phone"`
-	ServiceName     string    `gorm:"column:service_name"`
-	StartTime       time.Time `gorm:"column:start_time"`
-	EndTime         time.Time `gorm:"column:end_time"`
-	Timezone        string    `gorm:"column:timezone"`
-	Token           string    `gorm:"column:token"`
+	ClientName       string    `gorm:"column:client_name"`
+	ClientPhone      string    `gorm:"column:client_phone"`
+	BarbershopName   string    `gorm:"column:barbershop_name"`
+	BarbershopPhone  string    `gorm:"column:barbershop_phone"`
+	ServiceName      string    `gorm:"column:service_name"`
+	ServiceImageURL  string    `gorm:"column:service_image_url"`
+	StartTime        time.Time `gorm:"column:start_time"`
+	EndTime          time.Time `gorm:"column:end_time"`
+	Timezone         string    `gorm:"column:timezone"`
+	Token            string    `gorm:"column:token"`
 }
 
 func (h *WhatsAppWebhookHandler) processMessage(inst models.BarbershopWhatsAppInstance, clientPhone string) {
@@ -113,6 +114,12 @@ func (h *WhatsAppWebhookHandler) processMessage(inst models.BarbershopWhatsAppIn
 			b.name  AS barbershop_name,
 			b.phone AS barbershop_phone,
 			bs.name AS service_name,
+			COALESCE(
+				(SELECT url FROM barbershop_service_images
+				 WHERE service_id = bs.id
+				 ORDER BY position ASC LIMIT 1),
+				''
+			)       AS service_image_url,
 			a.start_time,
 			a.end_time,
 			b.timezone,
@@ -142,8 +149,21 @@ func (h *WhatsAppWebhookHandler) processMessage(inst models.BarbershopWhatsAppIn
 
 	client := notification.NewEvolutionClient(h.evolutionURL, h.evolutionKey)
 	msg := h.buildReply(data)
-	if err := client.SendText(ctx, inst.InstanceName, clientPhone, msg); err != nil {
-		log.Printf("[WhatsApp webhook] reply failed for %s: %v", clientPhone, err)
+
+	var sendErr error
+	if data.ServiceImageURL != "" {
+		// Envia foto do serviço com a mensagem como legenda
+		sendErr = client.SendMedia(ctx, inst.InstanceName, clientPhone, data.ServiceImageURL, msg)
+	}
+	// Fallback para texto puro se não tiver imagem ou se o envio de mídia falhar
+	if data.ServiceImageURL == "" || sendErr != nil {
+		if sendErr != nil {
+			log.Printf("[WhatsApp webhook] media send failed, falling back to text: %v", sendErr)
+		}
+		sendErr = client.SendText(ctx, inst.InstanceName, clientPhone, msg)
+	}
+	if sendErr != nil {
+		log.Printf("[WhatsApp webhook] reply failed for %s: %v", clientPhone, sendErr)
 	}
 }
 
@@ -152,40 +172,42 @@ func (h *WhatsAppWebhookHandler) buildReply(d appointmentForReply) string {
 	start := d.StartTime.In(loc)
 	end := d.EndTime.In(loc)
 
-	weekdays := [...]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"}
+	weekdays := [...]string{"Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"}
 	months   := [...]string{"janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"}
 
 	dateStr := fmt.Sprintf("%s, %d de %s", weekdays[start.Weekday()], start.Day(), months[start.Month()-1])
 	timeStr := fmt.Sprintf("%02d:%02d – %02d:%02d", start.Hour(), start.Minute(), end.Hour(), end.Minute())
 
 	lines := []string{
-		fmt.Sprintf("✅ *Olá, %s! Comprovante recebido.*", d.ClientName),
+		fmt.Sprintf("✅ *Agendamento confirmado, %s!*", d.ClientName),
 		"",
-		"Confirmamos seu agendamento:",
+		fmt.Sprintf("✂️  *%s*", d.ServiceName),
+		fmt.Sprintf("📅  %s", dateStr),
+		fmt.Sprintf("🕐  %s", timeStr),
 		"",
-		fmt.Sprintf("✂️ *%s*", d.ServiceName),
-		fmt.Sprintf("📅 %s", dateStr),
-		fmt.Sprintf("🕐 %s", timeStr),
+		"━━━━━━━━━━━━━━━━━",
 	}
 
 	if d.Token != "" {
 		lines = append(lines,
 			"",
-			"🔗 *Seu ticket (cancelar ou remarcar):*",
+			"🎫 *Seu ticket:*",
 			fmt.Sprintf("https://corteon.app/ticket/%s", d.Token),
+			"_(cancelar ou remarcar pelo link acima)_",
 		)
 	}
 
 	lines = append(lines,
 		"",
-		"📌 *Informações importantes:*",
-		"• Chegue 5 min antes do horário",
-		"• Faltas sem aviso afetam sua prioridade futura",
-		"• Cancelamentos pelo link acima",
+		"━━━━━━━━━━━━━━━━━",
+		"",
+		"📌 *Lembre-se:*",
+		"• Chegue 5 minutos antes",
+		"• Faltas sem aviso afetam sua prioridade",
 	)
 
 	if d.BarbershopPhone != "" {
-		lines = append(lines, "", fmt.Sprintf("📞 Dúvidas: %s", d.BarbershopPhone))
+		lines = append(lines, "", fmt.Sprintf("📞  *Dúvidas:* %s", d.BarbershopPhone))
 	}
 
 	lines = append(lines, "", fmt.Sprintf("_Mensagem automática · %s_", d.BarbershopName))

@@ -177,6 +177,26 @@ func (c *EvolutionClient) DeleteInstance(ctx context.Context, instanceName strin
 	return nil
 }
 
+// SendMedia envia uma imagem com legenda para um número WhatsApp.
+func (c *EvolutionClient) SendMedia(ctx context.Context, instanceName, number, imageURL, caption string) error {
+	resp, err := c.do(ctx, http.MethodPost, "/message/sendMedia/"+instanceName, map[string]any{
+		"number": sanitizePhone(number),
+		"mediaMessage": map[string]any{
+			"mediatype": "image",
+			"caption":   caption,
+			"media":     imageURL,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("evolution: send media: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("evolution: send media status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // SendText envia mensagem de texto para um número WhatsApp.
 func (c *EvolutionClient) SendText(ctx context.Context, instanceName, number, text string) error {
 	resp, err := c.do(ctx, http.MethodPost, "/message/sendText/"+instanceName, map[string]any{

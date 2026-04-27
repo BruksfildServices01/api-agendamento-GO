@@ -109,7 +109,7 @@ func (h *MPWebhookHandler) resolveAccessToken(ctx context.Context, mpPaymentIDSt
 
 	var p models.Payment
 	err := h.db.WithContext(ctx).
-		Where("tx_id = ?", txid).
+		Where("txid = ?", txid).
 		Select("barbershop_id").
 		First(&p).Error
 
@@ -163,12 +163,19 @@ func (h *MPWebhookHandler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
-	if p.MPPaymentID == nil {
+	// MPPaymentID pode ser nil — pagamentos transparentes gravam apenas TxID ("mp_pay:<id>").
+	// Extrai o ID do TxID quando MPPaymentID não está preenchido.
+	var mpPaymentIDStr string
+	if p.MPPaymentID != nil {
+		mpPaymentIDStr = strconv.FormatInt(*p.MPPaymentID, 10)
+	} else if p.TxID != nil && strings.HasPrefix(*p.TxID, "mp_pay:") {
+		mpPaymentIDStr = strings.TrimPrefix(*p.TxID, "mp_pay:")
+	}
+
+	if mpPaymentIDStr == "" {
 		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
 		return
 	}
-
-	mpPaymentIDStr := strconv.FormatInt(*p.MPPaymentID, 10)
 	if err := h.processPayment(c.Request.Context(), mpPaymentIDStr); err != nil {
 		log.Printf("[CheckPaymentStatus] appointment=%d mp_payment=%s error=%v", appointmentID, mpPaymentIDStr, err)
 		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})

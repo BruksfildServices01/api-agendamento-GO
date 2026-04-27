@@ -250,15 +250,16 @@ func (h *MPOAuthHandler) Status(c *gin.Context) {
 func (h *MPOAuthHandler) Disconnect(c *gin.Context) {
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
 
-	h.db.Model(&models.BarbershopPaymentConfig{}).
-		Where("barbershop_id = ?", barbershopID).
-		Updates(map[string]any{
-			"mp_access_token": "",
-			"mp_public_key":   "",
-			"accept_pix":      false,
-			"accept_credit":   false,
-			"accept_debit":    false,
-		})
+	// Usa Exec para garantir que strings vazias e falsos sejam gravados
+	// (GORM pode ignorar zero-values em Updates com struct ou map)
+	h.db.WithContext(c.Request.Context()).Exec(
+		`UPDATE barbershop_payment_configs
+		 SET mp_access_token = '', mp_public_key = '',
+		     accept_pix = false, accept_credit = false, accept_debit = false,
+		     updated_at = NOW()
+		 WHERE barbershop_id = ?`,
+		barbershopID,
+	)
 
 	c.Status(http.StatusNoContent)
 }

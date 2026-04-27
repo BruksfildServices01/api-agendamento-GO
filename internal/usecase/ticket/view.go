@@ -17,7 +17,8 @@ type TicketViewDTO struct {
 	ServiceName     string    `json:"service_name"`
 	BarbershopName  string    `json:"barbershop_name"`
 	BarbershopSlug  string    `json:"barbershop_slug"`
-	BarbershopPhone string    `json:"barbershop_phone"`
+	BarbershopPhone    string `json:"barbershop_phone"`
+	BarbershopWAPhone  string `json:"barbershop_wa_phone"` // número conectado na Evolution API
 	BarberName      string    `json:"barber_name"`
 	ClientName      string    `json:"client_name"`
 	ClientPhone     string    `json:"client_phone"`
@@ -45,7 +46,8 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		ServiceName     string    `gorm:"column:service_name"`
 		BarbershopName  string    `gorm:"column:barbershop_name"`
 		BarbershopSlug  string    `gorm:"column:barbershop_slug"`
-		BarbershopPhone string    `gorm:"column:barbershop_phone"`
+		BarbershopPhone   string `gorm:"column:barbershop_phone"`
+		BarbershopWAPhone string `gorm:"column:barbershop_wa_phone"`
 		BarberName      string    `gorm:"column:barber_name"`
 		ClientName      string    `gorm:"column:client_name"`
 		ClientPhone     string    `gorm:"column:client_phone"`
@@ -64,7 +66,8 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 			bs.name          AS service_name,
 			b.name           AS barbershop_name,
 			b.slug           AS barbershop_slug,
-			b.phone          AS barbershop_phone,
+			b.phone                               AS barbershop_phone,
+			COALESCE(wi.phone, '')                AS barbershop_wa_phone,
 			u.name           AS barber_name,
 			c.name           AS client_name,
 			c.phone          AS client_phone,
@@ -77,6 +80,10 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		LEFT JOIN barbershop_services bs ON bs.id = a.barber_product_id
 		LEFT JOIN users u           ON u.id = a.barber_id
 		LEFT JOIN clients c         ON c.id = a.client_id
+		LEFT JOIN barbershop_whatsapp_instances wi
+			ON wi.barbershop_id = b.id
+			AND wi.barber_id IS NULL
+			AND wi.status = 'connected'
 		WHERE t.token = ?
 	`, token).Scan(&r).Error
 
@@ -102,7 +109,8 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		ServiceName:     r.ServiceName,
 		BarbershopName:  r.BarbershopName,
 		BarbershopSlug:  r.BarbershopSlug,
-		BarbershopPhone: r.BarbershopPhone,
+		BarbershopPhone:   r.BarbershopPhone,
+		BarbershopWAPhone: r.BarbershopWAPhone,
 		BarberName:      r.BarberName,
 		ClientName:      r.ClientName,
 		ClientPhone:     r.ClientPhone,

@@ -22,7 +22,8 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
 	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
 	ucAppointment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
-	ucCart "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
+	ucCart        "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
+	ucClientPkg   "github.com/BruksfildServices01/barber-scheduler/internal/usecase/client"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 	ucOrder "github.com/BruksfildServices01/barber-scheduler/internal/usecase/order"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
@@ -439,6 +440,7 @@ func RegisterRoutes(
 		db,
 		getClientCategoryUC,
 		getActiveSubscriptionUC,
+		auditDispatcher,
 	)
 
 	clientCategoryHandler := handlers.NewClientCategoryHandler(
@@ -512,7 +514,13 @@ func RegisterRoutes(
 		createTransparentPaymentUC,
 	)
 
-	mpWebhookHandler := handlers.NewMPWebhookHandler(markMPPaymentAsPaidUC, cfg.MPAccessToken, cfg.MPWebhookSecret, db)
+	mpWebhookHandler := handlers.NewMPWebhookHandler(
+		markMPPaymentAsPaidUC,
+		cfg.MPAccessToken,
+		cfg.MPWebhookSecret,
+		cfg.MPProvider == "mp", // requireSignature: obrigatório quando em modo produção real
+		db,
+	)
 
 	orderHandler := handlers.NewOrderHandler(
 		createOrderUC,
@@ -537,7 +545,10 @@ func RegisterRoutes(
 	dayPanelHandler := handlers.NewDayPanelHandler(dayPanelQuery)
 
 	crmQuery := crm.New(db)
-	crmHandler := handlers.NewCRMHandler(crmQuery)
+	crmHandler := handlers.NewCRMHandler(crmQuery, auditDispatcher)
+
+	anonymizeClientUC      := ucClientPkg.NewAnonymizeClient(db, auditDispatcher)
+	clientAnonymizeHandler := handlers.NewClientAnonymizeHandler(anonymizeClientUC)
 
 	dashboardQuery := dashboard.New(db)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardQuery)
@@ -606,7 +617,7 @@ func RegisterRoutes(
 
 	registerClientRoutes(secured, clientHandler, clientHistoryHandler,
 		clientCategoryHandler, clientCategoryOverrideHandler, crmHandler,
-		paymentPolicyHandler)
+		clientAnonymizeHandler, paymentPolicyHandler)
 
 	// ── WhatsApp ────────────────────────────────────────────────────────────
 	// ── Mercado Pago OAuth ─────────────────────────────────────────
@@ -631,8 +642,11 @@ func RegisterRoutes(
 	registerAdminRoutes(secured, planHandler, dashboardHandler, financialHandler,
 		dayPanelHandler, impactHandler, subscriptionHandler, billingHandler, imageHandler)
 
-	// Endpoint de bypass de pagamento — apenas em modo mock (nunca em produção).
-	if cfg.MPProvider != "mp" {
+	// Endpoint de bypass de pagamento — dupla proteção:
+	// 1) MPProvider != "mp"  (gateway real não configurado)
+	// 2) AppEnv != "production" (variável de ambiente de ambiente)
+	// Ambas precisam ser verdadeiras para o endpoint existir.
+	if cfg.MPProvider != "mp" && cfg.AppEnv != "production" {
 		devPaymentHandler := handlers.NewDevPaymentHandler(markMPPaymentAsPaidUC)
 		api.POST("/dev/payments/:id/confirm", devPaymentHandler.ConfirmPayment)
 		log.Println("[DEV] rota POST /api/dev/payments/:id/confirm ativa (mock mode)")

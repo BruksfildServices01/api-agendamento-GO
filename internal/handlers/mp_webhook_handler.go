@@ -26,19 +26,24 @@ type MPWebhookHandler struct {
 	markMPPaid        *ucPayment.MarkMPPaymentAsPaid
 	globalAccessToken string
 	webhookSecret     string
-	db                *gorm.DB
+	// requireSignature=true quando MPProvider=="mp".
+	// Se true e webhookSecret vazio, o webhook é rejeitado sem processar.
+	requireSignature bool
+	db               *gorm.DB
 }
 
 func NewMPWebhookHandler(
 	markMPPaid *ucPayment.MarkMPPaymentAsPaid,
 	globalAccessToken string,
 	webhookSecret string,
+	requireSignature bool,
 	db *gorm.DB,
 ) *MPWebhookHandler {
 	return &MPWebhookHandler{
 		markMPPaid:        markMPPaid,
 		globalAccessToken: globalAccessToken,
 		webhookSecret:     webhookSecret,
+		requireSignature:  requireSignature,
 		db:                db,
 	}
 }
@@ -66,18 +71,23 @@ func (h *MPWebhookHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	// Valida assinatura HMAC quando o secret estiver configurado.
-	// Em dev/mock (secret vazio), a validação é ignorada com aviso.
+	// Valida assinatura HMAC.
 	if h.webhookSecret != "" {
 		xSig := c.GetHeader("x-signature")
 		xReqID := c.GetHeader("x-request-id")
 		if !infraMP.VerifyWebhookSignature(h.webhookSecret, xSig, xReqID, notif.Data.ID) {
-			log.Printf("[MP WEBHOOK] invalid signature for payment %s", notif.Data.ID)
-			c.Status(http.StatusOK) // retorna 200 para não gerar retries desnecessários do MP
+			log.Printf("[MP WEBHOOK] assinatura inválida para pagamento %s — ignorado", notif.Data.ID)
+			c.Status(http.StatusOK) // 200 para o MP não retentar
 			return
 		}
+	} else if h.requireSignature {
+		// Produção (requireSignature=true) sem secret configurado.
+		// Bloqueia sem processar para evitar fraude por webhook forjado.
+		log.Printf("[MP WEBHOOK] ALERTA: MP_WEBHOOK_SECRET não configurado em modo produção — webhook rejeitado sem processar")
+		c.Status(http.StatusOK) // 200 para o MP não retentar
+		return
 	} else {
-		log.Printf("[MP WEBHOOK] MP_WEBHOOK_SECRET não configurado — assinatura não validada")
+		log.Printf("[MP WEBHOOK] MP_WEBHOOK_SECRET não configurado — validação ignorada (modo dev)")
 	}
 
 	mpPaymentID := notif.Data.ID

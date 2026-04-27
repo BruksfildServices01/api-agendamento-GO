@@ -281,6 +281,20 @@ func sanitizePhone(phone string) string {
 	return "55" + digits
 }
 
+// maskPhoneLog mascara número de telefone para logs — mantém apenas últimos 4 dígitos (LGPD).
+func maskPhoneLog(phone string) string {
+	digits := ""
+	for _, ch := range phone {
+		if ch >= '0' && ch <= '9' {
+			digits += string(ch)
+		}
+	}
+	if len(digits) <= 4 {
+		return strings.Repeat("*", len(digits))
+	}
+	return strings.Repeat("*", len(digits)-4) + digits[len(digits)-4:]
+}
+
 // ── WhatsAppNotifier ──────────────────────────────────────────────────────────
 
 type WhatsAppNotifier struct {
@@ -314,7 +328,7 @@ func (n *WhatsAppNotifier) send(ctx context.Context, barbershopID uint, phone, m
 	instance := instanceNameForBarbershop(barbershopID)
 	client := n.clientFor(instance)
 	if err := client.SendText(ctx, instance, phone, msg); err != nil {
-		log.Printf("[WhatsApp] send failed barbershop=%d phone=%s: %v", barbershopID, phone, err)
+		log.Printf("[WhatsApp] send failed barbershop=%d phone=%s: %v", barbershopID, maskPhoneLog(phone), err)
 	}
 }
 

@@ -24,6 +24,22 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
+
+	// Validações de segurança obrigatórias em produção.
+	if cfg.AppEnv == "production" {
+		if cfg.MPProvider == "mp" {
+			if cfg.MPWebhookSecret == "" {
+				log.Fatal("ERRO DE CONFIGURAÇÃO: MP_WEBHOOK_SECRET é obrigatório quando MP_PROVIDER=mp e APP_ENV=production.")
+			}
+			if cfg.MPAccessToken == "" {
+				log.Fatal("ERRO DE CONFIGURAÇÃO: MP_ACCESS_TOKEN é obrigatório quando MP_PROVIDER=mp e APP_ENV=production (necessário para billing da plataforma).")
+			}
+		}
+		if cfg.EvolutionURL != "" && cfg.EvolutionAPIKey == "" {
+			log.Fatal("ERRO DE CONFIGURAÇÃO: EVOLUTION_API_KEY é obrigatória quando EVOLUTION_URL está configurada e APP_ENV=production.")
+		}
+	}
+
 	db := dbpkg.NewDB(cfg)
 
 	// Contexto raiz: cancelado no início do graceful shutdown para parar os jobs.

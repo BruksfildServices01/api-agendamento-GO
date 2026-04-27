@@ -46,6 +46,11 @@ type Config struct {
 	// =========================
 	// MERCADO PAGO
 	// =========================
+	// AppEnv: "development" (padrão) | "production"
+	// Usado como segunda camada de proteção para endpoints e validações que só
+	// devem existir/ser relaxados fora de produção.
+	AppEnv string
+
 	// MPProvider: "mock" (padrão) | "mp"
 	MPProvider    string
 	MPAccessToken string
@@ -123,6 +128,8 @@ func Load() *Config {
 
 		// REDIS
 		RedisURL: getEnv("REDIS_URL", ""),
+
+		AppEnv: getEnv("APP_ENV", "development"),
 
 		// MERCADO PAGO
 		MPProvider:      getEnv("MP_PROVIDER", "mock"),

@@ -98,7 +98,10 @@ func (h *ClientHandler) List(c *gin.Context) {
 	categoryCounts["premium"] = int(premiumCount)
 
 	// 2. Base query — filtros via subquery, sem carregar IDs em memória.
-	q := h.db.WithContext(ctx).Model(&models.Client{}).Where("barbershop_id = ?", barbershopID)
+	// Clientes anonimizados são excluídos por padrão (LGPD — dados pessoais removidos).
+	q := h.db.WithContext(ctx).Model(&models.Client{}).
+		Where("barbershop_id = ?", barbershopID).
+		Where("anonymized_at IS NULL")
 
 	if query != "" {
 		like := "%" + query + "%"

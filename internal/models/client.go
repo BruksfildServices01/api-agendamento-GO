@@ -14,7 +14,7 @@ type Client struct {
 	// LGPD: preenchidos quando dados pessoais são removidos a pedido do titular.
 	// Após anonimização: Name="Cliente removido", Phone=NULL, Email=NULL.
 	AnonymizedAt     *time.Time `gorm:"column:anonymized_at"`
-	AnonymizedReason string     `gorm:"size:50;column:anonymized_reason"`
+	AnonymizedReason *string    `gorm:"size:50;column:anonymized_reason"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

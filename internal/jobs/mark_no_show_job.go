@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
@@ -45,6 +46,7 @@ func (j *MarkNoShowJob) Run(ctx context.Context) error {
 
 		candidates, err := j.repo.ListNoShowCandidates(ctx, shop.ID, cutoff)
 		if err != nil {
+			log.Printf("[MarkNoShowJob] barbershop=%d list_error=%v", shop.ID, err)
 			continue
 		}
 

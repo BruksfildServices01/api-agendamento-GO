@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
@@ -133,8 +134,7 @@ func (r *AppointmentGormRepository) GetOrCreateClient(
 
 	if err == nil {
 		if email != "" && client.Email != email {
-			client.Email = email
-			if err := r.db.WithContext(ctx).Save(&client).Error; err != nil {
+			if err := r.db.WithContext(ctx).Model(&client).Update("email", email).Error; err != nil {
 				return nil, err
 			}
 		}
@@ -298,7 +298,7 @@ func (r *AppointmentGormRepository) UpdateAppointment(
 	ctx context.Context,
 	ap *models.Appointment,
 ) error {
-	return r.db.WithContext(ctx).Save(ap).Error
+	return r.db.WithContext(ctx).Omit(clause.Associations).Save(ap).Error
 }
 
 func (r *AppointmentGormRepository) SaveAppointmentClosure(

@@ -493,14 +493,14 @@ func (r *PaymentGormTxRepository) UpdateAppointmentTx(
 	ctx context.Context,
 	ap *models.Appointment,
 ) error {
-	return r.tx.WithContext(ctx).Save(ap).Error
+	return r.tx.WithContext(ctx).Omit(clause.Associations).Save(ap).Error
 }
 
 func (r *PaymentGormTxRepository) UpdateOrderTx(
 	ctx context.Context,
 	order *models.Order,
 ) error {
-	return r.tx.WithContext(ctx).Save(order).Error
+	return r.tx.WithContext(ctx).Omit(clause.Associations).Save(order).Error
 }
 
 func (r *PaymentGormTxRepository) RegisterEvent(

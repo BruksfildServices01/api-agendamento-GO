@@ -342,8 +342,8 @@ func RegisterRoutes(
 
 		const everyExpire = 10 * time.Minute
 		const ttlExpire = 13 * time.Minute
-		const everyAutoComplete = 15 * time.Minute
-		const ttlAutoComplete = 20 * time.Minute
+		const everyAutoComplete = 50 * time.Minute
+		const ttlAutoComplete = 55 * time.Minute
 
 		scheduler.Every(everyExpire, func(ctx context.Context) {
 			ok, err := locker.TryLock(ctx, "job:expire_payments", ttlExpire)

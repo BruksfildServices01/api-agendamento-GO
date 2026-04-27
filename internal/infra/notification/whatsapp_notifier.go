@@ -213,17 +213,31 @@ func (c *EvolutionClient) SendText(ctx context.Context, instanceName, number, te
 	return nil
 }
 
+// sanitizePhone normaliza qualquer formato de telefone brasileiro para DDI+DDD+número.
+// Exemplos: "(11) 91354-0401" → "5511913540401"
+//           "+55 11 91354-0401" → "5511913540401"
+//           "011913540401" → "5511913540401"
 func sanitizePhone(phone string) string {
+	// Remove tudo exceto dígitos
 	digits := ""
 	for _, ch := range phone {
 		if ch >= '0' && ch <= '9' {
 			digits += string(ch)
 		}
 	}
-	if !strings.HasPrefix(digits, "55") {
-		digits = "55" + digits
+
+	// Remove zeros à esquerda (formato antigo 011...)
+	for strings.HasPrefix(digits, "0") {
+		digits = digits[1:]
 	}
-	return digits
+
+	// Já tem código do país
+	if strings.HasPrefix(digits, "55") && len(digits) >= 12 {
+		return digits
+	}
+
+	// Número brasileiro sem prefixo (10 ou 11 dígitos)
+	return "55" + digits
 }
 
 // ── WhatsAppNotifier ──────────────────────────────────────────────────────────

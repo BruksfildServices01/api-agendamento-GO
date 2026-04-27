@@ -600,10 +600,10 @@ func RegisterRoutes(
 		paymentPolicyHandler)
 
 	// ── WhatsApp ────────────────────────────────────────────────────────────
-	secured.GET("/whatsapp/status",          whatsappHandler.Status)
-	secured.POST("/whatsapp/connect",        whatsappHandler.Connect)
-	secured.POST("/whatsapp/pairing-code",   whatsappHandler.PairingCode)
-	secured.DELETE("/whatsapp/connect",      whatsappHandler.Disconnect)
+	secured.GET("/me/whatsapp/status",          whatsappHandler.Status)
+	secured.POST("/me/whatsapp/connect",        whatsappHandler.Connect)
+	secured.POST("/me/whatsapp/pairing-code",   whatsappHandler.PairingCode)
+	secured.DELETE("/me/whatsapp/connect",      whatsappHandler.Disconnect)
 
 	// Webhook público — Evolution API dispara aqui quando cliente manda mensagem
 	api.POST("/webhooks/whatsapp", whatsappWebhookHandler.Receive)

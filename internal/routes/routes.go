@@ -459,6 +459,15 @@ func RegisterRoutes(
 	whatsappHandler        := handlers.NewWhatsAppHandler(db, cfg.EvolutionURL, cfg.EvolutionAPIKey, cfg.BackendURL)
 	whatsappWebhookHandler := handlers.NewWhatsAppWebhookHandler(db, cfg.EvolutionURL, cfg.EvolutionAPIKey)
 
+	mpOAuthHandler := handlers.NewMPOAuthHandler(
+		db,
+		cfg.MPClientID,
+		cfg.MPClientSecret,
+		cfg.BackendURL+"/api/mercadopago/oauth/callback",
+		cfg.AppURL,
+		cfg.JWTSecret,
+	)
+
 	appointmentHandler := handlers.NewAppointmentHandler(
 		createAppointmentUC,
 		completeAppointmentUC,
@@ -600,6 +609,13 @@ func RegisterRoutes(
 		paymentPolicyHandler)
 
 	// ── WhatsApp ────────────────────────────────────────────────────────────
+	// ── Mercado Pago OAuth ─────────────────────────────────────────
+	secured.GET("/me/mercadopago/oauth/start",    mpOAuthHandler.Start)
+	secured.GET("/me/mercadopago/oauth/status",   mpOAuthHandler.Status)
+	secured.DELETE("/me/mercadopago/oauth",       mpOAuthHandler.Disconnect)
+	// Callback público — MP redireciona aqui após autorização
+	api.GET("/mercadopago/oauth/callback",        mpOAuthHandler.Callback)
+
 	secured.GET("/me/whatsapp/status",          whatsappHandler.Status)
 	secured.POST("/me/whatsapp/connect",        whatsappHandler.Connect)
 	secured.POST("/me/whatsapp/pairing-code",   whatsappHandler.PairingCode)

@@ -82,6 +82,12 @@ type Config struct {
 	// EvolutionAPIKey: chave de autenticação definida em AUTHENTICATION_API_KEY
 	EvolutionURL    string
 	EvolutionAPIKey string
+
+	// =========================
+	// MERCADO PAGO OAUTH
+	// =========================
+	MPClientID     string
+	MPClientSecret string
 }
 
 func Load() *Config {
@@ -138,6 +144,9 @@ func Load() *Config {
 
 		EvolutionURL:    strings.TrimRight(getEnv("EVOLUTION_URL", ""), "/"),
 		EvolutionAPIKey: getEnv("EVOLUTION_API_KEY", ""),
+
+		MPClientID:     getEnv("MP_CLIENT_ID", ""),
+		MPClientSecret: getEnv("MP_CLIENT_SECRET", ""),
 	}
 
 	cfg.AppURL = strings.TrimRight(cfg.AppURL, "/")

@@ -57,6 +57,8 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 	}
 
 	var r row
+	// barbershop_whatsapp_instances removido deste hot path — em Neon 0.25 vCPU o JOIN
+	// adicionava ~350ms. O frontend usa barbershopPhone como fallback quando wa_phone é vazio.
 	err := uc.db.WithContext(ctx).Raw(`
 		SELECT
 			a.id             AS appointment_id,
@@ -66,8 +68,8 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 			bs.name          AS service_name,
 			b.name           AS barbershop_name,
 			b.slug           AS barbershop_slug,
-			b.phone                               AS barbershop_phone,
-			COALESCE(wi.phone, '')                AS barbershop_wa_phone,
+			b.phone          AS barbershop_phone,
+			''               AS barbershop_wa_phone,
 			u.name           AS barber_name,
 			c.name           AS client_name,
 			c.phone          AS client_phone,
@@ -80,10 +82,6 @@ func (uc *ViewTicket) Execute(ctx context.Context, token string) (*TicketViewDTO
 		LEFT JOIN barbershop_services bs ON bs.id = a.barber_product_id
 		LEFT JOIN users u           ON u.id = a.barber_id
 		LEFT JOIN clients c         ON c.id = a.client_id
-		LEFT JOIN barbershop_whatsapp_instances wi
-			ON wi.barbershop_id = b.id
-			AND wi.barber_id IS NULL
-			AND wi.status = 'connected'
 		WHERE t.token = ?
 	`, token).Scan(&r).Error
 

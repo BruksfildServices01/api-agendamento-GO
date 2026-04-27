@@ -147,6 +147,7 @@ func (r *ServiceSuggestionGormRepository) GetPublicSuggestionByServiceID(
 	}
 
 	var row models.ServiceSuggestedProduct
+	// Find em vez de First para evitar o log "record not found" do GORM quando não há sugestão.
 	err := r.db.WithContext(ctx).
 		Preload("Product").
 		Joins("JOIN products ON products.id = service_suggested_products.product_id").
@@ -157,13 +158,13 @@ func (r *ServiceSuggestionGormRepository) GetPublicSuggestionByServiceID(
 		Where("products.active = ?", true).
 		Where("products.online_visible = ?", true).
 		Where("products.stock > 0").
-		First(&row).Error
+		Limit(1).Find(&row).Error
 
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
+	}
+	if row.ID == 0 {
+		return nil, nil
 	}
 
 	return mapServiceSuggestionToDomain(&row), nil

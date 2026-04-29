@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -140,24 +142,29 @@ func (h *MPOAuthHandler) Callback(c *gin.Context) {
 	state := c.Query("state")
 
 	if code == "" {
+		mpErr := c.Query("error")
+		log.Printf("[mp_oauth] callback sem code: error=%q state=%q", mpErr, state)
 		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=cancelled")
 		return
 	}
 
 	barbershopID, err := h.parseState(state)
 	if err != nil {
+		log.Printf("[mp_oauth] state inválido: %v", err)
 		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=invalid_state")
 		return
 	}
 
 	tokens, err := h.exchangeCode(c.Request.Context(), code)
 	if err != nil || tokens.AccessToken == "" {
+		log.Printf("[mp_oauth] troca de código falhou (barbershop=%d): %v", barbershopID, err)
 		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=exchange_failed")
 		return
 	}
 
 	// Salva access_token e public_key na config da barbearia
 	if err := h.saveTokens(barbershopID, tokens.AccessToken, tokens.PublicKey); err != nil {
+		log.Printf("[mp_oauth] falha ao salvar tokens (barbershop=%d): %v", barbershopID, err)
 		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=save_failed")
 		return
 	}
@@ -165,7 +172,9 @@ func (h *MPOAuthHandler) Callback(c *gin.Context) {
 	c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_success=1")
 }
 
-func (h *MPOAuthHandler) exchangeCode(ctx interface{ Value(any) any }, code string) (*mpTokenResponse, error) {
+var mpHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+func (h *MPOAuthHandler) exchangeCode(ctx context.Context, code string) (*mpTokenResponse, error) {
 	body, _ := json.Marshal(map[string]string{
 		"client_id":     h.clientID,
 		"client_secret": h.clientSecret,
@@ -174,13 +183,13 @@ func (h *MPOAuthHandler) exchangeCode(ctx interface{ Value(any) any }, code stri
 		"redirect_uri":  h.callbackURL,
 	})
 
-	req, err := http.NewRequest(http.MethodPost, "https://api.mercadopago.com/oauth/token", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.mercadopago.com/oauth/token", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := mpHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

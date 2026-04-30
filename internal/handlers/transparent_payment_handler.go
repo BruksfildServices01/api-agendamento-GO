@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
@@ -21,17 +21,20 @@ type TransparentPaymentHandler struct {
 	db                          *gorm.DB
 	createPaymentForAppointment *ucPayment.CreatePaymentForAppointment
 	createTransparentPayment    *ucPayment.CreateTransparentPayment
+	registry                    *paymentinfra.ProviderRegistry
 }
 
 func NewTransparentPaymentHandler(
 	db *gorm.DB,
 	createPaymentForAppointment *ucPayment.CreatePaymentForAppointment,
 	createTransparentPayment *ucPayment.CreateTransparentPayment,
+	registry *paymentinfra.ProviderRegistry,
 ) *TransparentPaymentHandler {
 	return &TransparentPaymentHandler{
 		db:                          db,
 		createPaymentForAppointment: createPaymentForAppointment,
 		createTransparentPayment:    createTransparentPayment,
+		registry:                    registry,
 	}
 }
 
@@ -187,35 +190,13 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		}
 	}
 
-	// Tenta usar o gateway da própria barbearia se ela tiver token configurado
-	if hasCfg && paymentCfg.MPAccessToken != "" {
-		if g, err := mp.New(paymentCfg.MPAccessToken); err == nil {
-			payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
-				BarbershopID:     shop.ID,
-				AppointmentID:    uint(appointmentID),
-				PayerEmail:       req.PayerEmail,
-				PayerCPF:         req.PayerCPF,
-				PaymentMethodID:  req.PaymentMethodID,
-				Token:            req.Token,
-				Installments:     req.Installments,
-				OrderID:          req.OrderID,
-				OrderAmountCents: req.OrderAmountCents,
-			}, g)
-			if err != nil {
-				mapTransparentPaymentError(c, slug, appointmentID, err)
-				return
-			}
-			c.JSON(http.StatusCreated, transparentPaymentResponse{
-				PaymentID:    payment.ID,
-				MPPaymentID:  result.MPPaymentID,
-				Status:       result.Status,
-				StatusDetail: result.StatusDetail,
-				QRCode:       result.QRCode,
-				QRCodeBase64: result.QRCodeBase64,
-				TicketURL:    result.TicketURL,
-			})
-			return
-		}
+	// Obtém o gateway do provider configurado para esta barbearia.
+	// O registry é o único lugar que conhece qual provider usar e como instanciá-lo.
+	gw, err := h.registry.TransparentGatewayFor(ctx, paymentCfg)
+	if err != nil {
+		log.Printf("[TRANSPARENT] gateway error barbershop=%d: %v", shop.ID, err)
+		httperr.Internal(c, "payment_gateway_error", "Erro ao inicializar gateway de pagamento.")
+		return
 	}
 
 	payment, result, err := h.createTransparentPayment.Execute(ctx, ucPayment.TransparentPaymentInput{
@@ -228,7 +209,7 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		Installments:     req.Installments,
 		OrderID:          req.OrderID,
 		OrderAmountCents: req.OrderAmountCents,
-	})
+	}, gw)
 	if err != nil {
 		mapTransparentPaymentError(c, slug, appointmentID, err)
 		return

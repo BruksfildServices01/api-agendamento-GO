@@ -586,7 +586,10 @@ CREATE TABLE payments (
   order_id        BIGINT        REFERENCES orders(id)                 ON DELETE CASCADE,
   bundled_order_id BIGINT       REFERENCES orders(id)                 ON DELETE SET NULL,
   subscription_id BIGINT        REFERENCES subscriptions(id)          ON DELETE SET NULL,
-  txid            VARCHAR(100)  UNIQUE,
+  txid                VARCHAR(100)  UNIQUE,
+  mp_payment_id       BIGINT,                 -- regularizado por migration 014
+  provider            VARCHAR(50),            -- 'mercadopago' | 'pagbank' | 'stone' (migration 014)
+  provider_payment_id VARCHAR(100),           -- ID externo genérico do provider (migration 014)
   qr_code         TEXT,
   amount          BIGINT        NOT NULL CHECK (amount >= 0),
   status          payment_status NOT NULL,
@@ -608,6 +611,10 @@ CREATE INDEX idx_payments_barbershop_status ON payments(barbershop_id, status);
 CREATE INDEX idx_payments_appointment       ON payments(barbershop_id, appointment_id);
 CREATE INDEX idx_payments_subscription      ON payments(barbershop_id, subscription_id)
   WHERE subscription_id IS NOT NULL;
+CREATE INDEX idx_payments_mp_payment_id     ON payments(mp_payment_id)
+  WHERE mp_payment_id IS NOT NULL;
+CREATE INDEX idx_payments_provider          ON payments(barbershop_id, provider)
+  WHERE provider IS NOT NULL;
 
 CREATE UNIQUE INDEX uq_payments_shop_appointment
   ON payments(barbershop_id, appointment_id)
@@ -862,6 +869,37 @@ CREATE INDEX idx_carts_expires_at ON carts(expires_at);
 
 CREATE TRIGGER trg_carts_updated
 BEFORE UPDATE ON carts
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- BARBERSHOP PAYMENT PROVIDERS (migration 014)
+-- ============================================================
+-- Credenciais de providers de pagamento por barbearia.
+-- credentials_encrypted: JSON das credenciais criptografado com
+--   AES-GCM na aplicação, armazenado em base64 — nunca em claro.
+-- webhook_secret: separado para leitura em hot path (HMAC de webhook)
+--   sem descriptografar o bloco de credenciais.
+-- UNIQUE(barbershop_id, provider): permite múltiplos providers sem
+--   forçar apenas um ativo por barbearia.
+
+CREATE TABLE IF NOT EXISTS barbershop_payment_providers (
+  id                    BIGSERIAL     PRIMARY KEY,
+  barbershop_id         BIGINT        NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  provider              VARCHAR(50)   NOT NULL,
+  enabled               BOOLEAN       NOT NULL DEFAULT false,
+  environment           VARCHAR(20)   NOT NULL DEFAULT 'production',
+  credentials_encrypted TEXT,
+  webhook_secret        VARCHAR(500),
+  created_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  UNIQUE(barbershop_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_providers_barbershop
+  ON barbershop_payment_providers(barbershop_id);
+
+CREATE TRIGGER trg_payment_providers_updated
+BEFORE UPDATE ON barbershop_payment_providers
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;

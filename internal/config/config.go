@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -93,6 +94,14 @@ type Config struct {
 	// =========================
 	MPClientID     string
 	MPClientSecret string
+
+	// =========================
+	// PAYMENT CREDENTIALS ENCRYPTION
+	// =========================
+	// Chave AES-256 para criptografar credentials_encrypted em barbershop_payment_providers.
+	// Deve ser uma string hexadecimal de 64 caracteres (32 bytes).
+	// Obrigatória em produção. Gerar com: openssl rand -hex 32
+	PaymentCredentialsEncryptionKey string
 }
 
 func Load() *Config {
@@ -154,9 +163,24 @@ func Load() *Config {
 
 		MPClientID:     getEnv("MP_CLIENT_ID", ""),
 		MPClientSecret: getEnv("MP_CLIENT_SECRET", ""),
+
+		PaymentCredentialsEncryptionKey: getEnv("PAYMENT_CREDENTIALS_ENCRYPTION_KEY", ""),
 	}
 
 	cfg.AppURL = strings.TrimRight(cfg.AppURL, "/")
+
+	// =========================
+	// VALIDAÇÃO DE PAYMENT CREDENTIALS ENCRYPTION KEY
+	// =========================
+	if encKey := cfg.PaymentCredentialsEncryptionKey; encKey != "" {
+		keyBytes, err := hex.DecodeString(encKey)
+		if err != nil || len(keyBytes) != 32 {
+			log.Fatal("❌ PAYMENT_CREDENTIALS_ENCRYPTION_KEY inválida — deve ser 64 caracteres hexadecimais (32 bytes / AES-256). Gere com: openssl rand -hex 32")
+		}
+	}
+	if cfg.AppEnv == "production" && cfg.PaymentCredentialsEncryptionKey == "" {
+		log.Fatal("❌ PAYMENT_CREDENTIALS_ENCRYPTION_KEY não definida em produção")
+	}
 
 	// =========================
 	// VALIDAÇÃO DE EMAIL

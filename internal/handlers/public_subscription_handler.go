@@ -249,7 +249,7 @@ func (h *PublicSubscriptionHandler) tryActivateFromMP(ctx context.Context, sub *
 	if err != nil {
 		return
 	}
-	mpStatus, err := gw.GetPaymentStatus(*pmt.MPPaymentID)
+	mpStatus, err := gw.GetPaymentStatusByMPID(*pmt.MPPaymentID)
 	if err != nil || mpStatus != "approved" {
 		return
 	}

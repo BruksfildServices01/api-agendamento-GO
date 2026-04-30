@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/mercadopago/sdk-go/pkg/config"
@@ -117,13 +118,176 @@ func (g *Gateway) CreatePayment(input domain.TransparentPaymentInput) (*domain.T
 	}, nil
 }
 
-// GetPaymentStatus consulta o status de um pagamento pelo ID do MP.
-func (g *Gateway) GetPaymentStatus(mpPaymentID int64) (string, error) {
+// GetPaymentStatusByMPID consulta o status de um pagamento pelo ID numérico do MP.
+// Mantido por compatibilidade com callers que ainda usam o ID int64 diretamente.
+func (g *Gateway) GetPaymentStatusByMPID(mpPaymentID int64) (string, error) {
 	resp, err := g.paymentClient.Get(context.Background(), int(mpPaymentID))
 	if err != nil {
 		return "", fmt.Errorf("mp get payment: %w", err)
 	}
 	return resp.Status, nil
+}
+
+// ── Implementação de domain.PaymentGateway ────────────────────────────────────
+//
+// Os métodos abaixo implementam a interface genérica PaymentGateway.
+// Os métodos antigos (CreatePreference, CreatePayment, GetPaymentStatus) são mantidos
+// para compatibilidade com os use cases existentes e serão removidos
+// quando a migração para PaymentGateway estiver completa.
+
+// CreatePixPayment implementa domain.PaymentGateway.
+func (g *Gateway) CreatePixPayment(ctx context.Context, input domain.PixPaymentInput) (*domain.PixPaymentResult, error) {
+	req := payment.Request{
+		TransactionAmount: float64(input.AmountCents) / 100,
+		Description:       input.Description,
+		ExternalReference: input.ExternalReference,
+		PaymentMethodID:   "pix",
+		Installments:      1,
+		Payer: &payment.PayerRequest{
+			Email: input.PayerEmail,
+		},
+	}
+	if isPublicURL(input.NotificationURL) {
+		req.NotificationURL = input.NotificationURL
+	}
+	if input.PayerCPF != "" {
+		req.Payer.Identification = &payment.IdentificationRequest{
+			Type:   "CPF",
+			Number: input.PayerCPF,
+		}
+	}
+
+	resp, err := g.paymentClient.Create(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("mp create pix: %w", err)
+	}
+
+	return &domain.PixPaymentResult{
+		ProviderPaymentID: strconv.FormatInt(int64(resp.ID), 10),
+		Status:            mapMPStatus(resp.Status),
+		QRCode:            resp.PointOfInteraction.TransactionData.QRCode,
+		QRCodeBase64:      resp.PointOfInteraction.TransactionData.QRCodeBase64,
+	}, nil
+}
+
+// CreateCardPayment implementa domain.PaymentGateway.
+// CardBrand ("visa", "mastercard", "elo", "amex") é traduzido para o payment_method_id do MP.
+func (g *Gateway) CreateCardPayment(ctx context.Context, input domain.CardPaymentInput) (*domain.CardPaymentResult, error) {
+	req := payment.Request{
+		TransactionAmount: float64(input.AmountCents) / 100,
+		Description:       input.Description,
+		ExternalReference: input.ExternalReference,
+		PaymentMethodID:   mpCardMethodID(input.CardBrand, input.IsDebit),
+		Token:             input.CardToken,
+		Installments:      input.Installments,
+		Payer: &payment.PayerRequest{
+			Email: input.PayerEmail,
+		},
+	}
+	if isPublicURL(input.NotificationURL) {
+		req.NotificationURL = input.NotificationURL
+	}
+	if input.PayerCPF != "" {
+		req.Payer.Identification = &payment.IdentificationRequest{
+			Type:   "CPF",
+			Number: input.PayerCPF,
+		}
+	}
+
+	resp, err := g.paymentClient.Create(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("mp create card payment: %w", err)
+	}
+
+	return &domain.CardPaymentResult{
+		ProviderPaymentID: strconv.FormatInt(int64(resp.ID), 10),
+		Status:            mapMPStatus(resp.Status),
+		StatusDetail:      resp.StatusDetail,
+	}, nil
+}
+
+// CreateHostedCheckout implementa domain.PaymentGateway.
+func (g *Gateway) CreateHostedCheckout(ctx context.Context, input domain.HostedCheckoutInput) (*domain.HostedCheckoutResult, error) {
+	req := preference.Request{
+		Items: []preference.ItemRequest{
+			{
+				Title:      input.Description,
+				Quantity:   1,
+				UnitPrice:  float64(input.AmountCents) / 100,
+				CurrencyID: "BRL",
+			},
+		},
+		BackURLs: &preference.BackURLsRequest{
+			Success: input.BackURLs.Success,
+			Pending: input.BackURLs.Pending,
+			Failure: input.BackURLs.Failure,
+		},
+		AutoReturn:        "approved",
+		ExternalReference: input.ExternalReference,
+		NotificationURL:   input.NotificationURL,
+	}
+
+	resp, err := g.preferenceClient.Create(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("mp create hosted checkout: %w", err)
+	}
+
+	return &domain.HostedCheckoutResult{
+		ProviderCheckoutID: resp.ID,
+		RedirectURL:        resp.InitPoint,
+		SandboxURL:         resp.SandboxInitPoint,
+	}, nil
+}
+
+// GetPaymentStatus implementa domain.PaymentGateway.
+// providerPaymentID é o ID numérico do MP em formato string.
+func (g *Gateway) GetPaymentStatus(ctx context.Context, providerPaymentID string) (domain.ProviderPaymentStatus, error) {
+	id, err := strconv.ParseInt(providerPaymentID, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("mp: invalid payment id %q: %w", providerPaymentID, err)
+	}
+	resp, err := g.paymentClient.Get(ctx, int(id))
+	if err != nil {
+		return "", fmt.Errorf("mp get payment status: %w", err)
+	}
+	return mapMPStatus(resp.Status), nil
+}
+
+// mapMPStatus normaliza o status do MP para o ProviderPaymentStatus genérico.
+func mapMPStatus(s string) domain.ProviderPaymentStatus {
+	switch s {
+	case "approved":
+		return domain.ProviderStatusApproved
+	case "rejected":
+		return domain.ProviderStatusRejected
+	case "cancelled":
+		return domain.ProviderStatusCancelled
+	case "in_process", "authorized":
+		return domain.ProviderStatusInProcess
+	default:
+		return domain.ProviderStatusPending
+	}
+}
+
+// mpCardMethodID traduz CardBrand + IsDebit para o payment_method_id do Mercado Pago.
+func mpCardMethodID(brand string, isDebit bool) string {
+	b := strings.ToLower(brand)
+	if isDebit {
+		switch b {
+		case "visa":
+			return "debvisa"
+		case "mastercard", "master":
+			return "debmaster"
+		case "elo":
+			return "debelo"
+		default:
+			return "deb" + b
+		}
+	}
+	if b == "mastercard" {
+		return "master"
+	}
+	return b
 }
 
 // isPublicURL retorna true apenas para URLs HTTPS não-localhost.

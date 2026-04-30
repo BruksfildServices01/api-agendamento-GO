@@ -14,9 +14,11 @@ import (
 	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/handlers"
 	cartStore "github.com/BruksfildServices01/barber-scheduler/internal/infra/cart"
+	"github.com/BruksfildServices01/barber-scheduler/internal/infra/crypt"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/storage"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
@@ -508,10 +510,23 @@ func RegisterRoutes(
 		createMPPreferenceUC,
 	)
 
+	var paymentCipher *crypt.Cipher
+	if cfg.PaymentCredentialsEncryptionKey != "" {
+		c, err := crypt.NewCipher(cfg.PaymentCredentialsEncryptionKey)
+		if err != nil {
+			log.Fatalf("[PAYMENT] chave de criptografia inválida: %v", err)
+		}
+		paymentCipher = c
+		log.Println("[PAYMENT] cipher inicializado para credentials_encrypted")
+	}
+
+	providerRegistry := paymentinfra.NewProviderRegistry(db, paymentCipher)
+
 	transparentPaymentHandler := handlers.NewTransparentPaymentHandler(
 		db,
 		createPaymentForAppointmentUC,
 		createTransparentPaymentUC,
+		providerRegistry,
 	)
 
 	mpWebhookHandler := handlers.NewMPWebhookHandler(

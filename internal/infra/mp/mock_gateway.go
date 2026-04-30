@@ -1,7 +1,9 @@
 package mp
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
@@ -51,4 +53,38 @@ func (g *MockGateway) CreatePayment(input domain.TransparentPaymentInput) (*doma
 		Status:       "approved",
 		StatusDetail: "accredited",
 	}, nil
+}
+
+// ── Implementação de domain.PaymentGateway ────────────────────────────────────
+
+func (g *MockGateway) CreatePixPayment(_ context.Context, _ domain.PixPaymentInput) (*domain.PixPaymentResult, error) {
+	fakeID := strconv.FormatInt(time.Now().UnixNano(), 10)
+	fakeQR := fmt.Sprintf("00020101021226830014BR.GOV.BCB.PIX0114mock%s5204000053039865802BR5925Mock Barbearia6009Sao Paulo62290525mock-pix-%s6304ABCD", fakeID, fakeID)
+	return &domain.PixPaymentResult{
+		ProviderPaymentID: fakeID,
+		Status:            domain.ProviderStatusPending,
+		QRCode:            fakeQR,
+		QRCodeBase64:      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+	}, nil
+}
+
+func (g *MockGateway) CreateCardPayment(_ context.Context, _ domain.CardPaymentInput) (*domain.CardPaymentResult, error) {
+	return &domain.CardPaymentResult{
+		ProviderPaymentID: strconv.FormatInt(time.Now().UnixNano(), 10),
+		Status:            domain.ProviderStatusApproved,
+		StatusDetail:      "accredited",
+	}, nil
+}
+
+func (g *MockGateway) CreateHostedCheckout(_ context.Context, input domain.HostedCheckoutInput) (*domain.HostedCheckoutResult, error) {
+	fakeID := fmt.Sprintf("mock-checkout-%d", time.Now().UnixNano())
+	return &domain.HostedCheckoutResult{
+		ProviderCheckoutID: fakeID,
+		RedirectURL:        "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=" + fakeID,
+		SandboxURL:         "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=" + fakeID,
+	}, nil
+}
+
+func (g *MockGateway) GetPaymentStatus(_ context.Context, _ string) (domain.ProviderPaymentStatus, error) {
+	return domain.ProviderStatusPending, nil
 }

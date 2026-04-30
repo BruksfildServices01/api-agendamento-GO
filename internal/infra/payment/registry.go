@@ -22,8 +22,8 @@ var ErrPaymentNotConfigured = errors.New("payment provider not configured for th
 // É o único lugar no sistema que conhece os providers disponíveis e suas credenciais.
 //
 // Ordem de resolução em TransparentGatewayFor:
-//  1. barbershop_payment_providers — nova tabela com credenciais criptografadas.
-//  2. barbershop_payment_configs.mp_access_token — fallback antigo (enquanto dados não migram).
+//  1. barbershop_payment_providers — fonte principal, credenciais criptografadas com AES-256-GCM.
+//  2. barbershop_payment_configs.mp_access_token — fallback legado, mantido como contingência.
 //  3. Nenhum → ErrPaymentNotConfigured.
 type ProviderRegistry struct {
 	db     *gorm.DB

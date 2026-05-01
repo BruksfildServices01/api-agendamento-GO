@@ -17,7 +17,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
+	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
 	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/storage"

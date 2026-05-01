@@ -14,7 +14,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
+	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )

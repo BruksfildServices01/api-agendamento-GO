@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )

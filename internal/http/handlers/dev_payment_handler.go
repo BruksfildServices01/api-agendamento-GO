@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
 

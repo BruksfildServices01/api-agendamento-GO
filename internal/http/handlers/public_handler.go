@@ -18,7 +18,7 @@ import (
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"

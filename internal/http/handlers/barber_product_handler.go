@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	domainProduct "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	productUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/product"

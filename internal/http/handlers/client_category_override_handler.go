@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 )

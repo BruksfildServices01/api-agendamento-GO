@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/servicesuggestion"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	uc "github.com/BruksfildServices01/barber-scheduler/internal/usecase/servicesuggestion"
 )

@@ -14,7 +14,7 @@ import (
 	domainNotification "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	domainTicket "github.com/BruksfildServices01/barber-scheduler/internal/domain/ticket"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
@@ -98,7 +98,7 @@ func (uc *CreateTransparentPayment) Execute(
 		return nil, nil, err
 	}
 	if payment == nil {
-		return nil, nil, httperr.ErrBusiness("payment_not_found")
+		return nil, nil, apperr.ErrBusiness("payment_not_found")
 	}
 
 	// ==================================================
@@ -124,10 +124,10 @@ func (uc *CreateTransparentPayment) Execute(
 	// 4) Validações + ajuste de valor combinado (serviço + pedido)
 	// ==================================================
 	if domain.Status(payment.Status) != domain.StatusPending {
-		return nil, nil, httperr.ErrBusiness("payment_not_pending")
+		return nil, nil, apperr.ErrBusiness("payment_not_pending")
 	}
 	if input.PayerEmail == "" {
-		return nil, nil, httperr.ErrBusiness("payer_email_required")
+		return nil, nil, apperr.ErrBusiness("payer_email_required")
 	}
 
 	// Se há um pedido associado, combina o valor e vincula via BundledOrderID.
@@ -142,15 +142,15 @@ func (uc *CreateTransparentPayment) Execute(
 			return nil, nil, fmt.Errorf("failed to load order for payment: %w", err)
 		}
 		if order == nil {
-			return nil, nil, httperr.ErrBusiness("order_not_found")
+			return nil, nil, apperr.ErrBusiness("order_not_found")
 		}
 		// Só pedidos pendentes podem ser vinculados a um pagamento.
 		// Pedidos já pagos ou cancelados não devem gerar nova cobrança.
 		if order.Status != models.OrderStatusPending {
-			return nil, nil, httperr.ErrBusiness("order_not_linkable")
+			return nil, nil, apperr.ErrBusiness("order_not_linkable")
 		}
 		if order.TotalAmount <= 0 {
-			return nil, nil, httperr.ErrBusiness("invalid_order_amount")
+			return nil, nil, apperr.ErrBusiness("invalid_order_amount")
 		}
 
 		// Validação parcial de ownership: se o agendamento e o pedido tiverem
@@ -163,7 +163,7 @@ func (uc *CreateTransparentPayment) Execute(
 				return nil, nil, fmt.Errorf("failed to load appointment for order validation: %w", err)
 			}
 			if ap != nil && ap.ClientID != nil && *ap.ClientID != *order.ClientID {
-				return nil, nil, httperr.ErrBusiness("order_not_linkable")
+				return nil, nil, apperr.ErrBusiness("order_not_linkable")
 			}
 		}
 		payment.Amount += order.TotalAmount
@@ -174,7 +174,7 @@ func (uc *CreateTransparentPayment) Execute(
 	}
 
 	if payment.Amount < 100 {
-		return nil, nil, httperr.ErrBusiness("invalid_amount")
+		return nil, nil, apperr.ErrBusiness("invalid_amount")
 	}
 
 	installments := input.Installments

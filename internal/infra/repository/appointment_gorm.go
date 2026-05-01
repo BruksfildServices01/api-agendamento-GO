@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -196,7 +196,7 @@ func (r *AppointmentGormRepository) CreateAppointment(
 	}
 
 	if isUniqueBarberSlotActiveViolation(err) {
-		return httperr.ErrBusiness("time_conflict")
+		return apperr.ErrBusiness("time_conflict")
 	}
 
 	return err
@@ -213,7 +213,7 @@ func (r *AppointmentGormRepository) CreateAppointmentWithKey(
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(ap).Error; err != nil {
 			if isUniqueBarberSlotActiveViolation(err) {
-				return httperr.ErrBusiness("time_conflict")
+				return apperr.ErrBusiness("time_conflict")
 			}
 			return err
 		}
@@ -227,14 +227,14 @@ func (r *AppointmentGormRepository) CreateAppointmentWithKey(
 			idempotencyKey,
 		).Error; err != nil {
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				return httperr.ErrBusiness("duplicate_request")
+				return apperr.ErrBusiness("duplicate_request")
 			}
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				return httperr.ErrBusiness("duplicate_request")
+				return apperr.ErrBusiness("duplicate_request")
 			}
 			if strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
-				return httperr.ErrBusiness("duplicate_request")
+				return apperr.ErrBusiness("duplicate_request")
 			}
 			return err
 		}
@@ -380,7 +380,7 @@ func (r *AppointmentGormRepository) AssertNoTimeConflict(
 	}
 
 	if count > 0 {
-		return httperr.ErrBusiness("time_conflict")
+		return apperr.ErrBusiness("time_conflict")
 	}
 
 	return nil

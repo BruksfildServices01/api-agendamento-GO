@@ -13,7 +13,7 @@ import (
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
 	domainSubscription "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
@@ -121,16 +121,16 @@ func (uc *CompleteAppointment) Execute(
 
 		apLoaded, err := txRepo.GetAppointmentForBarber(ctx, barbershopID, appointmentID, barberID)
 		if err != nil || apLoaded == nil {
-			return httperr.ErrBusiness("appointment_not_found")
+			return apperr.ErrBusiness("appointment_not_found")
 		}
 		ap = apLoaded
 
 		if ap.BarbershopID == nil || *ap.BarbershopID != barbershopID {
-			return httperr.ErrBusiness("invalid_barbershop")
+			return apperr.ErrBusiness("invalid_barbershop")
 		}
 
 		if input.FinalAmountCents != nil && *input.FinalAmountCents < 0 {
-			return httperr.ErrBusiness("invalid_final_amount")
+			return apperr.ErrBusiness("invalid_final_amount")
 		}
 
 		// Quando o barbeiro conclui manualmente um agendamento awaiting_payment,
@@ -153,7 +153,7 @@ func (uc *CompleteAppointment) Execute(
 			if err := tx.WithContext(ctx).
 				Where("id = ? AND barbershop_id = ?", *actualServiceID, barbershopID).
 				First(&svc).Error; err != nil {
-				return httperr.ErrBusiness("actual_service_not_found")
+				return apperr.ErrBusiness("actual_service_not_found")
 			}
 			actualServiceName = svc.Name
 			referenceAmount = svc.Price
@@ -224,7 +224,7 @@ func (uc *CompleteAppointment) Execute(
 		}
 
 		if requiresNormalCharging && !input.ConfirmNormalCharging {
-			return httperr.ErrBusiness("normal_charging_confirmation_required")
+			return apperr.ErrBusiness("normal_charging_confirmation_required")
 		}
 
 		// Venda adicional — cria Order dentro da mesma transação.

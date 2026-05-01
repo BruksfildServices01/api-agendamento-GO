@@ -8,7 +8,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
@@ -64,7 +64,7 @@ func (uc *CreateMPPreference) Execute(
 		return nil, nil, err
 	}
 	if payment == nil {
-		return nil, nil, httperr.ErrBusiness("payment_not_found")
+		return nil, nil, apperr.ErrBusiness("payment_not_found")
 	}
 
 	// Idempotente: já existe uma preferência MP
@@ -87,11 +87,11 @@ func (uc *CreateMPPreference) Execute(
 	}
 
 	if domain.Status(payment.Status) != domain.StatusPending {
-		return nil, nil, httperr.ErrBusiness("payment_not_pending")
+		return nil, nil, apperr.ErrBusiness("payment_not_pending")
 	}
 
 	if payment.Amount <= 100 {
-		return nil, nil, httperr.ErrBusiness("invalid_amount")
+		return nil, nil, apperr.ErrBusiness("invalid_amount")
 	}
 
 	// ==================================================

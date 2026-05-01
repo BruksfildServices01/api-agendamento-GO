@@ -9,7 +9,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
@@ -57,12 +57,12 @@ func (uc *CancelAppointment) Execute(
 
 		loaded, err := txRepo.GetAppointmentForBarber(ctx, barbershopID, appointmentID, barberID)
 		if err != nil || loaded == nil {
-			return httperr.ErrBusiness("appointment_not_found")
+			return apperr.ErrBusiness("appointment_not_found")
 		}
 		ap = loaded
 
 		if ap.BarbershopID == nil || *ap.BarbershopID != barbershopID {
-			return httperr.ErrBusiness("invalid_barbershop")
+			return apperr.ErrBusiness("invalid_barbershop")
 		}
 
 		cancelledAt = time.Now().UTC()

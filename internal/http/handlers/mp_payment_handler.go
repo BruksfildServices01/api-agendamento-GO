@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
@@ -103,11 +104,11 @@ func (h *MPPaymentHandler) CreatePreference(c *gin.Context) {
 	)
 	if err != nil {
 		switch {
-		case httperr.IsBusiness(err, "payment_not_found"):
+		case apperr.IsBusiness(err, "payment_not_found"):
 			httperr.BadRequest(c, "payment_not_found", "Pagamento não encontrado.")
-		case httperr.IsBusiness(err, "invalid_amount"):
+		case apperr.IsBusiness(err, "invalid_amount"):
 			httperr.BadRequest(c, "invalid_amount", "Valor inválido para pagamento.")
-		case httperr.IsBusiness(err, "payment_not_pending"):
+		case apperr.IsBusiness(err, "payment_not_pending"):
 			httperr.BadRequest(c, "payment_not_pending", "Pagamento não está pendente.")
 		default:
 			log.Printf("[MP] CreatePreference error slug=%s appointment=%d: %v", slug, appointmentID, err)

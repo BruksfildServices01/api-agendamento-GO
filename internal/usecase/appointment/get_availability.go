@@ -5,7 +5,7 @@ import (
 	"time"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )
@@ -53,10 +53,10 @@ func (uc *GetAvailability) Execute(
 		return nil, shopErr
 	}
 	if shop == nil {
-		return nil, httperr.ErrBusiness("barbershop_not_found")
+		return nil, apperr.ErrBusiness("barbershop_not_found")
 	}
 	if productErr != nil || product == nil {
-		return nil, httperr.ErrBusiness("product_not_found")
+		return nil, apperr.ErrBusiness("product_not_found")
 	}
 
 	loc := timezone.Location(shop.Timezone)

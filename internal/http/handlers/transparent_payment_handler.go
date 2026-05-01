@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
@@ -62,13 +63,13 @@ type transparentPaymentResponse struct {
 
 func mapTransparentPaymentError(c *gin.Context, slug string, appointmentID int, err error) {
 	switch {
-	case httperr.IsBusiness(err, "payment_not_found"):
+	case apperr.IsBusiness(err, "payment_not_found"):
 		httperr.BadRequest(c, "payment_not_found", "Pagamento não encontrado.")
-	case httperr.IsBusiness(err, "payment_not_pending"):
+	case apperr.IsBusiness(err, "payment_not_pending"):
 		httperr.BadRequest(c, "payment_not_pending", "Pagamento não está pendente.")
-	case httperr.IsBusiness(err, "invalid_amount"):
+	case apperr.IsBusiness(err, "invalid_amount"):
 		httperr.BadRequest(c, "invalid_amount", "Valor inválido para pagamento.")
-	case httperr.IsBusiness(err, "payer_email_required"):
+	case apperr.IsBusiness(err, "payer_email_required"):
 		httperr.BadRequest(c, "payer_email_required", "E-mail do pagador é obrigatório.")
 	default:
 		log.Printf("[TRANSPARENT] CreatePayment error slug=%s appointment=%d: %v", slug, appointmentID, err)

@@ -12,7 +12,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
@@ -81,7 +81,7 @@ func (uc *PurchaseSubscription) Execute(
 		return nil, err
 	}
 	if plan == nil || !plan.Active {
-		return nil, httperr.ErrBusiness("plan_not_found")
+		return nil, apperr.ErrBusiness("plan_not_found")
 	}
 
 	// ── 2. Encontra ou cria cliente ───────────────────────────────────────
@@ -97,11 +97,11 @@ func (uc *PurchaseSubscription) Execute(
 		PlanID:       plan.ID,
 	}
 	if err := uc.subscriptionRepo.CreatePendingSubscription(ctx, sub); err != nil {
-		if httperr.IsBusiness(err, "") {
+		if apperr.IsBusiness(err, "") {
 			return nil, err
 		}
 		if isAlreadyHasSubscriptionErr(err) {
-			return nil, httperr.ErrBusiness("client_already_has_active_subscription")
+			return nil, apperr.ErrBusiness("client_already_has_active_subscription")
 		}
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (uc *PurchaseSubscription) Execute(
 		// (será limpa pelo job de expiração ou pode tentar novamente)
 		payment.Status = models.PaymentStatus(domainPayment.StatusExpired)
 		_ = uc.paymentRepo.Update(ctx, payment)
-		return nil, httperr.ErrBusiness("payment_rejected")
+		return nil, apperr.ErrBusiness("payment_rejected")
 
 	default:
 		// PIX ou in_process — retorna dados para o cliente aguardar

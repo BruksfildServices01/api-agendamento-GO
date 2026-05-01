@@ -7,7 +7,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
@@ -78,7 +78,7 @@ func (uc *CreatePrivateAppointment) Execute(
 		return nil, err
 	}
 	if shop == nil {
-		return nil, httperr.ErrBusiness("barbershop_not_found")
+		return nil, apperr.ErrBusiness("barbershop_not_found")
 	}
 
 	loc := timezone.Location(shop.Timezone)
@@ -100,7 +100,7 @@ func (uc *CreatePrivateAppointment) Execute(
 		loc,
 	)
 	if err != nil {
-		return nil, httperr.ErrBusiness("invalid_date_or_time")
+		return nil, apperr.ErrBusiness("invalid_date_or_time")
 	}
 
 	// Antecedência mínima
@@ -111,7 +111,7 @@ func (uc *CreatePrivateAppointment) Execute(
 
 	nowLocal := time.Now().In(loc)
 	if start.Before(nowLocal.Add(time.Duration(minAdvance) * time.Minute)) {
-		return nil, httperr.ErrBusiness("too_soon")
+		return nil, apperr.ErrBusiness("too_soon")
 	}
 
 	// --------------------------------------------------
@@ -119,7 +119,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	// --------------------------------------------------
 	product, err := uc.repo.GetProduct(ctx, in.BarbershopID, in.ProductID)
 	if err != nil || product == nil {
-		return nil, httperr.ErrBusiness("product_not_found")
+		return nil, apperr.ErrBusiness("product_not_found")
 	}
 
 	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
@@ -138,7 +138,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	}
 
 	if wh == nil || !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
-		return nil, httperr.ErrBusiness("outside_working_hours")
+		return nil, apperr.ErrBusiness("outside_working_hours")
 	}
 
 	parseHM := func(hm string) time.Time {
@@ -154,7 +154,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	workEnd := parseHM(wh.EndTime)
 
 	if startLocal.Before(workStart) || endLocal.After(workEnd) {
-		return nil, httperr.ErrBusiness("outside_working_hours")
+		return nil, apperr.ErrBusiness("outside_working_hours")
 	}
 
 	if wh.LunchStart != "" && wh.LunchEnd != "" {
@@ -162,7 +162,7 @@ func (uc *CreatePrivateAppointment) Execute(
 		lunchEnd := parseHM(wh.LunchEnd)
 
 		if startLocal.Before(lunchEnd) && endLocal.After(lunchStart) {
-			return nil, httperr.ErrBusiness("outside_working_hours")
+			return nil, apperr.ErrBusiness("outside_working_hours")
 		}
 	}
 
@@ -305,7 +305,7 @@ func (uc *CreatePrivateAppointment) Execute(
 			return nil, err
 		}
 		if exists {
-			return nil, httperr.ErrBusiness("duplicate_request")
+			return nil, apperr.ErrBusiness("duplicate_request")
 		}
 	}
 

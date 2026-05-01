@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
@@ -49,14 +49,14 @@ func (uc *AnonymizeClient) Execute(
 		if err := tx.Where("id = ? AND barbershop_id = ?", clientID, barbershopID).
 			First(&client).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return httperr.ErrBusiness("client_not_found")
+				return apperr.ErrBusiness("client_not_found")
 			}
 			return err
 		}
 
 		// 2. Já anonimizado?
 		if client.AnonymizedAt != nil {
-			return httperr.ErrBusiness("already_anonymized")
+			return apperr.ErrBusiness("already_anonymized")
 		}
 
 		// 3. Subscription ativa bloqueante
@@ -68,7 +68,7 @@ func (uc *AnonymizeClient) Execute(
 			return err
 		}
 		if activeSubCount > 0 {
-			return httperr.ErrBusiness("active_subscription_exists")
+			return apperr.ErrBusiness("active_subscription_exists")
 		}
 
 		// 4. Agendamentos futuros ativos
@@ -80,7 +80,7 @@ func (uc *AnonymizeClient) Execute(
 			return err
 		}
 		if futureApptCount > 0 {
-			return httperr.ErrBusiness("future_appointments_exist")
+			return apperr.ErrBusiness("future_appointments_exist")
 		}
 
 		// 5. Nular notes de agendamentos passados (podem conter PII textual)

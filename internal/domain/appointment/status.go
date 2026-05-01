@@ -1,6 +1,6 @@
 package appointment
 
-import "github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+import "github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 
 type Status string
 
@@ -21,7 +21,7 @@ func CanCancel(current Status) error {
 	case StatusScheduled, StatusAwaitingPayment:
 		return nil
 	default:
-		return httperr.ErrBusiness("invalid_state")
+		return apperr.ErrBusiness("invalid_state")
 	}
 }
 
@@ -30,7 +30,7 @@ func CanComplete(current Status) error {
 	case StatusScheduled, StatusAwaitingPayment:
 		return nil
 	default:
-		return httperr.ErrBusiness("invalid_state")
+		return apperr.ErrBusiness("invalid_state")
 	}
 }
 
@@ -39,7 +39,7 @@ func CanMarkNoShow(current Status) error {
 	case StatusScheduled, StatusAwaitingPayment:
 		return nil
 	default:
-		return httperr.ErrBusiness("invalid_state")
+		return apperr.ErrBusiness("invalid_state")
 	}
 }
 

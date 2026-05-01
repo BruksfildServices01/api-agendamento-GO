@@ -9,7 +9,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
@@ -57,11 +57,11 @@ func (uc *MarkAppointmentNoShow) Execute(
 
 		ap, err := txRepo.GetAppointmentForBarber(ctx, barbershopID, appointmentID, barberID)
 		if err != nil || ap == nil {
-			return httperr.ErrBusiness("appointment_not_found")
+			return apperr.ErrBusiness("appointment_not_found")
 		}
 
 		if ap.BarbershopID == nil || *ap.BarbershopID != barbershopID {
-			return httperr.ErrBusiness("invalid_barbershop")
+			return apperr.ErrBusiness("invalid_barbershop")
 		}
 
 		noShowAt = time.Now().UTC()

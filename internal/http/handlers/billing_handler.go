@@ -17,7 +17,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
+	"github.com/BruksfildServices01/barber-scheduler/internal/idempotency"
 	infraMP "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"

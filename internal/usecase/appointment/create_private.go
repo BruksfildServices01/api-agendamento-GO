@@ -8,7 +8,7 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
+	"github.com/BruksfildServices01/barber-scheduler/internal/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"

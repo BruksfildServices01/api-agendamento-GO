@@ -12,7 +12,7 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/pagbank"
+	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/pagbank"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 

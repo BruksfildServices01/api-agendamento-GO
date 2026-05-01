@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
+	"github.com/BruksfildServices01/barber-scheduler/internal/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )

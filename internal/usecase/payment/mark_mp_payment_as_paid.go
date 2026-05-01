@@ -14,7 +14,7 @@ import (
 	domainOrder "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	domainTicket "github.com/BruksfildServices01/barber-scheduler/internal/domain/ticket"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/idempotency"
+	"github.com/BruksfildServices01/barber-scheduler/internal/idempotency"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 

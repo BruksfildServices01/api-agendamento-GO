@@ -11,7 +11,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
-	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )

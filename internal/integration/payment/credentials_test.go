@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
-	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
 )
 
 const testKey = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"

@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 )
 
 type GetOrder struct {

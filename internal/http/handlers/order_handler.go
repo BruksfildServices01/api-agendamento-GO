@@ -12,7 +12,7 @@ import (
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	ucOrder "github.com/BruksfildServices01/barber-scheduler/internal/usecase/order"
 )

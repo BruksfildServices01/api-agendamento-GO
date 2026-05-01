@@ -9,6 +9,7 @@ import (
 
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	ucCart "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
 	ucPublic "github.com/BruksfildServices01/barber-scheduler/internal/usecase/public"
@@ -58,22 +59,22 @@ func (h *PublicCheckoutHandler) Checkout(c *gin.Context) {
 		case errors.Is(err, domainService.ErrServiceNotFound):
 			httperr.BadRequest(c, "service_not_found", "Serviço não encontrado.")
 
-		case httperr.IsBusiness(err, "duplicate_request"):
+		case apperr.IsBusiness(err, "duplicate_request"):
 			httperr.Write(c, http.StatusConflict, "duplicate_request", "Requisição duplicada. Aguarde antes de tentar novamente.")
 
-		case httperr.IsBusiness(err, "invalid_date_or_time"):
+		case apperr.IsBusiness(err, "invalid_date_or_time"):
 			httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
 
-		case httperr.IsBusiness(err, "too_soon"):
+		case apperr.IsBusiness(err, "too_soon"):
 			httperr.BadRequest(c, "too_soon", "Horário inválido.")
 
-		case httperr.IsBusiness(err, "outside_working_hours"):
+		case apperr.IsBusiness(err, "outside_working_hours"):
 			httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
 
-		case httperr.IsBusiness(err, "time_conflict"):
+		case apperr.IsBusiness(err, "time_conflict"):
 			httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
 
-		case httperr.IsBusiness(err, "product_not_found"):
+		case apperr.IsBusiness(err, "product_not_found"):
 			httperr.BadRequest(c, "product_not_found", "Produto não encontrado no carrinho.")
 
 		case errors.Is(err, ucCart.ErrCheckoutInvalidCartKey):

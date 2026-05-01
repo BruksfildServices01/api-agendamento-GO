@@ -17,6 +17,7 @@ import (
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
@@ -601,7 +602,7 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 		},
 	)
 	if err != nil {
-		if httperr.IsBusiness(err, "product_not_found") {
+		if apperr.IsBusiness(err, "product_not_found") {
 			httperr.BadRequest(c, "product_not_found", "Serviço inválido.")
 			return
 		}
@@ -619,10 +620,10 @@ func (h *PublicHandler) AvailabilityForClient(c *gin.Context) {
 
 func mapPublicCreateErrors(c *gin.Context, err error) {
 	switch {
-	case httperr.IsBusiness(err, "barbershop_not_found"):
+	case apperr.IsBusiness(err, "barbershop_not_found"):
 		httperr.NotFound(c, "barbershop_not_found", "Barbearia não encontrada.")
 
-	case httperr.IsBusiness(err, "duplicate_request"):
+	case apperr.IsBusiness(err, "duplicate_request"):
 		httperr.Write(
 			c,
 			http.StatusConflict,
@@ -630,19 +631,19 @@ func mapPublicCreateErrors(c *gin.Context, err error) {
 			"Requisição duplicada. Aguarde antes de tentar novamente.",
 		)
 
-	case httperr.IsBusiness(err, "invalid_date_or_time"):
+	case apperr.IsBusiness(err, "invalid_date_or_time"):
 		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
 
-	case httperr.IsBusiness(err, "too_soon"):
+	case apperr.IsBusiness(err, "too_soon"):
 		httperr.BadRequest(c, "too_soon", "Horário inválido.")
 
-	case httperr.IsBusiness(err, "product_not_found"):
+	case apperr.IsBusiness(err, "product_not_found"):
 		httperr.BadRequest(c, "product_not_found", "Serviço não encontrado.")
 
-	case httperr.IsBusiness(err, "outside_working_hours"):
+	case apperr.IsBusiness(err, "outside_working_hours"):
 		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
 
-	case httperr.IsBusiness(err, "time_conflict"):
+	case apperr.IsBusiness(err, "time_conflict"):
 		httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
 
 	default:

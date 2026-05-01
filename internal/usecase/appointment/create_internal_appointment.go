@@ -5,7 +5,7 @@ import (
 	"time"
 
 	domainAppointment "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
@@ -43,18 +43,18 @@ func (uc *CreateInternalAppointment) Execute(
 	input CreateInternalAppointmentInput,
 ) (*models.Appointment, error) {
 	if input.BarbershopID == 0 || input.BarberID == 0 {
-		return nil, httperr.ErrBusiness("invalid_context")
+		return nil, apperr.ErrBusiness("invalid_context")
 	}
 
 	if !input.StartTime.Before(input.EndTime) {
-		return nil, httperr.ErrBusiness("invalid_time_range")
+		return nil, apperr.ErrBusiness("invalid_time_range")
 	}
 
 	intent := models.PaymentIntentType(input.PaymentIntent)
 
 	if intent != models.PaymentIntentPaid &&
 		intent != models.PaymentIntentPayLater {
-		return nil, httperr.ErrBusiness("invalid_payment_intent")
+		return nil, apperr.ErrBusiness("invalid_payment_intent")
 	}
 
 	client, err := uc.appointmentRepo.GetOrCreateClient(

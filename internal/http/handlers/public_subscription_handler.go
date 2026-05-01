@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
@@ -159,11 +160,11 @@ func (h *PublicSubscriptionHandler) Purchase(c *gin.Context) {
 	}
 	if err != nil {
 		switch {
-		case httperr.IsBusiness(err, "plan_not_found"):
+		case apperr.IsBusiness(err, "plan_not_found"):
 			httperr.BadRequest(c, "plan_not_found", "Plano não encontrado.")
-		case httperr.IsBusiness(err, "client_already_has_active_subscription"):
+		case apperr.IsBusiness(err, "client_already_has_active_subscription"):
 			httperr.Write(c, http.StatusConflict, "already_subscribed", "Este cliente já possui uma assinatura ativa.")
-		case httperr.IsBusiness(err, "payment_rejected"):
+		case apperr.IsBusiness(err, "payment_rejected"):
 			httperr.BadRequest(c, "payment_rejected", "Pagamento recusado. Verifique os dados do cartão.")
 		default:
 			log.Printf("[purchase] unexpected error: %v", err)

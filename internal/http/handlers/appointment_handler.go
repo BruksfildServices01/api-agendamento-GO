@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
@@ -172,33 +173,33 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 	)
 	if err != nil {
 		switch {
-		case httperr.IsBusiness(err, "appointment_not_found"):
+		case apperr.IsBusiness(err, "appointment_not_found"):
 			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
 
-		case httperr.IsBusiness(err, "invalid_barbershop"):
+		case apperr.IsBusiness(err, "invalid_barbershop"):
 			httperr.BadRequest(c, "invalid_barbershop", "Barbearia inválida.")
 
-		case httperr.IsBusiness(err, "invalid_final_amount"):
+		case apperr.IsBusiness(err, "invalid_final_amount"):
 			httperr.BadRequest(c, "invalid_final_amount", "Valor final inválido.")
 
-		case httperr.IsBusiness(err, "invalid_state"):
+		case apperr.IsBusiness(err, "invalid_state"):
 			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser concluído.")
 
-		case httperr.IsBusiness(err, "appointment_payment_not_found"):
+		case apperr.IsBusiness(err, "appointment_payment_not_found"):
 			httperr.BadRequest(
 				c,
 				"appointment_payment_not_found",
 				"Pagamento obrigatório ainda não foi gerado.",
 			)
 
-		case httperr.IsBusiness(err, "appointment_payment_not_paid"):
+		case apperr.IsBusiness(err, "appointment_payment_not_paid"):
 			httperr.BadRequest(
 				c,
 				"appointment_payment_not_paid",
 				"Pagamento obrigatório ainda não foi confirmado.",
 			)
 
-		case httperr.IsBusiness(err, "normal_charging_confirmation_required"):
+		case apperr.IsBusiness(err, "normal_charging_confirmation_required"):
 			httperr.BadRequest(
 				c,
 				"normal_charging_confirmation_required",
@@ -278,9 +279,9 @@ func (h *AppointmentHandler) Cancel(c *gin.Context) {
 
 	if err != nil {
 		switch {
-		case httperr.IsBusiness(err, "appointment_not_found"):
+		case apperr.IsBusiness(err, "appointment_not_found"):
 			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
-		case httperr.IsBusiness(err, "invalid_state"):
+		case apperr.IsBusiness(err, "invalid_state"):
 			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser cancelado.")
 		default:
 			httperr.Internal(c, "cancel_failed", "Erro ao cancelar agendamento.")
@@ -362,7 +363,7 @@ func (h *AppointmentHandler) ListByMonth(c *gin.Context) {
 
 func mapCreateErrors(c *gin.Context, err error) {
 	switch {
-	case httperr.IsBusiness(err, "duplicate_request"):
+	case apperr.IsBusiness(err, "duplicate_request"):
 		httperr.Write(
 			c,
 			http.StatusConflict,
@@ -370,19 +371,19 @@ func mapCreateErrors(c *gin.Context, err error) {
 			"Requisição duplicada. Aguarde antes de tentar novamente.",
 		)
 
-	case httperr.IsBusiness(err, "invalid_date_or_time"):
+	case apperr.IsBusiness(err, "invalid_date_or_time"):
 		httperr.BadRequest(c, "invalid_date_or_time", "Data ou hora inválida.")
 
-	case httperr.IsBusiness(err, "too_soon"):
+	case apperr.IsBusiness(err, "too_soon"):
 		httperr.BadRequest(c, "too_soon", "Horário inválido.")
 
-	case httperr.IsBusiness(err, "product_not_found"):
+	case apperr.IsBusiness(err, "product_not_found"):
 		httperr.BadRequest(c, "product_not_found", "Serviço não encontrado.")
 
-	case httperr.IsBusiness(err, "outside_working_hours"):
+	case apperr.IsBusiness(err, "outside_working_hours"):
 		httperr.BadRequest(c, "outside_working_hours", "Fora do horário de atendimento.")
 
-	case httperr.IsBusiness(err, "time_conflict"):
+	case apperr.IsBusiness(err, "time_conflict"):
 		httperr.BadRequest(c, "time_conflict", "Conflito de horário.")
 
 	default:
@@ -413,10 +414,10 @@ func (h *AppointmentHandler) MarkNoShow(c *gin.Context) {
 
 	if err != nil {
 		switch {
-		case httperr.IsBusiness(err, "appointment_not_found"):
+		case apperr.IsBusiness(err, "appointment_not_found"):
 			httperr.NotFound(c, "appointment_not_found", "Agendamento não encontrado.")
 
-		case httperr.IsBusiness(err, "invalid_state"):
+		case apperr.IsBusiness(err, "invalid_state"):
 			httperr.BadRequest(c, "invalid_state", "Agendamento não pode ser marcado como falta.")
 
 		default:

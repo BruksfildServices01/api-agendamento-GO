@@ -3,19 +3,19 @@ package payment
 import (
 	"fmt"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 )
 
 func ErrInvalidAmount() error {
-	return httperr.ErrBusiness("invalid_amount")
+	return apperr.ErrBusiness("invalid_amount")
 }
 
 func ErrInvalidAppointment() error {
-	return httperr.ErrBusiness("invalid_appointment")
+	return apperr.ErrBusiness("invalid_appointment")
 }
 
 func ErrInvalidState() error {
-	return httperr.ErrBusiness("invalid_state")
+	return apperr.ErrBusiness("invalid_state")
 }
 
 func ErrInvalidPaymentTransition(from Status, to Status) error {
@@ -23,5 +23,5 @@ func ErrInvalidPaymentTransition(from Status, to Status) error {
 }
 
 func ErrInvalidTarget() error {
-	return httperr.ErrBusiness("invalid_payment_target")
+	return apperr.ErrBusiness("invalid_payment_target")
 }

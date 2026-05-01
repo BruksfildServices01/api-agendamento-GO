@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 
@@ -52,7 +52,7 @@ func (uc *AdjustClosure) Execute(
 	}
 
 	if input.DeltaFinalAmountCents != nil && *input.DeltaFinalAmountCents < 0 {
-		return nil, httperr.ErrBusiness("invalid_final_amount")
+		return nil, apperr.ErrBusiness("invalid_final_amount")
 	}
 
 	var adjustment *models.ClosureAdjustment

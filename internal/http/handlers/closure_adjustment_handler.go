@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	ucAppointment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
@@ -61,7 +62,7 @@ func (h *ClosureAdjustmentHandler) Create(c *gin.Context) {
 			httperr.Write(c, http.StatusUnprocessableEntity, "adjustment_window_expired", "adjustment_window_expired")
 		case errors.Is(err, ucAppointment.ErrNoAdjustmentFields):
 			httperr.BadRequest(c, "no_adjustment_fields", "no_adjustment_fields")
-		case httperr.IsBusiness(err, "invalid_final_amount"):
+		case apperr.IsBusiness(err, "invalid_final_amount"):
 			httperr.BadRequest(c, "invalid_final_amount", "invalid_final_amount")
 		default:
 			httperr.Internal(c, "internal_error", "internal server error")

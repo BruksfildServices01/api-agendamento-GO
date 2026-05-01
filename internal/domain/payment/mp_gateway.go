@@ -40,7 +40,15 @@ type TransparentPaymentInput struct {
 
 // TransparentPaymentResult representa o resultado de um pagamento transparente.
 type TransparentPaymentResult struct {
-	MPPaymentID  int64
+	// MPPaymentID é o ID numérico do Mercado Pago — mantido por compatibilidade.
+	// Providers não-MP devem deixar esse campo zerado e usar ProviderPaymentID.
+	MPPaymentID int64
+
+	// ProviderPaymentID é o ID externo genérico do provider (string).
+	// Quando preenchido, tem precedência sobre MPPaymentID para persistência do TxID.
+	// Mercado Pago também preenche esse campo; providers futuros usam apenas esse.
+	ProviderPaymentID string
+
 	Status       string // "pending", "approved", "rejected", "in_process"
 	StatusDetail string
 	// Campos PIX

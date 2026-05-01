@@ -213,7 +213,14 @@ func (uc *CreateTransparentPayment) Execute(
 	// ==================================================
 	// 6) Persistir TxID e QR code
 	// ==================================================
-	txid := mpPayPrefix + strconv.FormatInt(result.MPPaymentID, 10)
+	// ProviderPaymentID tem precedência quando preenchido (PagBank e outros providers).
+	// Fallback para MPPaymentID (Mercado Pago legado).
+	var txid string
+	if result.ProviderPaymentID != "" {
+		txid = result.ProviderPaymentID
+	} else {
+		txid = mpPayPrefix + strconv.FormatInt(result.MPPaymentID, 10)
+	}
 	payment.TxID = &txid
 	if result.QRCode != "" {
 		payment.QRCode = &result.QRCode

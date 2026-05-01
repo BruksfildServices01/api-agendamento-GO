@@ -1,0 +1,113 @@
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/audit"
+	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+)
+
+type WorkingHoursHandler struct {
+	db    *gorm.DB
+	audit *audit.Dispatcher
+}
+
+func NewWorkingHoursHandler(db *gorm.DB, auditDispatcher *audit.Dispatcher) *WorkingHoursHandler {
+	return &WorkingHoursHandler{db: db, audit: auditDispatcher}
+}
+
+// Estrutura para configurar os horários de trabalho
+type WorkingDayConfig struct {
+	Weekday    int    `json:"weekday" binding:"required,min=0,max=6"`
+	Active     bool   `json:"active"`
+	StartTime  string `json:"start_time"`
+	EndTime    string `json:"end_time"`
+	LunchStart string `json:"lunch_start"`
+	LunchEnd   string `json:"lunch_end"`
+}
+
+// Estrutura para a atualização dos horários
+type WorkingHoursUpdateRequest struct {
+	Days []WorkingDayConfig `json:"days" binding:"required"`
+}
+
+// Método para pegar os horários de trabalho
+func (h *WorkingHoursHandler) Get(c *gin.Context) {
+	userIDVal, _ := c.Get(middleware.ContextUserID)
+	barberID := userIDVal.(uint)
+
+	var hours []models.WorkingHours
+	if err := h.db.
+		Where("barber_id = ?", barberID).
+		Order("weekday ASC").
+		Find(&hours).Error; err != nil {
+		httperr.Internal(c, "failed_to_get_working_hours", "failed_to_get_working_hours")
+		return
+	}
+
+	c.JSON(http.StatusOK, hours)
+}
+
+func (h *WorkingHoursHandler) Update(c *gin.Context) {
+	userIDVal, _ := c.Get(middleware.ContextUserID)
+	barberID := userIDVal.(uint)
+
+	// ✅ pegar barbershop do contexto
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	if barbershopID == 0 {
+		httperr.Unauthorized(c, "invalid_barbershop", "invalid_barbershop")
+		return
+	}
+
+	var req WorkingHoursUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httperr.BadRequest(c, "invalid_request", err.Error())
+		return
+	}
+
+	if err := h.db.Where("barber_id = ?", barberID).Delete(&models.WorkingHours{}).Error; err != nil {
+		httperr.Internal(c, "failed_to_clear_existing_hours", "failed_to_clear_existing_hours")
+		return
+	}
+
+	var toCreate []models.WorkingHours
+	for _, d := range req.Days {
+		wh := models.WorkingHours{
+			BarberID:     barberID,
+			BarbershopID: barbershopID, // ✅ AQUI o fix
+			Weekday:      d.Weekday,
+			Active:       d.Active,
+			StartTime:    d.StartTime,
+			EndTime:      d.EndTime,
+			LunchStart:   d.LunchStart,
+			LunchEnd:     d.LunchEnd,
+		}
+		toCreate = append(toCreate, wh)
+	}
+
+	if len(toCreate) > 0 {
+		if err := h.db.Create(&toCreate).Error; err != nil {
+			httperr.Internal(c, "failed_to_save_working_hours", "failed_to_save_working_hours")
+			return
+		}
+	}
+
+	// Invalida cache de horários para este barbeiro imediatamente.
+	infraRepo.EvictWorkingHoursCache(barberID)
+
+	h.audit.Dispatch(audit.Event{
+		BarbershopID: barbershopID,
+		UserID:       &barberID,
+		Action:       "working_hours_updated",
+		Entity:       "barber",
+		EntityID:     &barberID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}

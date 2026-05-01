@@ -109,12 +109,13 @@ func (g *Gateway) CreatePayment(input domain.TransparentPaymentInput) (*domain.T
 	}
 
 	return &domain.TransparentPaymentResult{
-		MPPaymentID:  int64(resp.ID),
-		Status:       resp.Status,
-		StatusDetail: resp.StatusDetail,
-		QRCode:       resp.PointOfInteraction.TransactionData.QRCode,
-		QRCodeBase64: resp.PointOfInteraction.TransactionData.QRCodeBase64,
-		TicketURL:    resp.PointOfInteraction.TransactionData.TicketURL,
+		MPPaymentID:       int64(resp.ID),
+		ProviderPaymentID: "mp_pay:" + strconv.FormatInt(int64(resp.ID), 10),
+		Status:            resp.Status,
+		StatusDetail:      resp.StatusDetail,
+		QRCode:            resp.PointOfInteraction.TransactionData.QRCode,
+		QRCodeBase64:      resp.PointOfInteraction.TransactionData.QRCodeBase64,
+		TicketURL:         resp.PointOfInteraction.TransactionData.TicketURL,
 	}, nil
 }
 

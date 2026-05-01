@@ -96,6 +96,16 @@ type Config struct {
 	MPClientSecret string
 
 	// =========================
+	// PAGBANK
+	// =========================
+	// PagBankClientID e PagBankClientSecret são usados no fluxo OAuth
+	// para que barbearias conectem suas contas PagBank.
+	PagBankClientID     string
+	PagBankClientSecret string
+	// PagBankSandbox=true usa ambiente de testes (sandbox.api.pagseguro.com).
+	PagBankSandbox bool
+
+	// =========================
 	// PAYMENT CREDENTIALS ENCRYPTION
 	// =========================
 	// Chave AES-256 para criptografar credentials_encrypted em barbershop_payment_providers.
@@ -163,6 +173,10 @@ func Load() *Config {
 
 		MPClientID:     getEnv("MP_CLIENT_ID", ""),
 		MPClientSecret: getEnv("MP_CLIENT_SECRET", ""),
+
+		PagBankClientID:     getEnv("PAGBANK_CLIENT_ID", ""),
+		PagBankClientSecret: getEnv("PAGBANK_CLIENT_SECRET", ""),
+		PagBankSandbox:      getEnv("PAGBANK_SANDBOX", "false") == "true",
 
 		PaymentCredentialsEncryptionKey: getEnv("PAYMENT_CREDENTIALS_ENCRYPTION_KEY", ""),
 	}

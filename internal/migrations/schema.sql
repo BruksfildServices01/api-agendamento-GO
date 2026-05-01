@@ -209,6 +209,9 @@ CREATE TABLE clients (
   name          VARCHAR(100) NOT NULL,
   phone         VARCHAR(20),
   email         VARCHAR(100),
+  -- LGPD: preenchidos quando dados pessoais são removidos a pedido do titular
+  anonymized_at     TIMESTAMPTZ,
+  anonymized_reason VARCHAR(50) CHECK (anonymized_reason IN ('lgpd_request', 'admin', 'inactivity')),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -870,6 +873,32 @@ CREATE INDEX idx_carts_expires_at ON carts(expires_at);
 CREATE TRIGGER trg_carts_updated
 BEFORE UPDATE ON carts
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- WHATSAPP INSTANCES (migrations 012 + 013)
+-- ============================================================
+-- barbershop_whatsapp_configs foi criada em 011 e dropada em 012.
+-- O estado final é apenas barbershop_whatsapp_instances.
+
+CREATE TABLE IF NOT EXISTS barbershop_whatsapp_instances (
+  id            BIGSERIAL PRIMARY KEY,
+  barbershop_id BIGINT NOT NULL REFERENCES barbershops(id) ON DELETE CASCADE,
+  barber_id     BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  instance_name VARCHAR(100) NOT NULL UNIQUE,
+  phone         VARCHAR(20),
+  status        VARCHAR(20) NOT NULL DEFAULT 'disconnected',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Um registro por (barbearia, barbeiro) — barber_id NULL = barbearia inteira
+CREATE UNIQUE INDEX IF NOT EXISTS uq_whatsapp_barbershop_barber
+  ON barbershop_whatsapp_instances(barbershop_id, COALESCE(barber_id, 0));
+
+-- Índice parcial para o LEFT JOIN do ViewTicket (migration 013)
+CREATE INDEX IF NOT EXISTS idx_wa_instances_barbershop_connected
+  ON barbershop_whatsapp_instances(barbershop_id)
+  WHERE barber_id IS NULL AND status = 'connected';
 
 -- ============================================================
 -- BARBERSHOP PAYMENT PROVIDERS (migration 014)

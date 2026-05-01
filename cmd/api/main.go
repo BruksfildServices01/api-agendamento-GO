@@ -16,8 +16,8 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	dbpkg "github.com/BruksfildServices01/barber-scheduler/internal/db"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
-	"github.com/BruksfildServices01/barber-scheduler/internal/middleware"
-	"github.com/BruksfildServices01/barber-scheduler/internal/routes"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/routes"
 )
 
 func main() {

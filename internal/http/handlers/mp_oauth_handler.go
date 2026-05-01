@@ -1,0 +1,236 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
+	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+)
+
+// MPOAuthHandler implementa o fluxo OAuth do Mercado Pago.
+// O barbeiro clica "Conectar Mercado Pago", é redirecionado para o MP,
+// faz login, autoriza o CorteOn e volta com o token automaticamente salvo.
+type MPOAuthHandler struct {
+	db           *gorm.DB
+	clientID     string
+	clientSecret string
+	callbackURL  string // URL pública do backend para o callback
+	appURL       string // URL do frontend para redirecionar após OAuth
+	jwtSecret    string // usado para assinar o state
+}
+
+func NewMPOAuthHandler(
+	db *gorm.DB,
+	clientID, clientSecret, callbackURL, appURL, jwtSecret string,
+) *MPOAuthHandler {
+	return &MPOAuthHandler{
+		db:           db,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		callbackURL:  callbackURL,
+		appURL:       strings.TrimRight(appURL, "/"),
+		jwtSecret:    jwtSecret,
+	}
+}
+
+// ── State helpers ─────────────────────────────────────────────────
+
+func (h *MPOAuthHandler) createState(barbershopID uint) string {
+	return createOAuthState(barbershopID, h.jwtSecret)
+}
+
+func (h *MPOAuthHandler) parseState(state string) (uint, error) {
+	return parseOAuthState(state, h.jwtSecret)
+}
+
+// ── Start ─────────────────────────────────────────────────────────
+
+// Start retorna a URL de autorização do Mercado Pago como JSON.
+// O frontend faz window.location.href = url para navegar no browser.
+// GET /api/me/mercadopago/oauth/start
+func (h *MPOAuthHandler) Start(c *gin.Context) {
+	if h.clientID == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MP OAuth não configurado"})
+		return
+	}
+
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+	state := h.createState(barbershopID)
+
+	authURL := fmt.Sprintf(
+		"https://auth.mercadopago.com/authorization?client_id=%s&response_type=code&platform_id=mp&state=%s&redirect_uri=%s",
+		url.QueryEscape(h.clientID),
+		url.QueryEscape(state),
+		url.QueryEscape(h.callbackURL),
+	)
+
+	c.JSON(http.StatusOK, gin.H{"url": authURL})
+}
+
+// ── Callback ──────────────────────────────────────────────────────
+
+type mpTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	PublicKey    string `json:"public_key"`
+	RefreshToken string `json:"refresh_token"`
+	UserID       int64  `json:"user_id"`
+	ExpiresIn    int    `json:"expires_in"`
+	Error        string `json:"error"`
+	Message      string `json:"message"`
+}
+
+// Callback recebe o código do MP e troca por access_token + public_key.
+// GET /api/mercadopago/oauth/callback  (rota pública — MP redireciona aqui)
+func (h *MPOAuthHandler) Callback(c *gin.Context) {
+	redirectBase := h.appURL + "/app/mais/conta"
+
+	code  := c.Query("code")
+	state := c.Query("state")
+
+	if code == "" {
+		mpErr := c.Query("error")
+		log.Printf("[mp_oauth] callback sem code: error=%q state=%q", mpErr, state)
+		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=cancelled")
+		return
+	}
+
+	barbershopID, err := h.parseState(state)
+	if err != nil {
+		log.Printf("[mp_oauth] state inválido: %v", err)
+		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=invalid_state")
+		return
+	}
+
+	tokens, err := h.exchangeCode(c.Request.Context(), code)
+	if err != nil || tokens.AccessToken == "" {
+		log.Printf("[mp_oauth] troca de código falhou (barbershop=%d): %v", barbershopID, err)
+		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=exchange_failed")
+		return
+	}
+
+	// Salva access_token e public_key na config da barbearia
+	if err := h.saveTokens(barbershopID, tokens.AccessToken, tokens.PublicKey); err != nil {
+		log.Printf("[mp_oauth] falha ao salvar tokens (barbershop=%d): %v", barbershopID, err)
+		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_error=save_failed")
+		return
+	}
+
+	c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?mp_success=1")
+}
+
+var mpHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+func (h *MPOAuthHandler) exchangeCode(ctx context.Context, code string) (*mpTokenResponse, error) {
+	body, _ := json.Marshal(map[string]string{
+		"client_id":     h.clientID,
+		"client_secret": h.clientSecret,
+		"grant_type":    "authorization_code",
+		"code":          code,
+		"redirect_uri":  h.callbackURL,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.mercadopago.com/oauth/token", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := mpHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result mpTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if result.Error != "" {
+		return nil, fmt.Errorf("mp oauth error: %s — %s", result.Error, result.Message)
+	}
+	return &result, nil
+}
+
+func (h *MPOAuthHandler) saveTokens(barbershopID uint, accessToken, publicKey string) error {
+	var cfg models.BarbershopPaymentConfig
+
+	err := h.db.Where("barbershop_id = ?", barbershopID).First(&cfg).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		cfg = models.BarbershopPaymentConfig{
+			BarbershopID:         barbershopID,
+			DefaultRequirement:   "none",
+			PixExpirationMinutes: 15,
+			MPAccessToken:        accessToken,
+			MPPublicKey:          publicKey,
+			AcceptPix:            true,
+		}
+		return h.db.Create(&cfg).Error
+	}
+	if err != nil {
+		return err
+	}
+
+	cfg.MPAccessToken = accessToken
+	if publicKey != "" {
+		cfg.MPPublicKey = publicKey
+	}
+	cfg.AcceptPix = true
+	return h.db.Save(&cfg).Error
+}
+
+// Status retorna se o OAuth MP está configurado para a barbearia.
+// GET /api/me/mercadopago/oauth/status
+func (h *MPOAuthHandler) Status(c *gin.Context) {
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	var cfg models.BarbershopPaymentConfig
+	err := h.db.Where("barbershop_id = ?", barbershopID).First(&cfg).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusOK, gin.H{"connected": false})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"connected": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"connected":  cfg.MPAccessToken != "" && cfg.MPPublicKey != "",
+		"accept_pix": cfg.AcceptPix,
+	})
+}
+
+// Disconnect remove as credenciais MP da barbearia.
+// DELETE /api/me/mercadopago/oauth
+func (h *MPOAuthHandler) Disconnect(c *gin.Context) {
+	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
+
+	// Usa Exec para garantir que strings vazias e falsos sejam gravados
+	// (GORM pode ignorar zero-values em Updates com struct ou map)
+	result := h.db.WithContext(c.Request.Context()).Exec(
+		`UPDATE barbershop_payment_configs
+		 SET mp_access_token = '', mp_public_key = '',
+		     accept_pix = false, accept_credit = false, accept_debit = false,
+		     updated_at = NOW()
+		 WHERE barbershop_id = ?`,
+		barbershopID,
+	)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to disconnect"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}

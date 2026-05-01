@@ -16,7 +16,7 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	domainPayment "github.com/BruksfildServices01/barber-scheduler/internal/domain/paymentconfig"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/validators"
 )

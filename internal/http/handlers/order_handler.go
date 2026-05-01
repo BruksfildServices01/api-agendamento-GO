@@ -10,7 +10,7 @@ import (
 
 	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"

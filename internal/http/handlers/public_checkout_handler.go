@@ -10,7 +10,7 @@ import (
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	ucCart "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
 	ucPublic "github.com/BruksfildServices01/barber-scheduler/internal/usecase/public"
 )

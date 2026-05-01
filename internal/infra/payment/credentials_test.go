@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/crypt"
+	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
 )
 

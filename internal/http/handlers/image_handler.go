@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/storage"
+	"github.com/BruksfildServices01/barber-scheduler/internal/storage"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )

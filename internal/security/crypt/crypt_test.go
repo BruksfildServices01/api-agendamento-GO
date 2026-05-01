@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/crypt"
+	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 )
 
 // validKey é uma chave de teste de 64 hex chars (32 bytes).

@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/pagbank"
+	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/pagbank"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
 

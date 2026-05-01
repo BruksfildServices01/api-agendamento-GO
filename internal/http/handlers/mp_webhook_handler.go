@@ -14,7 +14,7 @@ import (
 	"github.com/mercadopago/sdk-go/pkg/payment"
 	"gorm.io/gorm"
 
-	infraMP "github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
+	infraMP "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )

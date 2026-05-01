@@ -25,7 +25,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/config"
 	dbpkg "github.com/BruksfildServices01/barber-scheduler/internal/db"
 	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
-	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )
 

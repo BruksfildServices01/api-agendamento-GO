@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
+	"github.com/BruksfildServices01/barber-scheduler/internal/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 )

@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
-	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 )

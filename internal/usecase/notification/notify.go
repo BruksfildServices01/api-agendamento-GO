@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/notification"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/calendar"
-	"github.com/BruksfildServices01/barber-scheduler/internal/infra/email"
+	"github.com/BruksfildServices01/barber-scheduler/internal/integration/calendar"
+	"github.com/BruksfildServices01/barber-scheduler/internal/integration/email"
 )
 
 type Notify struct {

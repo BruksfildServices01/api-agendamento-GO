@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 )
 
 var (

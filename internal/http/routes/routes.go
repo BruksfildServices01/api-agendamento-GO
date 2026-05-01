@@ -19,7 +19,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/mp"
 	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/infra/payment"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/infra/storage"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"

@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 )
 
 type UpdateClientMetrics struct {

@@ -14,7 +14,7 @@ import (
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
 	domainSubscription "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucMetrics "github.com/BruksfildServices01/barber-scheduler/internal/usecase/metrics"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"

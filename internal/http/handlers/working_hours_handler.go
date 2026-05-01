@@ -10,7 +10,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 )
 
 type WorkingHoursHandler struct {

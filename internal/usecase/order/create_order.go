@@ -8,7 +8,7 @@ import (
 
 	orderDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/order"
 	productDomain "github.com/BruksfildServices01/barber-scheduler/internal/domain/product"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 )
 
 type CreateOrder struct {

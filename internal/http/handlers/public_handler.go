@@ -20,7 +20,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
-	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/infra/repository"
+	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
 	appointmentUC "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"

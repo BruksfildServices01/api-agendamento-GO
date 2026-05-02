@@ -333,7 +333,7 @@ func (n *WhatsAppNotifier) send(ctx context.Context, barbershopID uint, phone, m
 }
 
 func (n *WhatsAppNotifier) NotifyConfirmed(ctx context.Context, in domain.AppointmentConfirmedInput) error {
-	if in.ClientPhone == "" {
+	if in.ClientPhone == "" || in.BarbershopID == 0 {
 		return nil
 	}
 	loc := timezone.Location(in.Timezone)
@@ -361,17 +361,56 @@ func (n *WhatsAppNotifier) NotifyConfirmed(ctx context.Context, in domain.Appoin
 	}
 	lines = append(lines, "", fmt.Sprintf("_Mensagem automática · %s_", in.BarbershopName))
 
-	// TODO: buscar barbershop_id pelo slug quando necessário
-	// Por ora usa o notifier apenas quando barbershop_id está disponível via contexto
-	_ = strings.Join(lines, "\n")
+	n.send(ctx, in.BarbershopID, in.ClientPhone, strings.Join(lines, "\n"))
 	return nil
 }
 
 func (n *WhatsAppNotifier) NotifyCancelled(ctx context.Context, in domain.AppointmentCancelledInput) error {
+	if in.ClientPhone == "" || in.BarbershopID == 0 {
+		return nil
+	}
+	loc := timezone.Location(in.Timezone)
+	start := in.StartTime.In(loc)
+
+	lines := []string{
+		fmt.Sprintf("❌ *Agendamento cancelado, %s.*", in.ClientName),
+		"",
+		fmt.Sprintf("📅 %s", formatDate(start)),
+		fmt.Sprintf("🕐 %s", formatTime(start)),
+		"",
+		fmt.Sprintf("_Mensagem automática · %s_", in.BarbershopName),
+	}
+
+	n.send(ctx, in.BarbershopID, in.ClientPhone, strings.Join(lines, "\n"))
 	return nil
 }
 
 func (n *WhatsAppNotifier) NotifyRescheduled(ctx context.Context, in domain.AppointmentRescheduledInput) error {
+	if in.ClientPhone == "" || in.BarbershopID == 0 {
+		return nil
+	}
+	loc := timezone.Location(in.Timezone)
+	oldStart := in.OldStartTime.In(loc)
+	newStart := in.NewStartTime.In(loc)
+	newEnd := in.NewEndTime.In(loc)
+
+	lines := []string{
+		fmt.Sprintf("🔄 *Agendamento remarcado, %s!*", in.ClientName),
+		"",
+		fmt.Sprintf("✂️ *%s*", in.ServiceName),
+		fmt.Sprintf("📅 *Antes:* %s às %s", formatDate(oldStart), formatTime(oldStart)),
+		fmt.Sprintf("📅 *Novo:* %s", formatDate(newStart)),
+		fmt.Sprintf("🕐 %s – %s", formatTime(newStart), formatTime(newEnd)),
+	}
+	if in.NewTicketURL != "" {
+		lines = append(lines, "", "🔗 *Seu ticket (cancelar ou remarcar):*", in.NewTicketURL)
+	}
+	if in.BarbershopPhone != "" {
+		lines = append(lines, "", fmt.Sprintf("📞 Dúvidas: %s", in.BarbershopPhone))
+	}
+	lines = append(lines, "", fmt.Sprintf("_Mensagem automática · %s_", in.BarbershopName))
+
+	n.send(ctx, in.BarbershopID, in.ClientPhone, strings.Join(lines, "\n"))
 	return nil
 }
 

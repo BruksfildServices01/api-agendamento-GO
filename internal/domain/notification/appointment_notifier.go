@@ -12,6 +12,7 @@ type AppointmentNotifier interface {
 }
 
 type AppointmentConfirmedInput struct {
+	BarbershopID    uint   // necessário para o WhatsApp notifier identificar a instância
 	ClientName      string
 	ClientEmail     string
 	ClientPhone     string // usado pelo WhatsApp notifier
@@ -26,16 +27,18 @@ type AppointmentConfirmedInput struct {
 }
 
 type AppointmentCancelledInput struct {
-	ClientName      string
-	ClientEmail     string
-	ClientPhone     string
-	BarbershopName  string
-	BarbershopSlug  string
-	StartTime       time.Time
-	Timezone        string
+	BarbershopID uint   // necessário para o WhatsApp notifier identificar a instância
+	ClientName   string
+	ClientEmail  string
+	ClientPhone  string
+	BarbershopName string
+	BarbershopSlug string
+	StartTime    time.Time
+	Timezone     string
 }
 
 type AppointmentRescheduledInput struct {
+	BarbershopID    uint   // necessário para o WhatsApp notifier identificar a instância
 	ClientName      string
 	ClientEmail     string
 	ClientPhone     string

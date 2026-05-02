@@ -12,6 +12,7 @@ import (
 )
 
 type appointmentNotifyRow struct {
+	BarbershopID    uint      `gorm:"column:barbershop_id"`
 	ClientName      string    `gorm:"column:client_name"`
 	ClientEmail     string    `gorm:"column:client_email"`
 	ClientPhone     string    `gorm:"column:client_phone"`
@@ -38,6 +39,7 @@ func sendAppointmentConfirmedNotification(
 	var row appointmentNotifyRow
 	err := db.WithContext(ctx).Raw(`
 		SELECT
+			b.id    AS barbershop_id,
 			c.name  AS client_name,
 			c.email AS client_email,
 			c.phone AS client_phone,
@@ -71,6 +73,7 @@ func sendAppointmentConfirmedNotification(
 	}
 
 	_ = apptNotifier.NotifyConfirmed(ctx, domainNotification.AppointmentConfirmedInput{
+		BarbershopID:    row.BarbershopID,
 		ClientName:      row.ClientName,
 		ClientEmail:     row.ClientEmail,
 		ClientPhone:     row.ClientPhone,

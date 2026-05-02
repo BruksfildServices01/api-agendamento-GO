@@ -290,6 +290,7 @@ func (uc *RescheduleViaTicket) Execute(ctx context.Context, token, date, timeStr
 			log.Printf("[RescheduleViaTicket] failed to query notification data: %v", queryErr)
 		} else if notifyData.ClientEmail != "" || notifyData.ClientPhone != "" {
 			_ = uc.notifier.NotifyRescheduled(ctx, domainNotification.AppointmentRescheduledInput{
+				BarbershopID:    appt.BarbershopID,
 				ClientName:      notifyData.ClientName,
 				ClientEmail:     notifyData.ClientEmail,
 				ClientPhone:     notifyData.ClientPhone,

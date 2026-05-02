@@ -141,25 +141,16 @@ func (uc *CreatePrivateAppointment) Execute(
 		return nil, apperr.ErrBusiness("outside_working_hours")
 	}
 
-	parseHM := func(hm string) time.Time {
-		t, _ := time.Parse("15:04", hm)
-		return time.Date(
-			startLocal.Year(), startLocal.Month(), startLocal.Day(),
-			t.Hour(), t.Minute(), 0, 0,
-			loc,
-		)
-	}
-
-	workStart := parseHM(wh.StartTime)
-	workEnd := parseHM(wh.EndTime)
+	workStart := parseHM(wh.StartTime, startLocal, loc)
+	workEnd := parseHM(wh.EndTime, startLocal, loc)
 
 	if startLocal.Before(workStart) || endLocal.After(workEnd) {
 		return nil, apperr.ErrBusiness("outside_working_hours")
 	}
 
 	if wh.LunchStart != "" && wh.LunchEnd != "" {
-		lunchStart := parseHM(wh.LunchStart)
-		lunchEnd := parseHM(wh.LunchEnd)
+		lunchStart := parseHM(wh.LunchStart, startLocal, loc)
+		lunchEnd := parseHM(wh.LunchEnd, startLocal, loc)
 
 		if startLocal.Before(lunchEnd) && endLocal.After(lunchStart) {
 			return nil, apperr.ErrBusiness("outside_working_hours")
@@ -185,18 +176,7 @@ func (uc *CreatePrivateAppointment) Execute(
 	// --------------------------------------------------
 	// A tolerância permite sobreposição de até T minutos em cada extremidade,
 	// espelhando a mesma lógica usada em get_availability.go.
-	conflictStart := start
-	conflictEnd := end
-	if shop.ScheduleToleranceMinutes > 0 {
-		tol := time.Duration(shop.ScheduleToleranceMinutes) * time.Minute
-		cs := start.Add(tol)
-		ce := end.Add(-tol)
-		// Só aplica tolerância se o range não ficar inválido.
-		if cs.Before(ce) {
-			conflictStart = cs
-			conflictEnd = ce
-		}
-	}
+	conflictStart, conflictEnd := applyTolerance(start, end, shop.ScheduleToleranceMinutes)
 	if err := uc.repo.AssertNoTimeConflict(
 		ctx,
 		in.BarbershopID,

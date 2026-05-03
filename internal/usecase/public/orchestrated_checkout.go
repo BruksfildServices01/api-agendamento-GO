@@ -132,6 +132,7 @@ func (uc *OrchestratedCheckout) Execute(
 				ticketURL = uc.appURL + "/ticket/" + ticketToken
 			}
 			notifyInput := domainNotification.AppointmentConfirmedInput{
+				BarbershopID:    barbershopID,
 				ClientName:      input.ClientName,
 				ClientEmail:     input.ClientEmail,
 				ClientPhone:     input.ClientPhone,

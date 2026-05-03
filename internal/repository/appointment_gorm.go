@@ -14,7 +14,6 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/appointment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // workingHoursCache evita queries repetidas para o mesmo barber+weekday.
@@ -169,14 +168,7 @@ func (r *AppointmentGormRepository) GetOrCreateClient(
 }
 
 func isClientPhoneUniqueViolation(err error) bool {
-	if err == nil {
-		return false
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505" && pgErr.ConstraintName == "uq_clients_barbershop_phone"
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "uq_clients_barbershop_phone")
+	return isPgUniqueViolation(err, "uq_clients_barbershop_phone")
 }
 
 //
@@ -226,14 +218,7 @@ func (r *AppointmentGormRepository) CreateAppointmentWithKey(
 			"INSERT INTO idempotency_keys (key) VALUES (?)",
 			idempotencyKey,
 		).Error; err != nil {
-			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				return apperr.ErrBusiness("duplicate_request")
-			}
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				return apperr.ErrBusiness("duplicate_request")
-			}
-			if strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
+			if errors.Is(err, gorm.ErrDuplicatedKey) || isPgUniqueViolation(err, "") {
 				return apperr.ErrBusiness("duplicate_request")
 			}
 			return err
@@ -244,19 +229,7 @@ func (r *AppointmentGormRepository) CreateAppointmentWithKey(
 }
 
 func isUniqueBarberSlotActiveViolation(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		if pgErr.Code == "23505" && pgErr.ConstraintName == "unique_barber_slot_active" {
-			return true
-		}
-	}
-
-	msg := err.Error()
-	return strings.Contains(msg, "unique_barber_slot_active")
+	return isPgUniqueViolation(err, "unique_barber_slot_active")
 }
 
 //

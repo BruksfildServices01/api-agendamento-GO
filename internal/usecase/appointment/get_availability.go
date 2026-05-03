@@ -89,13 +89,13 @@ func (uc *GetAvailability) Execute(
 			return []domain.TimeSlot{}, nil
 		}
 		if override.StartTime != "" && override.EndTime != "" {
-			// Exceção abre (ou muda horário de) um dia, mesmo que o padrão seja inativo.
-			if wh == nil {
-				wh = &models.WorkingHours{Active: true}
+			// Cria um novo valor em vez de mutar o ponteiro retornado pelo repositório
+			// (que pode ser um objeto cacheado compartilhado).
+			wh = &models.WorkingHours{
+				Active:    true,
+				StartTime: override.StartTime,
+				EndTime:   override.EndTime,
 			}
-			wh.StartTime = override.StartTime
-			wh.EndTime = override.EndTime
-			wh.Active = true
 		}
 	}
 
@@ -103,23 +103,14 @@ func (uc *GetAvailability) Execute(
 		return []domain.TimeSlot{}, nil
 	}
 
-	parseHM := func(hm string) time.Time {
-		t, _ := time.Parse("15:04", hm)
-		return time.Date(
-			dateLocal.Year(), dateLocal.Month(), dateLocal.Day(),
-			t.Hour(), t.Minute(), 0, 0,
-			loc,
-		)
-	}
-
-	dayStart := parseHM(wh.StartTime)
-	dayEnd := parseHM(wh.EndTime)
+	dayStart := parseHM(wh.StartTime, dateLocal, loc)
+	dayEnd := parseHM(wh.EndTime, dateLocal, loc)
 
 	hasLunch := wh.LunchStart != "" && wh.LunchEnd != ""
 	var lunchStart, lunchEnd time.Time
 	if hasLunch {
-		lunchStart = parseHM(wh.LunchStart)
-		lunchEnd = parseHM(wh.LunchEnd)
+		lunchStart = parseHM(wh.LunchStart, dateLocal, loc)
+		lunchEnd = parseHM(wh.LunchEnd, dateLocal, loc)
 	}
 
 	// 4) Buscar appointments no range do dia
@@ -143,7 +134,6 @@ func (uc *GetAvailability) Execute(
 
 	// 6) Slots
 	slotDuration := time.Duration(product.DurationMin) * time.Minute
-	toleranceDur := time.Duration(shop.ScheduleToleranceMinutes) * time.Minute
 	slots := make([]domain.TimeSlot, 0)
 
 	apIdx := 0
@@ -169,16 +159,7 @@ func (uc *GetAvailability) Execute(
 		if apIdx < len(appointments) {
 			ap := appointments[apIdx]
 			// Com tolerância: o slot só conflita se a sobreposição exceder o limite configurado.
-			// slotStart + tol < ap.EndTime  →  início do slot (considerando margem) está antes do fim do existente
-			// slotEnd - tol > ap.StartTime  →  fim do slot (considerando margem) está depois do início do existente
-			effectiveStart := slotStart.Add(toleranceDur)
-			effectiveEnd := slotEnd.Add(-toleranceDur)
-			// Se a tolerância é maior que metade do serviço o range fica inválido;
-			// recua para o range completo para não liberar slots ocupados.
-			if !effectiveStart.Before(effectiveEnd) {
-				effectiveStart = slotStart
-				effectiveEnd = slotEnd
-			}
+			effectiveStart, effectiveEnd := applyTolerance(slotStart, slotEnd, shop.ScheduleToleranceMinutes)
 			if effectiveStart.Before(ap.EndTime) && effectiveEnd.After(ap.StartTime) {
 				conflict = true
 			}

@@ -2,51 +2,61 @@ package crm
 
 import (
 	"testing"
-
-	domainMetrics "github.com/BruksfildServices01/barber-scheduler/internal/domain/metrics"
 )
 
 // ----------------------------------------------------------------
 // resolvePolicy
 // ----------------------------------------------------------------
 
-func TestResolvePolicy_AtRisk_RequiresPaymentUpfront(t *testing.T) {
-	flags := FlagsDTO{}
-	policy := resolvePolicy(domainMetrics.CategoryAtRisk, flags)
+func TestResolvePolicy_NoShow_RequiresPaymentUpfront(t *testing.T) {
+	metrics := MetricsDTO{NoShow: 2, TotalAppointments: 5}
+	policy := resolvePolicy(metrics)
 
 	if !policy.RequiresPaymentUpfront {
-		t.Fatal("at_risk client must require payment upfront")
+		t.Fatal("cliente com 2+ no-shows deve exigir pagamento antecipado")
 	}
-	if policy.Reason != "at_risk_client" {
-		t.Fatalf("expected reason 'at_risk_client', got %q", policy.Reason)
+	if policy.Reason != "no_show" {
+		t.Fatalf("esperado reason 'no_show', obtido %q", policy.Reason)
 	}
 }
 
-func TestResolvePolicy_Attention_RequiresPaymentUpfront(t *testing.T) {
-	flags := FlagsDTO{Attention: true}
-	policy := resolvePolicy(domainMetrics.CategoryRegular, flags)
+func TestResolvePolicy_HighNoShowRate_RequiresPaymentUpfront(t *testing.T) {
+	// 2 no-shows em 5 appointments = 40% ≥ 20% threshold
+	metrics := MetricsDTO{NoShow: 2, TotalAppointments: 5, Completed: 3}
+	policy := resolvePolicy(metrics)
 
 	if !policy.RequiresPaymentUpfront {
-		t.Fatal("attention client must require payment upfront")
-	}
-	if policy.Reason != "low_attendance_rate" {
-		t.Fatalf("expected reason 'low_attendance_rate', got %q", policy.Reason)
+		t.Fatal("cliente com alta taxa de no-show deve exigir pagamento antecipado")
 	}
 }
 
-func TestResolvePolicy_Trusted_NoUpfrontRequired(t *testing.T) {
-	flags := FlagsDTO{Premium: true, Reliable: true}
-	policy := resolvePolicy(domainMetrics.CategoryTrusted, flags)
+func TestResolvePolicy_LowNoShow_NoUpfrontRequired(t *testing.T) {
+	// 1 no-show em 10 appointments = 10% < 20%
+	metrics := MetricsDTO{NoShow: 1, TotalAppointments: 10, Completed: 9}
+	policy := resolvePolicy(metrics)
 
 	if policy.RequiresPaymentUpfront {
-		t.Fatal("trusted client should NOT require payment upfront")
+		t.Fatal("cliente com poucos no-shows não deve exigir pagamento antecipado")
 	}
 }
 
-func TestResolvePolicy_New_NoUpfrontRequired(t *testing.T) {
-	policy := resolvePolicy(domainMetrics.CategoryNew, FlagsDTO{})
+func TestResolvePolicy_ZeroHistory_NoUpfrontRequired(t *testing.T) {
+	policy := resolvePolicy(MetricsDTO{})
+
 	if policy.RequiresPaymentUpfront {
-		t.Fatal("new client (no history) should NOT require payment upfront")
+		t.Fatal("cliente sem histórico não deve exigir pagamento antecipado")
+	}
+}
+
+func TestResolvePolicy_BelowThresholdCount_NoUpfrontRequired(t *testing.T) {
+	// 2 no-shows em 4 appointments → count < 5, rate não aplicada
+	metrics := MetricsDTO{NoShow: 2, TotalAppointments: 4}
+	policy := resolvePolicy(metrics)
+
+	// Regra de rate só se aplica com TotalAppointments >= 5;
+	// mas NoShow >= 2 dispara independente
+	if !policy.RequiresPaymentUpfront {
+		t.Fatal("NoShow >= 2 sempre exige pagamento, independente do total")
 	}
 }
 
@@ -54,27 +64,23 @@ func TestResolvePolicy_New_NoUpfrontRequired(t *testing.T) {
 // Flag semantics: Premium flag derivation
 // ----------------------------------------------------------------
 
-// TestPremiumFlag verifies that the Premium flag is true only when there is
-// an active (non-nil) subscription. This test catches regressions where the
-// flag is computed from an expired or incorrect subscription record.
 func TestPremiumFlag_WithActiveSubscription(t *testing.T) {
-	// Simulates a non-nil sub (as returned when the DB query finds a valid row)
 	sub := &SubscriptionDTO{PlanID: 1}
 	flags := FlagsDTO{
 		Premium: sub != nil,
 	}
 	if !flags.Premium {
-		t.Fatal("Premium must be true when active subscription exists")
+		t.Fatal("Premium deve ser true quando há assinatura ativa")
 	}
 }
 
 func TestPremiumFlag_WithoutSubscription(t *testing.T) {
-	var sub *SubscriptionDTO // nil → no active subscription
+	var sub *SubscriptionDTO
 	flags := FlagsDTO{
 		Premium: sub != nil,
 	}
 	if flags.Premium {
-		t.Fatal("Premium must be false when no active subscription")
+		t.Fatal("Premium deve ser false quando não há assinatura ativa")
 	}
 }
 
@@ -84,11 +90,11 @@ func TestPremiumFlag_WithoutSubscription(t *testing.T) {
 
 func TestFlags_ReliableThreshold(t *testing.T) {
 	tests := []struct {
-		name           string
-		completed      int
-		total          int
-		wantReliable   bool
-		wantAttention  bool
+		name          string
+		completed     int
+		total         int
+		wantReliable  bool
+		wantAttention bool
 	}{
 		{"perfect attendance 10 visits", 10, 10, true, false},
 		{"exactly 90% attendance", 9, 10, true, false},
@@ -122,9 +128,6 @@ func TestFlags_ReliableThreshold(t *testing.T) {
 // shared.ActiveSubscriptionSQL — documentar semantics
 // ----------------------------------------------------------------
 
-// TestActiveSubscriptionSQL_ContainsTimeBoundary ensures the shared SQL
-// constant includes period boundary checks, preventing regressions where
-// the condition reverts to status-only (which would accept expired subscriptions).
 func TestActiveSubscriptionSQL_ContainsTimeBoundary(t *testing.T) {
 	import_check := func(sql string) {
 		if contains := len(sql) > 0; !contains {
@@ -148,8 +151,6 @@ func TestActiveSubscriptionSQL_ContainsTimeBoundary(t *testing.T) {
 		}
 	}
 
-	// Import the constant via a helper to avoid import cycle
-	// (the constant is in a sibling package — verified via build)
 	const canonicalSQL = `s.status = 'active'
 	  AND s.current_period_start <= NOW()
 	  AND s.current_period_end   >  NOW()`

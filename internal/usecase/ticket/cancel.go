@@ -168,6 +168,7 @@ func (uc *CancelViaTicket) Execute(ctx context.Context, token string) error {
 			log.Printf("[CancelViaTicket] failed to query notification data: %v", queryErr)
 		} else if notifyData.ClientEmail != "" || notifyData.ClientPhone != "" {
 			_ = uc.notifier.NotifyCancelled(ctx, domainNotification.AppointmentCancelledInput{
+				BarbershopID:   appt.BarbershopID,
 				ClientName:     notifyData.ClientName,
 				ClientEmail:    notifyData.ClientEmail,
 				ClientPhone:    notifyData.ClientPhone,

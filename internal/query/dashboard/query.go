@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/timezone"
@@ -64,6 +65,7 @@ func (q *Query) Execute(ctx context.Context, input Input) (*ResponseDTO, error) 
 	dateTo := endUTC.Add(-time.Second).In(loc).Format("2006-01-02")
 
 	// 3. Run all queries in parallel — they share no state and take identical inputs.
+	// errgroup cancela as goroutines restantes ao primeiro erro.
 	var (
 		production  ProductionDTO
 		revenue     RevenueDTO
@@ -72,52 +74,36 @@ func (q *Query) Execute(ctx context.Context, input Input) (*ResponseDTO, error) 
 		topProducts []ProductRankItem
 	)
 
-	prodCh     := make(chan error, 1)
-	revCh      := make(chan error, 1)
-	clientsCh  := make(chan error, 1)
-	servicesCh := make(chan error, 1)
-	productsCh := make(chan error, 1)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		production, err = q.loadProduction(gctx, input.BarbershopID, startUTC, endUTC)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		revenue, err = q.loadRevenue(gctx, input.BarbershopID, startUTC, endUTC)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		clients, err = q.loadClients(gctx, input.BarbershopID, startUTC, endUTC)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		topServices, err = q.loadTopServices(gctx, input.BarbershopID, startUTC, endUTC)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		topProducts, err = q.loadTopProducts(gctx, input.BarbershopID, startUTC, endUTC)
+		return err
+	})
 
-	go func() {
-		var err error
-		production, err = q.loadProduction(ctx, input.BarbershopID, startUTC, endUTC)
-		prodCh <- err
-	}()
-	go func() {
-		var err error
-		revenue, err = q.loadRevenue(ctx, input.BarbershopID, startUTC, endUTC)
-		revCh <- err
-	}()
-	go func() {
-		var err error
-		clients, err = q.loadClients(ctx, input.BarbershopID, startUTC, endUTC)
-		clientsCh <- err
-	}()
-	go func() {
-		var err error
-		topServices, err = q.loadTopServices(ctx, input.BarbershopID, startUTC, endUTC)
-		servicesCh <- err
-	}()
-	go func() {
-		var err error
-		topProducts, err = q.loadTopProducts(ctx, input.BarbershopID, startUTC, endUTC)
-		productsCh <- err
-	}()
-
-	// Always drain all channels before returning any error.
-	// Channel receives happen-after the goroutine sends, guaranteeing memory
-	// visibility of the five result variables without additional synchronization.
-	prodErr     := <-prodCh
-	revErr      := <-revCh
-	clientsErr  := <-clientsCh
-	servicesErr := <-servicesCh
-	productsErr := <-productsCh
-
-	if prodErr     != nil { return nil, prodErr }
-	if revErr      != nil { return nil, revErr }
-	if clientsErr  != nil { return nil, clientsErr }
-	if servicesErr != nil { return nil, servicesErr }
-	if productsErr != nil { return nil, productsErr }
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	return &ResponseDTO{
 		Period:      string(period),

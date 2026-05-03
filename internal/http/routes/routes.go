@@ -536,6 +536,7 @@ func RegisterRoutes(
 	pagbankWebhookHandler := handlers.NewPagBankWebhookHandler(
 		db,
 		markMPPaymentAsPaidUC,
+		paymentCipher,
 		cfg.PagBankSandbox,
 	)
 

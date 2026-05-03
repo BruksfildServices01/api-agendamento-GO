@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -9,26 +10,31 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/pagbank"
+	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
 
 // PagBankWebhookHandler processa notificações de pagamento do PagBank.
 // Valida a assinatura RSA-SHA256 e delega a confirmação ao use case existente.
 type PagBankWebhookHandler struct {
-	db                  *gorm.DB
-	markAsPaid          *ucPayment.MarkMPPaymentAsPaid
-	sandbox             bool
+	db         *gorm.DB
+	markAsPaid *ucPayment.MarkMPPaymentAsPaid
+	cipher     *crypt.Cipher
+	sandbox    bool
 }
 
 func NewPagBankWebhookHandler(
 	db *gorm.DB,
 	markAsPaid *ucPayment.MarkMPPaymentAsPaid,
+	cipher *crypt.Cipher,
 	sandbox bool,
 ) *PagBankWebhookHandler {
 	return &PagBankWebhookHandler{
 		db:         db,
 		markAsPaid: markAsPaid,
+		cipher:     cipher,
 		sandbox:    sandbox,
 	}
 }
@@ -102,16 +108,43 @@ func (h *PagBankWebhookHandler) Handle(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// getAnyPagBankToken retorna o access_token de qualquer barbearia com PagBank configurado.
-// Usado apenas para buscar a public key do PagBank para validação de assinatura.
-func (h *PagBankWebhookHandler) getAnyPagBankToken(_ *gin.Context) string {
-	// Em sandbox, a assinatura não é enviada — retorna string vazia.
-	if h.sandbox {
+// getAnyPagBankToken retorna o access_token de qualquer barbearia com PagBank ativo.
+// Usado apenas para buscar a public key RSA do PagBank para validar a assinatura do webhook.
+// Qualquer token válido serve — a public key é a mesma para todo o ambiente.
+func (h *PagBankWebhookHandler) getAnyPagBankToken(c *gin.Context) string {
+	if h.sandbox || h.cipher == nil {
 		return ""
 	}
-	// TODO: quando houver dados reais, ler um token válido para buscar a public key.
-	// Por ora, retorna vazio — ValidateWebhookSignature só valida se signature != "".
-	return ""
+
+	var row struct {
+		CredentialsEncrypted string `gorm:"column:credentials_encrypted"`
+	}
+	err := h.db.WithContext(c.Request.Context()).
+		Table("barbershop_payment_providers").
+		Select("credentials_encrypted").
+		Where("provider = 'pagbank' AND enabled = true AND credentials_encrypted IS NOT NULL").
+		Limit(1).
+		Scan(&row).Error
+	if err != nil || row.CredentialsEncrypted == "" {
+		return ""
+	}
+
+	plaintext, err := h.cipher.Decrypt(row.CredentialsEncrypted)
+	if err != nil {
+		log.Printf("[PAGBANK_WEBHOOK] falha ao descriptografar token para validação RSA: %v", err)
+		return ""
+	}
+	defer func() {
+		for i := range plaintext {
+			plaintext[i] = 0
+		}
+	}()
+
+	var creds paymentinfra.PagBankCredentials
+	if err := json.Unmarshal(plaintext, &creds); err != nil {
+		return ""
+	}
+	return creds.AccessToken
 }
 
 // referenceToPaymentID converte reference_id (string) para uint payment.ID.

@@ -36,10 +36,13 @@ type pagbankPublicKeyResponse struct {
 // Retorna nil se a assinatura for válida.
 //
 // Nota: em sandbox, a PagBank não envia o header — passar assinatura vazia retorna nil.
+// Fora do sandbox, assinatura ausente é rejeitada para evitar webhooks forjados.
 func ValidateWebhookSignature(ctx context.Context, accessToken, signature string, payload []byte, sandbox bool) error {
 	if signature == "" {
-		// Sandbox não envia assinatura — aceita sem validar.
-		return nil
+		if sandbox {
+			return nil
+		}
+		return fmt.Errorf("pagbank webhook: assinatura ausente fora do sandbox")
 	}
 
 	key, err := pbKeyCache.get(ctx, accessToken, sandbox)

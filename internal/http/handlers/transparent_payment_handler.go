@@ -163,18 +163,18 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 		}
 	}
 
-	// Carrega configuração de pagamento da barbearia
+	// Carrega configuração de pagamento da barbearia (tabela legada).
+	// Pode não existir para barbearias que usam apenas barbershop_payment_providers.
 	var paymentCfg models.BarbershopPaymentConfig
 	hasCfg := h.db.WithContext(ctx).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error == nil
-
-	// Bloqueia se as credenciais MP não estão configuradas
-	if !hasCfg || paymentCfg.MPAccessToken == "" || paymentCfg.MPPublicKey == "" {
-		httperr.BadRequest(c, "payment_not_configured", "Esta barbearia ainda não configurou o pagamento online.")
-		return
+	if !hasCfg {
+		// Sem configuração legada. O registry ainda pode resolver o provider via
+		// barbershop_payment_providers — garantimos o barbershop_id correto.
+		paymentCfg.BarbershopID = shop.ID
 	}
 
 	if hasCfg {
-		// Validar se o método de pagamento está habilitado
+		// Validar se o método de pagamento está habilitado na configuração da barbearia.
 		method := req.PaymentMethodID
 		var blocked bool
 		switch {
@@ -192,9 +192,14 @@ func (h *TransparentPaymentHandler) CreatePayment(c *gin.Context) {
 	}
 
 	// Obtém o gateway do provider configurado para esta barbearia.
-	// O registry é o único lugar que conhece qual provider usar e como instanciá-lo.
+	// O registry verifica barbershop_payment_providers (PagBank, MP via nova tabela)
+	// e cai no fallback legado de mp_access_token se necessário.
 	gw, err := h.registry.TransparentGatewayFor(ctx, paymentCfg)
 	if err != nil {
+		if errors.Is(err, paymentinfra.ErrPaymentNotConfigured) {
+			httperr.BadRequest(c, "payment_not_configured", "Esta barbearia ainda não configurou o pagamento online.")
+			return
+		}
 		log.Printf("[TRANSPARENT] gateway error barbershop=%d: %v", shop.ID, err)
 		httperr.Internal(c, "payment_gateway_error", "Erro ao inicializar gateway de pagamento.")
 		return

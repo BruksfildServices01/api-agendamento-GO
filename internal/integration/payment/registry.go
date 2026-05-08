@@ -71,6 +71,32 @@ func (r *ProviderRegistry) TransparentGatewayFor(
 	return nil, ErrPaymentNotConfigured
 }
 
+// GatewayForProvider retorna o gateway para um provider específico da barbearia.
+// Diferente de TransparentGatewayFor (que retorna o provider mais recentemente ativo),
+// este método seleciona um provider específico pelo nome — usado no polling de status
+// para garantir que o payment é consultado no mesmo provider que o criou, mesmo que
+// outro provider tenha sido configurado depois.
+// Retorna ErrPaymentNotConfigured quando o provider não está habilitado ou sem credenciais.
+func (r *ProviderRegistry) GatewayForProvider(
+	ctx context.Context,
+	barbershopID uint,
+	providerName string,
+) (domain.TransparentGateway, error) {
+	var p models.BarbershopPaymentProvider
+	err := r.db.WithContext(ctx).
+		Where("barbershop_id = ? AND provider = ? AND enabled = true", barbershopID, providerName).
+		First(&p).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) || p.CredentialsEncrypted == nil {
+		return nil, ErrPaymentNotConfigured
+	}
+	if err != nil {
+		return nil, fmt.Errorf("registry GatewayForProvider: %w", err)
+	}
+
+	return r.gatewayFromProvider(barbershopID, p)
+}
+
 // gatewayFromProvider determina o provider e instancia o gateway correto.
 func (r *ProviderRegistry) gatewayFromProvider(barbershopID uint, p models.BarbershopPaymentProvider) (domain.TransparentGateway, error) {
 	switch p.Provider {

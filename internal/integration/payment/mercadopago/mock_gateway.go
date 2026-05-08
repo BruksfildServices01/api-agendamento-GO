@@ -88,3 +88,8 @@ func (g *MockGateway) CreateHostedCheckout(_ context.Context, input domain.Hoste
 func (g *MockGateway) GetPaymentStatus(_ context.Context, _ string) (domain.ProviderPaymentStatus, error) {
 	return domain.ProviderStatusPending, nil
 }
+
+// ProviderName retorna o identificador do provider para o mock (mesmo valor do gateway real).
+func (g *MockGateway) ProviderName() string {
+	return "mercadopago"
+}

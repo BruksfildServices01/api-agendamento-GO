@@ -254,6 +254,12 @@ func (g *Gateway) GetPaymentStatus(ctx context.Context, providerPaymentID string
 	return mapMPStatus(resp.Status), nil
 }
 
+// ProviderName retorna o identificador do provider gravado em payments.provider.
+// Usado para associar um payment ao seu gateway de origem e permitir polling correto.
+func (g *Gateway) ProviderName() string {
+	return "mercadopago"
+}
+
 // mapMPStatus normaliza o status do MP para o ProviderPaymentStatus genérico.
 func mapMPStatus(s string) domain.ProviderPaymentStatus {
 	switch s {

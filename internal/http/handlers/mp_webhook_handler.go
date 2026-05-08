@@ -14,14 +14,15 @@ import (
 	"github.com/mercadopago/sdk-go/pkg/payment"
 	"gorm.io/gorm"
 
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
 	infraMP "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucPayment "github.com/BruksfildServices01/barber-scheduler/internal/usecase/payment"
 )
 
-// MPWebhookHandler processa as notificações IPN do Mercado Pago.
-// O MP envia apenas o tipo e o ID do pagamento; o handler busca
-// os detalhes via API para extrair o external_reference e o status.
+// MPWebhookHandler processa as notificações IPN do Mercado Pago e serve o
+// endpoint de polling de status de pagamento para todos os providers.
 type MPWebhookHandler struct {
 	markMPPaid        *ucPayment.MarkMPPaymentAsPaid
 	globalAccessToken string
@@ -30,6 +31,9 @@ type MPWebhookHandler struct {
 	// Se true e webhookSecret vazio, o webhook é rejeitado sem processar.
 	requireSignature bool
 	db               *gorm.DB
+	// registry é opcional — quando presente, habilita polling de status via
+	// provider genérico (PagBank etc.) no endpoint CheckPaymentStatus.
+	registry *paymentinfra.ProviderRegistry
 }
 
 func NewMPWebhookHandler(
@@ -46,6 +50,13 @@ func NewMPWebhookHandler(
 		requireSignature:  requireSignature,
 		db:                db,
 	}
+}
+
+// WithRegistry configura o ProviderRegistry para polling de status de pagamentos
+// de providers não-MP (ex: PagBank). Retorna o próprio handler para encadeamento.
+func (h *MPWebhookHandler) WithRegistry(r *paymentinfra.ProviderRegistry) *MPWebhookHandler {
+	h.registry = r
+	return h
 }
 
 // mpNotification é o corpo do IPN enviado pelo Mercado Pago.
@@ -134,6 +145,8 @@ func (h *MPWebhookHandler) resolveAccessToken(ctx context.Context, mpPaymentIDSt
 }
 
 // CheckPaymentStatus é chamado pelo frontend como fallback quando o webhook demora.
+// Suporta Mercado Pago (via mp_payment_id / "mp_pay:" TxID) e providers genéricos
+// como PagBank (via TxID + ProviderRegistry).
 // GET /api/public/:slug/appointments/:id/payment/status
 func (h *MPWebhookHandler) CheckPaymentStatus(c *gin.Context) {
 	appointmentID, err := strconv.Atoi(c.Param("id"))
@@ -158,13 +171,18 @@ func (h *MPWebhookHandler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
+	// Estados finais — sem chamada externa.
 	if p.Status == "paid" {
 		c.JSON(http.StatusOK, gin.H{"status": "confirmed"})
 		return
 	}
+	if p.Status == "expired" {
+		c.JSON(http.StatusOK, gin.H{"status": "expired"})
+		return
+	}
 
+	// Tenta o caminho Mercado Pago primeiro:
 	// MPPaymentID pode ser nil — pagamentos transparentes gravam apenas TxID ("mp_pay:<id>").
-	// Extrai o ID do TxID quando MPPaymentID não está preenchido.
 	var mpPaymentIDStr string
 	if p.MPPaymentID != nil {
 		mpPaymentIDStr = strconv.FormatInt(*p.MPPaymentID, 10)
@@ -172,29 +190,112 @@ func (h *MPWebhookHandler) CheckPaymentStatus(c *gin.Context) {
 		mpPaymentIDStr = strings.TrimPrefix(*p.TxID, "mp_pay:")
 	}
 
-	if mpPaymentIDStr == "" {
-		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
-		return
-	}
-	if err := h.processPayment(c.Request.Context(), mpPaymentIDStr); err != nil {
-		log.Printf("[CheckPaymentStatus] appointment=%d mp_payment=%s error=%v", appointmentID, mpPaymentIDStr, err)
-		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
+	if mpPaymentIDStr != "" {
+		if err := h.processPayment(c.Request.Context(), mpPaymentIDStr); err != nil {
+			log.Printf("[CheckPaymentStatus] appointment=%d mp_payment=%s error=%v", appointmentID, mpPaymentIDStr, err)
+		}
+		h.replyWithCurrentStatus(c, &p)
 		return
 	}
 
-	// Relê o status após tentar confirmar
+	// Caminho genérico: PagBank e outros providers.
+	// TxID contém o provider payment ID (ex: "QRC_XXXXX", "CHAR_XXXXX").
+	if p.TxID != nil && *p.TxID != "" && h.registry != nil {
+		if err := h.checkStatusViaRegistry(c.Request.Context(), shop.ID, &p); err != nil {
+			log.Printf("[CheckPaymentStatus] appointment=%d provider_id=%s error=%v",
+				appointmentID, *p.TxID, err)
+		}
+	}
+
+	h.replyWithCurrentStatus(c, &p)
+}
+
+// replyWithCurrentStatus relê o payment do banco e responde com o status atual.
+// Converte "paid" → "confirmed" para manter o contrato do frontend.
+func (h *MPWebhookHandler) replyWithCurrentStatus(c *gin.Context, p *models.Payment) {
 	var updated models.Payment
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("id = ?", p.ID).Select("status").First(&updated).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": string(p.Status)})
 		return
 	}
-
 	status := string(updated.Status)
 	if status == "paid" {
 		status = "confirmed"
 	}
 	c.JSON(http.StatusOK, gin.H{"status": status})
+}
+
+// checkStatusViaRegistry consulta o status do pagamento via PaymentGateway genérico.
+// Usado para providers não-MP (PagBank etc.) quando o TxID não tem prefixo "mp_pay:".
+// Se o provider retornar aprovado, chama markMPPaid para confirmar o payment interno.
+//
+// Prioridade de identificação:
+//   1. payment.ProviderPaymentID — ID externo puro (sem prefixo), gravado na criação.
+//   2. payment.TxID              — fallback para payments antigos sem ProviderPaymentID.
+//
+// Prioridade de seleção do gateway:
+//   1. payment.Provider — consulta o provider específico que criou o payment, evitando
+//      que uma troca de provider posterior interfira no polling de payments antigos.
+//   2. provider ativo mais recente via TransparentGatewayFor — fallback para payments
+//      antigos (criados antes do campo provider existir) sem provider registrado.
+func (h *MPWebhookHandler) checkStatusViaRegistry(
+	ctx context.Context,
+	shopID uint,
+	p *models.Payment,
+) error {
+	// Determina o ID externo a ser consultado no provider.
+	providerPaymentID := ""
+	if p.ProviderPaymentID != nil && *p.ProviderPaymentID != "" {
+		providerPaymentID = *p.ProviderPaymentID
+	} else if p.TxID != nil {
+		providerPaymentID = *p.TxID
+	}
+	if providerPaymentID == "" {
+		return nil
+	}
+
+	// Seleciona o gateway: usa o provider salvo no payment quando disponível.
+	var gw domain.TransparentGateway
+	var err error
+
+	if p.Provider != nil && *p.Provider != "" {
+		// Provider registrado — consulta o gateway específico, independentemente de
+		// qual provider está ativo na barbearia agora.
+		gw, err = h.registry.GatewayForProvider(ctx, shopID, *p.Provider)
+	} else {
+		// Fallback para payments antigos sem campo provider:
+		// usa o provider mais recentemente ativo (comportamento original).
+		var paymentCfg models.BarbershopPaymentConfig
+		_ = h.db.WithContext(ctx).Where("barbershop_id = ?", shopID).First(&paymentCfg).Error
+		paymentCfg.BarbershopID = shopID
+		gw, err = h.registry.TransparentGatewayFor(ctx, paymentCfg)
+	}
+	if err != nil {
+		return fmt.Errorf("registry: %w", err)
+	}
+
+	// Duck typing: apenas gateways que implementam GetPaymentStatus são consultados.
+	// pagbank.Gateway e mp.Gateway implementam; gateways sem suporte a polling são ignorados.
+	type statusChecker interface {
+		GetPaymentStatus(ctx context.Context, providerPaymentID string) (domain.ProviderPaymentStatus, error)
+	}
+	checker, ok := gw.(statusChecker)
+	if !ok {
+		return nil
+	}
+
+	status, err := checker.GetPaymentStatus(ctx, providerPaymentID)
+	if err != nil {
+		return fmt.Errorf("GetPaymentStatus(%s): %w", providerPaymentID, err)
+	}
+
+	if status != domain.ProviderStatusApproved {
+		return nil
+	}
+
+	externalRef := strconv.FormatUint(uint64(p.ID), 10)
+	return h.markMPPaid.Execute(ctx, externalRef, providerPaymentID)
 }
 
 func (h *MPWebhookHandler) processPayment(ctx context.Context, mpPaymentIDStr string) error {

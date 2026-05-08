@@ -14,7 +14,8 @@ import (
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
-	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
+	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
+	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/payment"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucSubscription "github.com/BruksfildServices01/barber-scheduler/internal/usecase/subscription"
 )
@@ -23,17 +24,20 @@ type PublicSubscriptionHandler struct {
 	db          *gorm.DB
 	listPlansUC *ucSubscription.ListPlans
 	purchaseUC  *ucSubscription.PurchaseSubscription
+	registry    *paymentinfra.ProviderRegistry
 }
 
 func NewPublicSubscriptionHandler(
 	db *gorm.DB,
 	listPlansUC *ucSubscription.ListPlans,
 	purchaseUC *ucSubscription.PurchaseSubscription,
+	registry *paymentinfra.ProviderRegistry,
 ) *PublicSubscriptionHandler {
 	return &PublicSubscriptionHandler{
 		db:          db,
 		listPlansUC: listPlansUC,
 		purchaseUC:  purchaseUC,
+		registry:    registry,
 	}
 }
 
@@ -117,14 +121,25 @@ func (h *PublicSubscriptionHandler) Purchase(c *gin.Context) {
 		return
 	}
 
-	// Garante que MP está configurado
+	// Carrega configuração legada (para fallback MP e flags de método aceito).
+	// Barbearias PagBank-only podem não ter registro nessa tabela.
 	var paymentCfg models.BarbershopPaymentConfig
 	hasCfg := h.db.WithContext(c.Request.Context()).
 		Where("barbershop_id = ?", shop.ID).
 		First(&paymentCfg).Error == nil
+	if !hasCfg {
+		paymentCfg.BarbershopID = shop.ID
+	}
 
-	if !hasCfg || paymentCfg.MPAccessToken == "" || paymentCfg.MPPublicKey == "" {
-		httperr.BadRequest(c, "payment_not_configured", "Esta barbearia ainda não configurou o pagamento online.")
+	// Obtém o gateway via registry (verifica barbershop_payment_providers e fallback legado MP).
+	gw, err := h.registry.TransparentGatewayFor(c.Request.Context(), paymentCfg)
+	if err != nil {
+		if errors.Is(err, paymentinfra.ErrPaymentNotConfigured) {
+			httperr.BadRequest(c, "payment_not_configured", "Esta barbearia ainda não configurou o pagamento online.")
+			return
+		}
+		log.Printf("[purchase] gateway error barbershop=%d: %v", shop.ID, err)
+		httperr.Internal(c, "purchase_failed", "Erro ao processar assinatura.")
 		return
 	}
 
@@ -150,14 +165,7 @@ func (h *PublicSubscriptionHandler) Purchase(c *gin.Context) {
 		Installments:    req.Installments,
 	}
 
-	// Usa o gateway da própria barbearia quando disponível
-	var result *ucSubscription.PurchaseSubscriptionResult
-	var err error
-	if gw, gwErr := mp.New(paymentCfg.MPAccessToken); gwErr == nil {
-		result, err = h.purchaseUC.Execute(c.Request.Context(), input, gw)
-	} else {
-		result, err = h.purchaseUC.Execute(c.Request.Context(), input)
-	}
+	result, err := h.purchaseUC.Execute(c.Request.Context(), input, gw)
 	if err != nil {
 		switch {
 		case apperr.IsBusiness(err, "plan_not_found"):
@@ -213,9 +221,9 @@ func (h *PublicSubscriptionHandler) PaymentStatus(c *gin.Context) {
 		return
 	}
 
-	// Se ainda pendente, tenta verificar o status no MP e ativar inline.
+	// Se ainda pendente, tenta verificar o status no provider e ativar inline.
 	if sub.Status == "pending_payment" {
-		h.tryActivateFromMP(c.Request.Context(), &sub, shop)
+		h.tryActivateFromProvider(c.Request.Context(), &sub, shop)
 	}
 
 	setNoStore(c)
@@ -225,37 +233,84 @@ func (h *PublicSubscriptionHandler) PaymentStatus(c *gin.Context) {
 	})
 }
 
-// tryActivateFromMP consulta o MP pelo mp_payment_id armazenado no pagamento.
-// Se aprovado, ativa o pagamento e a assinatura dentro de uma transação.
+// tryActivateFromProvider consulta o provider correto pelo campo payment.provider
+// e ativa a assinatura se o pagamento foi aprovado.
+// Suporta PagBank (via provider_payment_id) e MP legado (via mp_payment_id).
 // Atualiza sub.Status in-place para que o mesmo request já retorne "active".
-func (h *PublicSubscriptionHandler) tryActivateFromMP(ctx context.Context, sub *models.Subscription, shop *models.Barbershop) {
-	// 1. Encontra o pagamento vinculado com mp_payment_id preenchido
+func (h *PublicSubscriptionHandler) tryActivateFromProvider(ctx context.Context, sub *models.Subscription, shop *models.Barbershop) {
+	// 1. Encontra o payment vinculado à subscription.
 	var pmt models.Payment
 	if err := h.db.WithContext(ctx).
-		Where("subscription_id = ? AND mp_payment_id IS NOT NULL", sub.ID).
+		Where("subscription_id = ?", sub.ID).
 		First(&pmt).Error; err != nil {
-		return // pagamento ainda não tem mp_payment_id — aguarda próximo ciclo
-	}
-
-	// 2. Busca config MP da barbearia
-	var paymentCfg models.BarbershopPaymentConfig
-	if err := h.db.WithContext(ctx).
-		Where("barbershop_id = ?", shop.ID).
-		First(&paymentCfg).Error; err != nil || paymentCfg.MPAccessToken == "" {
 		return
 	}
 
-	// 3. Consulta o MP
-	gw, err := mp.New(paymentCfg.MPAccessToken)
-	if err != nil {
-		return
-	}
-	mpStatus, err := gw.GetPaymentStatusByMPID(*pmt.MPPaymentID)
-	if err != nil || mpStatus != "approved" {
+	// 2. Se o payment já foi marcado como paid (ex: webhook chegou antes do polling),
+	// ativa a subscription diretamente sem nova consulta externa.
+	if pmt.Status == "paid" {
+		h.activateSubscription(ctx, sub, &pmt)
 		return
 	}
 
-	// 4. Ativa dentro de transação
+	if pmt.Status != "pending" {
+		return // expirado ou outro estado terminal — não ativa
+	}
+
+	// 3. Determina o ID externo a consultar no provider.
+	// Prefere provider_payment_id (campo novo), fallback para mp_payment_id (legado MP).
+	providerPaymentID := ""
+	if pmt.ProviderPaymentID != nil && *pmt.ProviderPaymentID != "" {
+		providerPaymentID = *pmt.ProviderPaymentID
+	} else if pmt.MPPaymentID != nil {
+		providerPaymentID = strconv.FormatInt(*pmt.MPPaymentID, 10)
+	}
+	if providerPaymentID == "" {
+		return // nenhum ID disponível para polling ainda
+	}
+
+	// 4. Seleciona o gateway.
+	// Se o payment registrou o provider na criação, usa esse provider específico.
+	// Fallback: usa o provider ativo mais recente (pagamentos antigos sem campo provider).
+	var gw domain.TransparentGateway
+	if pmt.Provider != nil && *pmt.Provider != "" {
+		var err error
+		gw, err = h.registry.GatewayForProvider(ctx, shop.ID, *pmt.Provider)
+		if err != nil {
+			return
+		}
+	} else {
+		var paymentCfg models.BarbershopPaymentConfig
+		_ = h.db.WithContext(ctx).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error
+		paymentCfg.BarbershopID = shop.ID
+		var err error
+		gw, err = h.registry.TransparentGatewayFor(ctx, paymentCfg)
+		if err != nil {
+			return
+		}
+	}
+
+	// 5. Consulta status via duck typing — qualquer gateway que implementa GetPaymentStatus.
+	type statusChecker interface {
+		GetPaymentStatus(ctx context.Context, providerPaymentID string) (domain.ProviderPaymentStatus, error)
+	}
+	checker, ok := gw.(statusChecker)
+	if !ok {
+		return
+	}
+
+	status, err := checker.GetPaymentStatus(ctx, providerPaymentID)
+	if err != nil || status != domain.ProviderStatusApproved {
+		return
+	}
+
+	// 6. Aprovado — ativa subscription e marca payment como paid.
+	h.activateSubscription(ctx, sub, &pmt)
+}
+
+// activateSubscription ativa uma subscription pending_payment e marca o payment como paid.
+// Idempotente: usa WHERE condicionais que são no-op se já no estado final.
+func (h *PublicSubscriptionHandler) activateSubscription(ctx context.Context, sub *models.Subscription, pmt *models.Payment) {
 	now := time.Now().UTC()
 	var plan models.Plan
 	if err := h.db.WithContext(ctx).Where("id = ?", sub.PlanID).First(&plan).Error; err != nil {
@@ -278,7 +333,7 @@ func (h *PublicSubscriptionHandler) tryActivateFromMP(ctx context.Context, sub *
 		}
 		paidAt := now
 		return tx.Model(&models.Payment{}).
-			Where("id = ?", pmt.ID).
+			Where("id = ? AND status = ?", pmt.ID, "pending").
 			Updates(map[string]any{"status": "paid", "paid_at": paidAt}).Error
 	})
 	if txErr != nil {

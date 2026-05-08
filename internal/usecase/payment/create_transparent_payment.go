@@ -188,11 +188,18 @@ func (uc *CreateTransparentPayment) Execute(
 	externalReference := strconv.FormatUint(uint64(payment.ID), 10)
 	description := fmt.Sprintf("Agendamento #%d", input.AppointmentID)
 
-	// Notification URL só é enviada quando a URL do backend é pública (não localhost).
-	// O MP rejeita URLs localhost/127.0.0.1 como notification_url inválida.
+	// Notification URL: usa o path correto para o provider em uso.
+	// Gateways que implementam webhookPather declaram seu próprio path.
+	// O fallback é o endpoint legado do Mercado Pago.
+	// URL omitida quando o backend roda em localhost (provider rejeita URL não pública).
 	notificationURL := ""
 	if !strings.Contains(uc.backURL, "localhost") && !strings.Contains(uc.backURL, "127.0.0.1") {
-		notificationURL = fmt.Sprintf("%s/api/webhooks/mp", uc.backURL)
+		type webhookPather interface{ WebhookPath() string }
+		webhookPath := "/api/webhooks/mp"
+		if wp, ok := gateway.(webhookPather); ok {
+			webhookPath = wp.WebhookPath()
+		}
+		notificationURL = uc.backURL + webhookPath
 	}
 
 	result, err := gateway.CreatePayment(domain.TransparentPaymentInput{
@@ -211,7 +218,7 @@ func (uc *CreateTransparentPayment) Execute(
 	}
 
 	// ==================================================
-	// 6) Persistir TxID e QR code
+	// 6) Persistir TxID, QR code, provider e provider_payment_id
 	// ==================================================
 	// ProviderPaymentID tem precedência quando preenchido (PagBank e outros providers).
 	// Fallback para MPPaymentID (Mercado Pago legado).
@@ -225,6 +232,19 @@ func (uc *CreateTransparentPayment) Execute(
 	if result.QRCode != "" {
 		payment.QRCode = &result.QRCode
 	}
+
+	// Grava o provider e o ID externo puro no payment para identificação futura.
+	// provider_payment_id não carrega o prefixo interno "mp_pay:" — apenas o ID bruto.
+	// Esses campos são lidos pelo polling de status (CheckPaymentStatus) para garantir
+	// que o mesmo provider que criou o payment seja consultado, independentemente de
+	// qual provider está atualmente ativo na barbearia.
+	type providerNamer interface{ ProviderName() string }
+	if pn, ok := gateway.(providerNamer); ok {
+		name := pn.ProviderName()
+		payment.Provider = &name
+	}
+	rawProviderID := strings.TrimPrefix(txid, mpPayPrefix)
+	payment.ProviderPaymentID = &rawProviderID
 
 	// ==================================================
 	// 7) Se aprovado imediatamente (cartão), marcar como pago

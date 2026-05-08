@@ -652,17 +652,28 @@ func (r *PaymentGormTxRepository) UpdatePaymentTx(
 
 	now := time.Now().UTC()
 
+	updates := map[string]any{
+		"txid":             p.TxID,
+		"qr_code":          p.QRCode,
+		"expires_at":       p.ExpiresAt,
+		"amount":           p.Amount,
+		"bundled_order_id": p.BundledOrderID,
+		"updated_at":       now,
+	}
+	// Grava provider e provider_payment_id apenas quando estão preenchidos no struct.
+	// Chamadas anteriores ao gateway (ex: vinculação de bundled_order) ainda não têm
+	// esses campos — o condicional evita sobrescrever com NULL prematuramente.
+	if p.Provider != nil {
+		updates["provider"] = p.Provider
+	}
+	if p.ProviderPaymentID != nil {
+		updates["provider_payment_id"] = p.ProviderPaymentID
+	}
+
 	return r.tx.WithContext(ctx).
 		Model(&models.Payment{}).
 		Where("id = ? AND barbershop_id = ?", p.ID, barbershopID).
-		Updates(map[string]any{
-			"txid":             p.TxID,
-			"qr_code":          p.QRCode,
-			"expires_at":       p.ExpiresAt,
-			"amount":           p.Amount,
-			"bundled_order_id": p.BundledOrderID,
-			"updated_at":       now,
-		}).
+		Updates(updates).
 		Error
 }
 

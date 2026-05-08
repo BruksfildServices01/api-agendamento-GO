@@ -553,7 +553,7 @@ func RegisterRoutes(
 		cfg.MPWebhookSecret,
 		cfg.MPProvider == "mp", // requireSignature: obrigatório quando em modo produção real
 		db,
-	)
+	).WithRegistry(providerRegistry)
 
 	orderHandler := handlers.NewOrderHandler(
 		createOrderUC,
@@ -625,6 +625,7 @@ func RegisterRoutes(
 		db,
 		listPlansUC,
 		purchaseSubscriptionUC,
+		providerRegistry,
 	)
 
 	billingHandler := handlers.NewBillingHandler(db, cfg, idemStore)

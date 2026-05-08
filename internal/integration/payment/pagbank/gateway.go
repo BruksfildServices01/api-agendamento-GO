@@ -260,6 +260,19 @@ func (g *Gateway) CreatePayment(input domain.TransparentPaymentInput) (*domain.T
 	}, nil
 }
 
+// WebhookPath retorna o path do webhook de notificação do PagBank.
+// Permite que o use case construa a notification_url correta por provider,
+// sem expor o provider name na interface TransparentGateway.
+func (g *Gateway) WebhookPath() string {
+	return "/api/webhooks/pagbank"
+}
+
+// ProviderName retorna o identificador do provider gravado em payments.provider.
+// Usado para associar um payment ao seu gateway de origem e permitir polling correto.
+func (g *Gateway) ProviderName() string {
+	return "pagbank"
+}
+
 // isPagBankDebit retorna true para métodos de débito PagBank.
 func isPagBankDebit(method string) bool {
 	return strings.HasPrefix(strings.ToLower(method), "deb")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,7 +110,18 @@ func (uc *PurchaseSubscription) Execute(
 	// ── 4. Cria payment pendente vinculado à subscription ─────────────────
 	now := time.Now().UTC()
 	txID := fmt.Sprintf("sub_pending:%d:%d", sub.ID, now.UnixMilli())
-	notifURL := strings.TrimRight(uc.backendURL, "/") + "/webhooks/mp"
+
+	// Notification URL: usa o path correto para o provider em uso.
+	// Omitida em ambiente local (provider rejeita URLs não públicas).
+	notifURL := ""
+	if !strings.Contains(uc.backendURL, "localhost") && !strings.Contains(uc.backendURL, "127.0.0.1") {
+		type webhookPather interface{ WebhookPath() string }
+		webhookPath := "/api/webhooks/mp"
+		if wp, ok := gw.(webhookPather); ok {
+			webhookPath = wp.WebhookPath()
+		}
+		notifURL = strings.TrimRight(uc.backendURL, "/") + webhookPath
+	}
 
 	payment := &models.Payment{
 		BarbershopID:   in.BarbershopID,
@@ -138,6 +150,24 @@ func (uc *PurchaseSubscription) Execute(
 		return nil, fmt.Errorf("gateway error: %w", err)
 	}
 
+	// Grava provider e provider_payment_id para polling correto de status.
+	// provider_payment_id é o ID puro do provider sem prefixo "mp_pay:".
+	const mpPayPfx = "mp_pay:"
+	type providerNamer interface{ ProviderName() string }
+	if pn, ok := gw.(providerNamer); ok {
+		name := pn.ProviderName()
+		payment.Provider = &name
+	}
+	rawID := ""
+	if result.ProviderPaymentID != "" {
+		rawID = strings.TrimPrefix(result.ProviderPaymentID, mpPayPfx)
+	} else if result.MPPaymentID != 0 {
+		rawID = strconv.FormatInt(result.MPPaymentID, 10)
+	}
+	if rawID != "" {
+		payment.ProviderPaymentID = &rawID
+	}
+
 	// ── 6. Resultado por status ───────────────────────────────────────────
 	switch result.Status {
 	case "approved":
@@ -161,9 +191,9 @@ func (uc *PurchaseSubscription) Execute(
 			Entity:       "subscription",
 			EntityID:     &sub.ID,
 			Metadata: map[string]any{
-				"plan_id":    plan.ID,
-				"client_id":  client.ID,
-				"via":        "card_immediate",
+				"plan_id":   plan.ID,
+				"client_id": client.ID,
+				"via":       "card_immediate",
 			},
 		})
 

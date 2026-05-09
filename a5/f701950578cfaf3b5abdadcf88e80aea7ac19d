@@ -1,0 +1,19 @@
+internal/http/middleware/auth.go
+  s_f944db7611507e::t_85a3662113192f 164-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "a5f701950578cfaf3b5abdadcf88e80aea7ac19d",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/http/handlers/mp_oauth_handler.go
+  s_f944db7611507e::t_b66025cd64a272 167-190,193-199
+internal/http/handlers/pagbank_oauth_handler.go
+  s_f944db7611507e::t_baa62c260f0347 185-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "fd350f8a55d93d1bc12b8222f101fe105d4834d4",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

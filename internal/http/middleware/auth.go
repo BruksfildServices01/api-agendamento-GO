@@ -161,32 +161,10 @@ func AuthMiddleware(cfg *config.Config, db *gorm.DB) gin.HandlerFunc {
 			shopSubscriptionExpiresAt = res.subscriptionExpiresAt
 		}
 
-		// Check subscription status (skip for billing and basic me endpoints).
-		if !skipSubscriptionCheck(c.Request.URL.Path) {
-			now := time.Now()
-			blocked := false
-
-			switch shopStatus {
-			case "inactive", "suspended", "pending_payment":
-				blocked = true
-			case "trial":
-				if shopTrialEndsAt != nil && now.After(*shopTrialEndsAt) {
-					blocked = true
-				}
-			case "active":
-				if shopSubscriptionExpiresAt != nil && now.After(*shopSubscriptionExpiresAt) {
-					blocked = true
-				}
-			}
-
-			if blocked {
-				c.AbortWithStatusJSON(http.StatusPaymentRequired, gin.H{
-					"error":  "subscription_required",
-					"status": shopStatus,
-				})
-				return
-			}
-		}
+		// Cobrança de plataforma desativada — acesso livre para todos os usuários.
+		_ = shopStatus
+		_ = shopTrialEndsAt
+		_ = shopSubscriptionExpiresAt
 
 		c.Set(ContextUserID, uint(userID))
 		c.Set(ContextBarbershopID, uint(barbershopID))

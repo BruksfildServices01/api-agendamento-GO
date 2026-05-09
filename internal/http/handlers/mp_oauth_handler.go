@@ -164,30 +164,39 @@ func (h *MPOAuthHandler) exchangeCode(ctx context.Context, code string) (*mpToke
 }
 
 func (h *MPOAuthHandler) saveTokens(barbershopID uint, accessToken, publicKey string) error {
-	var cfg models.BarbershopPaymentConfig
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		// Regra de provider exclusivo: desativa PagBank ao conectar Mercado Pago.
+		// Um barbeiro só pode ter um gateway ativo por vez.
+		tx.Exec(`
+			UPDATE barbershop_payment_providers
+			SET enabled = false, updated_at = NOW()
+			WHERE barbershop_id = ? AND provider != 'mercadopago'
+		`, barbershopID)
 
-	err := h.db.Where("barbershop_id = ?", barbershopID).First(&cfg).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		cfg = models.BarbershopPaymentConfig{
-			BarbershopID:         barbershopID,
-			DefaultRequirement:   "none",
-			PixExpirationMinutes: 15,
-			MPAccessToken:        accessToken,
-			MPPublicKey:          publicKey,
-			AcceptPix:            true,
+		var cfg models.BarbershopPaymentConfig
+		err := tx.Where("barbershop_id = ?", barbershopID).First(&cfg).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cfg = models.BarbershopPaymentConfig{
+				BarbershopID:         barbershopID,
+				DefaultRequirement:   "none",
+				PixExpirationMinutes: 15,
+				MPAccessToken:        accessToken,
+				MPPublicKey:          publicKey,
+				AcceptPix:            true,
+			}
+			return tx.Create(&cfg).Error
 		}
-		return h.db.Create(&cfg).Error
-	}
-	if err != nil {
-		return err
-	}
+		if err != nil {
+			return err
+		}
 
-	cfg.MPAccessToken = accessToken
-	if publicKey != "" {
-		cfg.MPPublicKey = publicKey
-	}
-	cfg.AcceptPix = true
-	return h.db.Save(&cfg).Error
+		cfg.MPAccessToken = accessToken
+		if publicKey != "" {
+			cfg.MPPublicKey = publicKey
+		}
+		cfg.AcceptPix = true
+		return tx.Save(&cfg).Error
+	})
 }
 
 // Status retorna se o OAuth MP está configurado para a barbearia.

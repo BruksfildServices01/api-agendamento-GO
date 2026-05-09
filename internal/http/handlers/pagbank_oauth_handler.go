@@ -182,16 +182,32 @@ func (h *PagBankOAuthHandler) saveProvider(barbershopID uint, accessToken string
 		env = "sandbox"
 	}
 
-	return h.db.Exec(`
-		INSERT INTO barbershop_payment_providers
-			(barbershop_id, provider, enabled, environment, credentials_encrypted, created_at, updated_at)
-		VALUES (?, 'pagbank', true, ?, ?, NOW(), NOW())
-		ON CONFLICT (barbershop_id, provider) DO UPDATE SET
-			credentials_encrypted = EXCLUDED.credentials_encrypted,
-			enabled               = true,
-			environment           = EXCLUDED.environment,
-			updated_at            = NOW()
-	`, barbershopID, env, encrypted).Error
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		// Regra de provider exclusivo: desativa Mercado Pago ao conectar PagBank.
+		// Um barbeiro só pode ter um gateway ativo por vez.
+		tx.Exec(`
+			UPDATE barbershop_payment_configs
+			SET mp_access_token = '', mp_public_key = '', updated_at = NOW()
+			WHERE barbershop_id = ?
+		`, barbershopID)
+
+		tx.Exec(`
+			UPDATE barbershop_payment_providers
+			SET enabled = false, updated_at = NOW()
+			WHERE barbershop_id = ? AND provider != 'pagbank'
+		`, barbershopID)
+
+		return tx.Exec(`
+			INSERT INTO barbershop_payment_providers
+				(barbershop_id, provider, enabled, environment, credentials_encrypted, created_at, updated_at)
+			VALUES (?, 'pagbank', true, ?, ?, NOW(), NOW())
+			ON CONFLICT (barbershop_id, provider) DO UPDATE SET
+				credentials_encrypted = EXCLUDED.credentials_encrypted,
+				enabled               = true,
+				environment           = EXCLUDED.environment,
+				updated_at            = NOW()
+		`, barbershopID, env, encrypted).Error
+	})
 }
 
 // Status retorna se o PagBank está conectado para a barbearia.

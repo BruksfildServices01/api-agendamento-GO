@@ -307,6 +307,15 @@ func RegisterRoutes(
 	rescheduleViaTicketUC := ucTicket.NewRescheduleViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher, cfg.AppURL)
 
 	// ======================================================
+	// GOOGLE CALENDAR CONFIG
+	// ======================================================
+	googleCalCfg := gcal.OAuthConfig{
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+		RedirectURL:  cfg.GoogleRedirectURL,
+	}
+
+	// ======================================================
 	// PUBLIC ORCHESTRATION USE CASES
 	// ======================================================
 	orchestratedCheckoutUC := ucPublic.NewOrchestratedCheckout(
@@ -319,6 +328,7 @@ func RegisterRoutes(
 		apptNotifier,
 		cfg.AppURL,
 		getPublicServiceSuggestionUC,
+		googleCalCfg,
 	)
 
 	// ======================================================
@@ -472,12 +482,6 @@ func RegisterRoutes(
 		cfg.AppURL,
 		cfg.JWTSecret,
 	)
-
-	googleCalCfg := gcal.OAuthConfig{
-		ClientID:     cfg.GoogleClientID,
-		ClientSecret: cfg.GoogleClientSecret,
-		RedirectURL:  cfg.GoogleRedirectURL,
-	}
 
 	appointmentHandler := handlers.NewAppointmentHandler(
 		createAppointmentUC,

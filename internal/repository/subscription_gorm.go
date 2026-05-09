@@ -859,10 +859,29 @@ func (r *SubscriptionGormRepository) CountCategoriesByIDs(
 }
 
 func (r *SubscriptionGormRepository) ExpireSubscriptions(ctx context.Context) (int64, error) {
-	result := r.db.WithContext(ctx).Exec(
+	// Expira subscriptions ativas cujo período terminou.
+	r1 := r.db.WithContext(ctx).Exec(
 		`UPDATE subscriptions
 		 SET status = 'expired', cuts_reserved_in_period = 0
 		 WHERE status = 'active' AND current_period_end < NOW()`,
 	)
-	return result.RowsAffected, result.Error
+	if r1.Error != nil {
+		return 0, r1.Error
+	}
+
+	// Expira subscriptions travadas em pending_payment por mais de 24h.
+	// Ocorre quando o cartão é rejeitado ou o gateway falha após criar a subscription.
+	// Sem essa limpeza, o cliente ficaria permanentemente bloqueado de comprar nova assinatura
+	// pela constraint uq_subscriptions_one_pending_per_client_shop.
+	r2 := r.db.WithContext(ctx).Exec(
+		`UPDATE subscriptions
+		 SET status = 'expired'
+		 WHERE status = 'pending_payment'
+		   AND created_at < NOW() - INTERVAL '24 hours'`,
+	)
+	if r2.Error != nil {
+		return r1.RowsAffected, r2.Error
+	}
+
+	return r1.RowsAffected + r2.RowsAffected, nil
 }

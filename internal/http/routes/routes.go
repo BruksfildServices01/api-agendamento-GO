@@ -19,6 +19,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/notification"
 	"github.com/BruksfildServices01/barber-scheduler/internal/integration/payment/mercadopago"
 	paymentinfra "github.com/BruksfildServices01/barber-scheduler/internal/integration/payment"
+	gcal "github.com/BruksfildServices01/barber-scheduler/internal/integration/calendar"
 	infraRepo "github.com/BruksfildServices01/barber-scheduler/internal/repository"
 	"github.com/BruksfildServices01/barber-scheduler/internal/storage"
 	"github.com/BruksfildServices01/barber-scheduler/internal/jobs"
@@ -472,6 +473,12 @@ func RegisterRoutes(
 		cfg.JWTSecret,
 	)
 
+	googleCalCfg := gcal.OAuthConfig{
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+		RedirectURL:  cfg.GoogleRedirectURL,
+	}
+
 	appointmentHandler := handlers.NewAppointmentHandler(
 		createAppointmentUC,
 		completeAppointmentUC,
@@ -479,6 +486,8 @@ func RegisterRoutes(
 		markNoShowUC,
 		listByDateUC,
 		listByMonthUC,
+		db,
+		googleCalCfg,
 	)
 
 	internalAppointmentHandler := handlers.NewInternalAppointmentHandler(
@@ -677,6 +686,13 @@ func RegisterRoutes(
 	api.GET("/pagbank/oauth/callback",             pagbankOAuthHandler.Callback)
 	// Webhook de pagamento PagBank
 	api.POST("/webhooks/pagbank",                  pagbankWebhookHandler.Handle)
+
+	// Google Calendar OAuth
+	googleOAuthHandler := handlers.NewGoogleOAuthHandler(db, cfg)
+	secured.GET("/me/google/oauth/start",  googleOAuthHandler.Start)
+	secured.GET("/me/google/oauth/status", googleOAuthHandler.Status)
+	secured.DELETE("/me/google/oauth",     googleOAuthHandler.Disconnect)
+	api.GET("/google/oauth/callback",      googleOAuthHandler.Callback)
 
 	secured.GET("/me/whatsapp/status",          whatsappHandler.Status)
 	secured.POST("/me/whatsapp/connect",        whatsappHandler.Connect)

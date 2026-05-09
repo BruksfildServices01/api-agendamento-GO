@@ -106,6 +106,13 @@ type Config struct {
 	PagBankSandbox bool
 
 	// =========================
+	// GOOGLE CALENDAR
+	// =========================
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
+
+	// =========================
 	// PAYMENT CREDENTIALS ENCRYPTION
 	// =========================
 	// Chave AES-256 para criptografar credentials_encrypted em barbershop_payment_providers.
@@ -177,6 +184,10 @@ func Load() *Config {
 		PagBankClientID:     getEnv("PAGBANK_CLIENT_ID", ""),
 		PagBankClientSecret: getEnv("PAGBANK_CLIENT_SECRET", ""),
 		PagBankSandbox:      getEnv("PAGBANK_SANDBOX", "false") == "true",
+
+		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
+		GoogleRedirectURL:  getEnv("GOOGLE_REDIRECT_URL", ""),
 
 		PaymentCredentialsEncryptionKey: getEnv("PAYMENT_CREDENTIALS_ENCRYPTION_KEY", ""),
 	}

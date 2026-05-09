@@ -1,0 +1,24 @@
+internal/usecase/public/orchestrated_checkout.go
+  s_f944db7611507e::t_587d2c551bbbf9 15
+  s_f944db7611507e::t_1ae590fa1d9ae5 33,46,58
+  s_f944db7611507e::t_fbcbe791398af9 104-106
+internal/http/routes/routes.go
+  s_f944db7611507e::t_7e4255a9ae3247 331
+  s_f944db7611507e::t_2b65674919ab40 310-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "1e95566d4bb5096edda6d977e648691b36ae9224",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

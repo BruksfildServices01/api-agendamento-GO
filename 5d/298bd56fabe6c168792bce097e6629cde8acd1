@@ -1,0 +1,39 @@
+internal/config/config.go
+  s_f944db7611507e::t_4674e4c7fadd73 109-114
+  s_f944db7611507e::t_45061a580b9bb7 188-191
+internal/integration/calendar/google_calendar.go
+  s_f944db7611507e::t_19dd58585bcbd8 1-211
+internal/models/barber_google_token.go
+  s_f944db7611507e::t_cdb6fbbf7e5daf 1-17
+internal/integration/calendar/appointment_sync.go
+  s_f944db7611507e::t_aba520b0260683 1-127
+internal/http/routes/routes.go
+  s_f944db7611507e::t_200e1f65def5a4 476-481,489-490
+  s_f944db7611507e::t_da049433dd4029 690-696
+  s_f944db7611507e::t_92a26b2e543a4b 22
+internal/migrations/016_barber_google_tokens.sql
+  s_f944db7611507e::t_30dae45462b806 1-29
+internal/http/handlers/google_oauth_handler.go
+  s_f944db7611507e::t_710ef40b1997ad 1-205
+internal/http/handlers/appointment_handler.go
+  s_f944db7611507e::t_7335198ce910dc 33-34
+  s_f944db7611507e::t_a7ef7b1c4f8746 134-138
+  s_f944db7611507e::t_46b200c63200dd 68-69,78-79
+  s_f944db7611507e::t_4f09fa55ca4958 10,14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "5d298bd56fabe6c168792bce097e6629cde8acd1",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

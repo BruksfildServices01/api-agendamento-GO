@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
+	gcal "github.com/BruksfildServices01/barber-scheduler/internal/integration/calendar"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
@@ -28,6 +30,8 @@ type AppointmentHandler struct {
 	listByDate  *appointment.ListAppointmentsByDate
 	listByMonth *appointment.ListAppointmentsByMonth
 	noShow      *appointment.MarkAppointmentNoShow
+	db          *gorm.DB
+	googleCfg   gcal.OAuthConfig
 }
 
 type CompleteAppointmentItemRequest struct {
@@ -61,6 +65,8 @@ func NewAppointmentHandler(
 	noShow *appointment.MarkAppointmentNoShow,
 	listByDate *appointment.ListAppointmentsByDate,
 	listByMonth *appointment.ListAppointmentsByMonth,
+	db *gorm.DB,
+	googleCfg gcal.OAuthConfig,
 ) *AppointmentHandler {
 	return &AppointmentHandler{
 		createUC:    create,
@@ -69,6 +75,8 @@ func NewAppointmentHandler(
 		noShow:      noShow,
 		listByDate:  listByDate,
 		listByMonth: listByMonth,
+		db:          db,
+		googleCfg:   googleCfg,
 	}
 }
 
@@ -121,6 +129,11 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 	if err != nil {
 		mapCreateErrors(c, err)
 		return
+	}
+
+	// Sincroniza com Google Calendar do barbeiro de forma assíncrona (best-effort).
+	if h.db != nil {
+		gcal.SyncAppointmentToGoogle(h.db, h.googleCfg, barberID, barbershopID, ap)
 	}
 
 	c.JSON(http.StatusCreated, ap)

@@ -1,0 +1,54 @@
+internal/usecase/appointment/get_availability_test.go
+  s_f944db7611507e::t_b54695ffc650a9 220-384
+internal/usecase/appointment/create_private.go
+  s_f944db7611507e::t_4d321aff485951 128,130-131,135,140,144-145,151-153
+internal/usecase/appointment/complete.go
+  s_f944db7611507e::t_e565bca12592f2 351-358,364
+internal/usecase/payment/create_transparent_payment.go
+  s_f944db7611507e::t_c5adc78620ca7a 105,107-114,119-126,131-134
+internal/http/routes/routes.go
+  s_f944db7611507e::t_fd986d3f62be92 211
+internal/http/handlers/appointment_handler.go
+  s_f944db7611507e::t_dfd191ba5fd07f 164-176
+internal/http/handlers/google_oauth_handler.go
+  s_f944db7611507e::t_574a4667713067 5-8,13-14
+  s_f944db7611507e::t_6022098702920a 48-87,97-100,119,125,128
+txt/test_flows.sh
+  s_f944db7611507e::t_cfc93178979cef 3-12,16-17,19-20,31-32,34,47,57-67,74,79,86,93,101,109,116,122-134,137-138,147,151-152,154-157,166,168-169,173,177,179-181,188,191,196,200-202,210-218,223,225,227,229,236-239,249,251-252,256,258,260-263,265-268,270-272,276,278,283,285,287,290,292,297,299,304,308,313,315,319-320,322-323,325,329,331-346,350,352,354,357,360-361,365,370,372,374-379,381,386,388,390-392,394,399,401,403-404,406-410,412,417,419-422,424-425,428-430,432,437,439,443-444,446-449,451-452,457-458,460-463,466,470-472,474,478,486-527,529,535-543,545,547,549-551,554,561-584,586-587,589,592-596,599,603,606,609-611,614,617-638,647-648
+internal/usecase/paymentconfig/get_payment_policies.go
+  s_f944db7611507e::t_fa5bd663e29d97 13,18,20
+  s_f944db7611507e::t_b7862ff35287f7 6-7
+  s_f944db7611507e::t_231267ea8e06df 54-63,70
+  s_f944db7611507e::t_24ce9be8dbb6c7 29-32
+internal/repository/appointment_gorm.go
+  s_f944db7611507e::t_948bf747d9cefb 475-480,487,501
+internal/http/handlers/public_handler.go
+  s_f944db7611507e::t_12ade811f8cbf8 247-257
+internal/usecase/appointment/cancel.go
+  s_f944db7611507e::t_b7a37ffff606eb 98
+internal/usecase/appointment/create_private_test.go
+  s_f944db7611507e::t_cf271ac7969c00 287-403
+internal/migrations/schema.sql
+  s_f944db7611507e::t_1b7acafe2a7c9e 934-969
+internal/usecase/appointment/working_hours_resolver.go
+  s_f944db7611507e::t_b2d09a8ec03a1d 1-100
+internal/usecase/appointment/get_availability.go
+  s_f944db7611507e::t_c26c5e16a7a623 128-131,133-138,141
+  s_f944db7611507e::t_811223e88d6a58 65-68,72,76-77,79,82-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.5",
+  "base_commit_sha": "c4a941a1f3ae0ce3a8bcf220dc1dbd367f9fcde0",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

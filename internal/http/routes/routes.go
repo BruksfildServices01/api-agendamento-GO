@@ -208,7 +208,7 @@ func RegisterRoutes(
 	// ======================================================
 	// PAYMENT CONFIG
 	// ======================================================
-	getPaymentPoliciesUC := paymentconfig.NewGetPaymentPolicies(paymentConfigRepo)
+	getPaymentPoliciesUC := paymentconfig.NewGetPaymentPolicies(paymentConfigRepo, db)
 	updatePaymentPoliciesUC := paymentconfig.NewUpdatePaymentPolicies(paymentConfigRepo)
 	resolveBookingPaymentPolicyUC := paymentconfig.NewResolveBookingPaymentPolicy(paymentConfigRepo)
 

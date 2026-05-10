@@ -95,7 +95,7 @@ func (uc *CancelAppointment) Execute(
 	uc.audit.Dispatch(audit.Event{
 		BarbershopID: barbershopID,
 		UserID:       &barberID,
-		Action:       "appointment_canceled",
+		Action:       "appointment_cancelled",
 		Entity:       "appointment",
 		EntityID:     &ap.ID,
 	})

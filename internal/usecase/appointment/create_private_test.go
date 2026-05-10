@@ -284,4 +284,121 @@ func TestCreatePrivateAppointment(t *testing.T) {
 			t.Errorf("esperado invalid_date_or_time, obtido: %v", err)
 		}
 	})
+
+	// ── Testes de schedule override ───────────────────────────────────────────
+
+	t.Run("override abre dia fechado: criação aceita horário válido", func(t *testing.T) {
+		// Working hours para o weekday: inativo (folga semanal)
+		whInactive := &models.WorkingHours{Active: false}
+		// Override abre o dia específico 10:00-17:00
+		override := &models.ScheduleOverride{Closed: false, StartTime: "10:00", EndTime: "17:00"}
+
+		repo := &mockRepo{
+			shop:         defaultShop(),
+			product:      defaultProduct(),
+			workingHours: whInactive,
+			override:     override,
+			client:       zeroClient(),
+		}
+		uc := buildCreateUC(repo, nil, false)
+
+		// 10:00 com serviço 60min → termina 11:00, dentro do override 10:00-17:00
+		ap, err := uc.Execute(ctx, defaultInput(date, "10:00"))
+		if err != nil {
+			t.Errorf("override deve permitir horário 10:00, obtido erro: %v", err)
+		}
+		if ap == nil {
+			t.Error("appointment não deve ser nil")
+		}
+	})
+
+	t.Run("override.Closed bloqueia horário que working hours permitiria", func(t *testing.T) {
+		// Working hours ativo, mas override fecha o dia
+		closedOverride := &models.ScheduleOverride{Closed: true}
+
+		repo := &mockRepo{
+			shop:         defaultShop(),
+			product:      defaultProduct(),
+			workingHours: defaultWorkingHours(),
+			override:     closedOverride,
+			client:       zeroClient(),
+		}
+		uc := buildCreateUC(repo, nil, false)
+
+		_, err := uc.Execute(ctx, defaultInput(date, hr))
+		if !apperr.IsBusiness(err, "outside_working_hours") {
+			t.Errorf("override.Closed deve retornar outside_working_hours, obtido: %v", err)
+		}
+	})
+
+	t.Run("override expande horário: slot fora do regular mas dentro do override é aceito", func(t *testing.T) {
+		// Regular: 09:00-13:00; Override: 09:00-18:00
+		whShort := &models.WorkingHours{Active: true, StartTime: "09:00", EndTime: "13:00"}
+		override := &models.ScheduleOverride{Closed: false, StartTime: "09:00", EndTime: "18:00"}
+
+		repo := &mockRepo{
+			shop:         defaultShop(),
+			product:      defaultProduct(), // 60 min
+			workingHours: whShort,
+			override:     override,
+			client:       zeroClient(),
+		}
+		uc := buildCreateUC(repo, nil, false)
+
+		// 15:00 com 60min = 16:00 — fora do regular (13:00) mas dentro do override (18:00)
+		ap, err := uc.Execute(ctx, defaultInput(date, "15:00"))
+		if err != nil {
+			t.Errorf("slot dentro do override deve ser aceito, obtido erro: %v", err)
+		}
+		if ap == nil {
+			t.Error("appointment não deve ser nil")
+		}
+	})
+
+	t.Run("override expande horário: slot fora do override é rejeitado", func(t *testing.T) {
+		// Override: 10:00-15:00; Slot 16:00 deve ser rejeitado
+		override := &models.ScheduleOverride{Closed: false, StartTime: "10:00", EndTime: "15:00"}
+
+		repo := &mockRepo{
+			shop:         defaultShop(),
+			product:      defaultProduct(), // 60 min
+			workingHours: defaultWorkingHours(),
+			override:     override,
+			client:       zeroClient(),
+		}
+		uc := buildCreateUC(repo, nil, false)
+
+		// 14:30 com 60min = 15:30 — termina após o override (15:00)
+		_, err := uc.Execute(ctx, defaultInput(date, "14:30"))
+		if !apperr.IsBusiness(err, "outside_working_hours") {
+			t.Errorf("slot além do override deve retornar outside_working_hours, obtido: %v", err)
+		}
+	})
+
+	t.Run("override herda almoço: horário de almoço é rejeitado mesmo com override de horário", func(t *testing.T) {
+		// Working hours com almoço; override só muda o StartTime/EndTime
+		whWithLunch := &models.WorkingHours{
+			Active:     true,
+			StartTime:  "09:00",
+			EndTime:    "18:00",
+			LunchStart: "12:00",
+			LunchEnd:   "13:00",
+		}
+		override := &models.ScheduleOverride{Closed: false, StartTime: "10:00", EndTime: "18:00"}
+
+		repo := &mockRepo{
+			shop:         defaultShop(),
+			product:      defaultProduct(), // 60 min
+			workingHours: whWithLunch,
+			override:     override,
+			client:       zeroClient(),
+		}
+		uc := buildCreateUC(repo, nil, false)
+
+		// 12:00 com 60min → termina 13:00, coincide com almoço herdado 12:00-13:00
+		_, err := uc.Execute(ctx, defaultInput(date, "12:00"))
+		if !apperr.IsBusiness(err, "outside_working_hours") {
+			t.Errorf("almoço herdado deve rejeitar 12:00, obtido: %v", err)
+		}
+	})
 }

@@ -161,6 +161,19 @@ func (h *AppointmentHandler) Complete(c *gin.Context) {
 		}
 	}
 
+	// Valida payment_method quando informado — rejeita valores livres que corrompem financeiro.
+	validPaymentMethods := map[string]bool{
+		"":             true, // vazio é permitido (assinatura cobre ou sem cobrança)
+		"cash":         true,
+		"card":         true,
+		"pix":          true,
+		"subscription": true,
+	}
+	if !validPaymentMethods[req.PaymentMethod] {
+		httperr.BadRequest(c, "invalid_payment_method", "Forma de pagamento inválida. Use: cash, card, pix ou subscription.")
+		return
+	}
+
 	additionalItems := make([]appointment.ClosureItemInput, len(req.AdditionalItems))
 	for i, item := range req.AdditionalItems {
 		additionalItems[i] = appointment.ClosureItemInput{

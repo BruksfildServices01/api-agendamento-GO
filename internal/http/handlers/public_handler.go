@@ -244,7 +244,17 @@ func (h *PublicHandler) GetInfo(c *gin.Context) {
 	var paymentCfg models.BarbershopPaymentConfig
 	var acceptPix, acceptCredit, acceptDebit, paymentEnabled bool
 	if h.db.WithContext(c.Request.Context()).Where("barbershop_id = ?", shop.ID).First(&paymentCfg).Error == nil {
-		paymentEnabled = paymentCfg.MPPublicKey != "" && paymentCfg.MPAccessToken != ""
+		// MP legado: credenciais na tabela antiga
+		mpLegacyEnabled := paymentCfg.MPPublicKey != "" && paymentCfg.MPAccessToken != ""
+
+		// Provider moderno: qualquer entry ativa em barbershop_payment_providers
+		var providerCount int64
+		h.db.WithContext(c.Request.Context()).
+			Table("barbershop_payment_providers").
+			Where("barbershop_id = ? AND enabled = true AND credentials_encrypted IS NOT NULL", shop.ID).
+			Count(&providerCount)
+
+		paymentEnabled = mpLegacyEnabled || providerCount > 0
 		acceptPix = paymentCfg.AcceptPix && paymentEnabled
 		acceptCredit = paymentCfg.AcceptCredit && paymentEnabled
 		acceptDebit = paymentCfg.AcceptDebit && paymentEnabled

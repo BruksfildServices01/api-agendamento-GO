@@ -125,32 +125,32 @@ func (uc *CreatePrivateAppointment) Execute(
 	end := start.Add(time.Duration(product.DurationMin) * time.Minute)
 
 	// --------------------------------------------------
-	// 5) Horário de trabalho (timezone-safe)
+	// 5) Horário de trabalho (timezone-safe) + schedule override
 	// --------------------------------------------------
+	// resolveWorkingHours aplica as mesmas regras que GetAvailability usa,
+	// garantindo que criação e disponibilidade validem o mesmo expediente efetivo.
 	startLocal := start.In(loc)
 	endLocal := end.In(loc)
 
-	weekday := int(startLocal.Weekday())
-
-	wh, err := uc.repo.GetWorkingHours(ctx, in.BarbershopID, in.BarberID, weekday)
+	ewh, err := resolveWorkingHours(ctx, uc.repo, in.BarbershopID, in.BarberID, startLocal)
 	if err != nil {
 		return nil, err
 	}
 
-	if wh == nil || !wh.Active || wh.StartTime == "" || wh.EndTime == "" {
+	if ewh == nil {
 		return nil, apperr.ErrBusiness("outside_working_hours")
 	}
 
-	workStart := parseHM(wh.StartTime, startLocal, loc)
-	workEnd := parseHM(wh.EndTime, startLocal, loc)
+	workStart := parseHM(ewh.StartTime, startLocal, loc)
+	workEnd := parseHM(ewh.EndTime, startLocal, loc)
 
 	if startLocal.Before(workStart) || endLocal.After(workEnd) {
 		return nil, apperr.ErrBusiness("outside_working_hours")
 	}
 
-	if wh.LunchStart != "" && wh.LunchEnd != "" {
-		lunchStart := parseHM(wh.LunchStart, startLocal, loc)
-		lunchEnd := parseHM(wh.LunchEnd, startLocal, loc)
+	if ewh.LunchStart != "" && ewh.LunchEnd != "" {
+		lunchStart := parseHM(ewh.LunchStart, startLocal, loc)
+		lunchEnd := parseHM(ewh.LunchEnd, startLocal, loc)
 
 		if startLocal.Before(lunchEnd) && endLocal.After(lunchStart) {
 			return nil, apperr.ErrBusiness("outside_working_hours")

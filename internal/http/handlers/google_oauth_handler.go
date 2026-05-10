@@ -2,10 +2,16 @@ package handlers
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +45,46 @@ func NewGoogleOAuthHandler(db *gorm.DB, cfg *config.Config) *GoogleOAuthHandler 
 	}
 }
 
+// createGoogleOAuthState cria um state HMAC que carrega tanto barbershopID quanto userID.
+// Formato: base64url(barbershopID:userID:timestamp:HMAC_SHA256)
+func createGoogleOAuthState(barbershopID, userID uint, secret string) string {
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	data := fmt.Sprintf("%d:%d:%s", barbershopID, userID, ts)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(data))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	raw := fmt.Sprintf("%s:%s", data, sig)
+	return base64.URLEncoding.EncodeToString([]byte(raw))
+}
+
+// parseGoogleOAuthState valida e extrai barbershopID + userID do state.
+func parseGoogleOAuthState(state, secret string) (barbershopID, userID uint, err error) {
+	decoded, decErr := base64.URLEncoding.DecodeString(state)
+	if decErr != nil {
+		return 0, 0, errors.New("invalid state encoding")
+	}
+	// formato: barbershopID:userID:timestamp:sig
+	parts := strings.SplitN(string(decoded), ":", 4)
+	if len(parts) != 4 {
+		return 0, 0, errors.New("invalid state format")
+	}
+	bid, uid, ts, sig := parts[0], parts[1], parts[2], parts[3]
+	data := fmt.Sprintf("%s:%s:%s", bid, uid, ts)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(data))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(sig), []byte(expected)) {
+		return 0, 0, errors.New("invalid state signature")
+	}
+	timestamp, tsErr := strconv.ParseInt(ts, 10, 64)
+	if tsErr != nil || time.Now().Unix()-timestamp > 600 {
+		return 0, 0, errors.New("state expired")
+	}
+	b, _ := strconv.ParseUint(bid, 10, 64)
+	u, _ := strconv.ParseUint(uid, 10, 64)
+	return uint(b), uint(u), nil
+}
+
 // Start retorna a URL de autorização do Google.
 // GET /api/me/google/oauth/start
 func (h *GoogleOAuthHandler) Start(c *gin.Context) {
@@ -48,7 +94,10 @@ func (h *GoogleOAuthHandler) Start(c *gin.Context) {
 	}
 
 	barbershopID := c.MustGet(middleware.ContextBarbershopID).(uint)
-	state := createOAuthState(barbershopID, h.jwtSecret)
+	userID := c.MustGet(middleware.ContextUserID).(uint)
+	// State carrega barbershopID + userID para garantir que o callback
+	// salve o token no usuário correto, seja ele owner ou barber.
+	state := createGoogleOAuthState(barbershopID, userID, h.jwtSecret)
 	authURL := gcal.AuthURL(h.oauthCfg, state)
 
 	c.JSON(http.StatusOK, gin.H{"url": authURL})
@@ -67,17 +116,16 @@ func (h *GoogleOAuthHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	barbershopID, err := parseOAuthState(state, h.jwtSecret)
+	barbershopID, userID, err := parseGoogleOAuthState(state, h.jwtSecret)
 	if err != nil {
 		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?google_error=invalid_state")
 		return
 	}
 
-	// Encontra o user_id do owner/barber logado na barbearia
-	// (quem iniciou o OAuth é o usuário cujo barbershop_id e que fez o start)
+	// Valida que o usuário existe na barbearia indicada
 	var user models.User
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("barbershop_id = ? AND role = 'owner'", barbershopID).
+		Where("id = ? AND barbershop_id = ?", userID, barbershopID).
 		First(&user).Error; err != nil {
 		c.Redirect(http.StatusTemporaryRedirect, redirectBase+"?google_error=user_not_found")
 		return

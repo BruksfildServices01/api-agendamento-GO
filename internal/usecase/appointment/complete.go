@@ -348,12 +348,20 @@ func (uc *CompleteAppointment) Execute(
 	})
 
 	if ap.ClientID != nil {
+		// Usa o valor final efetivo do atendimento para totalspent do cliente.
+		// Se o barbeiro informou FinalAmountCents (desconto, troca de serviço, etc.),
+		// esse valor reflete a receita real — não o preço de tabela.
+		effectiveAmount := referenceAmount
+		if input.FinalAmountCents != nil && *input.FinalAmountCents >= 0 {
+			effectiveAmount = *input.FinalAmountCents
+		}
+
 		if err := uc.metrics.Execute(ctx, ucMetrics.UpdateClientMetricsInput{
 			BarbershopID: barbershopID,
 			ClientID:     *ap.ClientID,
 			EventType:    ucMetrics.EventAppointmentCompleted,
 			OccurredAt:   time.Now().UTC(),
-			Amount:       referenceAmount,
+			Amount:       effectiveAmount,
 		}); err != nil {
 			log.Printf("[CompleteAppointment] metrics update failed for client %d (barbershop %d): %v",
 				*ap.ClientID, barbershopID, err)

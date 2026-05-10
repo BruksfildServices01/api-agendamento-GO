@@ -472,13 +472,19 @@ func (r *AppointmentGormRepository) ListAppointmentsForDay(
 
 	var apps []models.Appointment
 
+	// Usa overlap real para capturar appointments que começaram antes do
+	// expediente mas terminam dentro dele (ex: encaixe criado internamente
+	// antes do horário de abertura). Filtro anterior usava start_time >= dayStart
+	// e perdia esses casos — AssertNoTimeConflict os detectava, causando rejeição
+	// de agendamentos que apareciam como disponíveis na tela.
+	//
 	// Exclui:
 	// - cancelled / no_show (slot liberado)
 	// - awaiting_payment cujo pagamento já expirou (PIX vencido mas job ainda não rodou)
 	err := r.db.WithContext(ctx).
 		Where(
 			`barbershop_id = ? AND barber_id = ?
-			 AND start_time >= ? AND start_time < ?
+			 AND start_time < ? AND end_time > ?
 			 AND status NOT IN ?
 			 AND NOT (
 			   status = 'awaiting_payment'
@@ -491,8 +497,8 @@ func (r *AppointmentGormRepository) ListAppointmentsForDay(
 			 )`,
 			barbershopID,
 			barberID,
-			start,
 			end,
+			start,
 			[]string{"cancelled", "no_show"},
 		).
 		Order("start_time ASC").

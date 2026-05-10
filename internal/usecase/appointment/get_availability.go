@@ -62,55 +62,25 @@ func (uc *GetAvailability) Execute(
 	loc := timezone.Location(shop.Timezone)
 	dateLocal := in.Date.In(loc)
 
-	// 3) Working hours do weekday LOCAL
-	weekday := int(dateLocal.Weekday())
-
-	wh, err := uc.repo.GetWorkingHours(ctx, in.BarbershopID, in.BarberID, weekday)
+	// 3) Expediente efetivo do dia: working hours + schedule override (se existir).
+	// resolveWorkingHours aplica as mesmas regras usadas em CreatePrivateAppointment,
+	// garantindo que disponibilidade e criação validem exatamente o mesmo expediente.
+	ewh, err := resolveWorkingHours(ctx, uc.repo, in.BarbershopID, in.BarberID, dateLocal)
 	if err != nil {
 		return nil, err
 	}
-
-	// 3b) Exceção de horário: data específica tem prioridade sobre dia-da-semana no mês.
-	override, err := uc.repo.GetScheduleOverride(
-		ctx,
-		in.BarbershopID,
-		in.BarberID,
-		dateLocal.Format("2006-01-02"),
-		weekday,
-		int(dateLocal.Month()),
-		dateLocal.Year(),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	if override != nil {
-		if override.Closed {
-			return []domain.TimeSlot{}, nil
-		}
-		if override.StartTime != "" && override.EndTime != "" {
-			// Cria um novo valor em vez de mutar o ponteiro retornado pelo repositório
-			// (que pode ser um objeto cacheado compartilhado).
-			wh = &models.WorkingHours{
-				Active:    true,
-				StartTime: override.StartTime,
-				EndTime:   override.EndTime,
-			}
-		}
-	}
-
-	if wh == nil || !wh.Active {
+	if ewh == nil {
 		return []domain.TimeSlot{}, nil
 	}
 
-	dayStart := parseHM(wh.StartTime, dateLocal, loc)
-	dayEnd := parseHM(wh.EndTime, dateLocal, loc)
+	dayStart := parseHM(ewh.StartTime, dateLocal, loc)
+	dayEnd := parseHM(ewh.EndTime, dateLocal, loc)
 
-	hasLunch := wh.LunchStart != "" && wh.LunchEnd != ""
+	hasLunch := ewh.LunchStart != "" && ewh.LunchEnd != ""
 	var lunchStart, lunchEnd time.Time
 	if hasLunch {
-		lunchStart = parseHM(wh.LunchStart, dateLocal, loc)
-		lunchEnd = parseHM(wh.LunchEnd, dateLocal, loc)
+		lunchStart = parseHM(ewh.LunchStart, dateLocal, loc)
+		lunchEnd = parseHM(ewh.LunchEnd, dateLocal, loc)
 	}
 
 	// 4) Buscar appointments no range do dia
@@ -155,13 +125,20 @@ func (uc *GetAvailability) Execute(
 			apIdx++
 		}
 
+		// Verifica todos os appointments a partir de apIdx enquanto houver sobreposição
+		// possível com o slot. Verificar apenas appointments[apIdx] era insuficiente:
+		// quando a tolerância cria uma janela entre slotStart e effectiveStart,
+		// o primeiro appointment poderia não conflitar mas um seguinte ainda pode.
 		conflict := false
-		if apIdx < len(appointments) {
-			ap := appointments[apIdx]
-			// Com tolerância: o slot só conflita se a sobreposição exceder o limite configurado.
-			effectiveStart, effectiveEnd := applyTolerance(slotStart, slotEnd, shop.ScheduleToleranceMinutes)
+		effectiveStart, effectiveEnd := applyTolerance(slotStart, slotEnd, shop.ScheduleToleranceMinutes)
+		for i := apIdx; i < len(appointments); i++ {
+			ap := appointments[i]
+			if !ap.StartTime.Before(effectiveEnd) {
+				break // todos os appointments seguintes começam após o fim efetivo do slot
+			}
 			if effectiveStart.Before(ap.EndTime) && effectiveEnd.After(ap.StartTime) {
 				conflict = true
+				break
 			}
 		}
 

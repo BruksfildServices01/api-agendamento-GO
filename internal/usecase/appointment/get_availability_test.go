@@ -217,4 +217,169 @@ func TestGetAvailability(t *testing.T) {
 			t.Errorf("esperado 18 slots para serviço de 30min, obtido %d", len(slots))
 		}
 	})
+
+	// ── Novos testes: override e correções de conflito ────────────────────────
+
+	t.Run("override expande dia normalmente fechado → mostra slots", func(t *testing.T) {
+		// Working hours para o weekday: inativo (folga semanal)
+		whInactive := &models.WorkingHours{Active: false}
+		// Override abre o dia específico
+		override := &models.ScheduleOverride{Closed: false, StartTime: "10:00", EndTime: "17:00"}
+
+		repo := &mockRepo{shop: shop, product: product60min, workingHours: whInactive, override: override}
+		uc := NewGetAvailability(repo)
+
+		slots, err := uc.Execute(ctx, input(baseDate, 1))
+		if err != nil {
+			t.Fatalf("inesperado erro: %v", err)
+		}
+		// 10:00-17:00 com 60min → slots 10, 11, 12, 13, 14, 15, 16 = 7 slots
+		if len(slots) != 7 {
+			t.Errorf("override expande fechado: esperado 7 slots, obtido %d: %v", len(slots), slots)
+		}
+		if len(slots) > 0 && slots[0].Start != "10:00" {
+			t.Errorf("primeiro slot esperado 10:00, obtido %s", slots[0].Start)
+		}
+	})
+
+	t.Run("override herda almoço do working hours original", func(t *testing.T) {
+		// Working hours com almoço; override muda apenas o horário (sem almoço próprio)
+		whWithLunch := &models.WorkingHours{
+			Active:     true,
+			StartTime:  "09:00",
+			EndTime:    "18:00",
+			LunchStart: "12:00",
+			LunchEnd:   "13:00",
+		}
+		// Override muda o horário mas deve herdar o almoço
+		override := &models.ScheduleOverride{Closed: false, StartTime: "10:00", EndTime: "18:00"}
+
+		repo := &mockRepo{shop: shop, product: product60min, workingHours: whWithLunch, override: override}
+		uc := NewGetAvailability(repo)
+
+		slots, err := uc.Execute(ctx, input(baseDate, 1))
+		if err != nil {
+			t.Fatalf("inesperado erro: %v", err)
+		}
+
+		// Override 10:00-18:00 com almoço herdado 12:00-13:00 → slots 10,11 + 13,14,15,16,17 = 7
+		if len(slots) != 7 {
+			t.Errorf("override com almoço herdado: esperado 7 slots, obtido %d: %v", len(slots), slots)
+		}
+		for _, s := range slots {
+			if s.Start == "12:00" {
+				t.Error("slot 12:00 não deve aparecer — almoço herdado do working hours original")
+			}
+		}
+	})
+
+	t.Run("appointment que começa antes do expediente e termina dentro bloqueia slot", func(t *testing.T) {
+		// Cenário: encaixe interno criado às 08:30-09:30 (antes da abertura)
+		// Após correção de ListAppointmentsForDay com overlap real, este appointment
+		// deve ser incluído na lista e bloquear o slot 09:00-10:00.
+		apBefore := time.Date(2030, 1, 7, 8, 30, 0, 0, loc) // 08:30 — antes do expediente
+		apEnd := time.Date(2030, 1, 7, 9, 30, 0, 0, loc)     // 09:30 — dentro do expediente
+		earlyAppointment := []models.Appointment{
+			{StartTime: apBefore, EndTime: apEnd, Status: models.AppointmentStatusScheduled},
+		}
+
+		repo := &mockRepo{
+			shop:         shop,
+			product:      product60min,
+			workingHours: wh9to18,
+			appointments: earlyAppointment,
+		}
+		uc := NewGetAvailability(repo)
+
+		slots, err := uc.Execute(ctx, input(baseDate, 1))
+		if err != nil {
+			t.Fatalf("inesperado erro: %v", err)
+		}
+
+		// Slot 09:00-10:00 deve estar bloqueado (appointment 08:30-09:30 se sobrepõe)
+		for _, s := range slots {
+			if s.Start == "09:00" {
+				t.Error("slot 09:00 não deve aparecer — appointment 08:30-09:30 se sobrepõe")
+			}
+		}
+		// Slot 10:00-11:00 deve estar disponível (fora do overlap do appointment)
+		found10 := false
+		for _, s := range slots {
+			if s.Start == "10:00" {
+				found10 = true
+			}
+		}
+		if !found10 {
+			t.Error("slot 10:00 deve estar disponível — appointment 08:30-09:30 não conflita")
+		}
+	})
+
+	t.Run("conflito parcial no meio do intervalo de 60min é detectado", func(t *testing.T) {
+		// Appointment de 30min às 10:30 conflita com slot 10:00-11:00 (meio do intervalo)
+		apMid := time.Date(2030, 1, 7, 10, 30, 0, 0, loc)
+		apMidEnd := time.Date(2030, 1, 7, 11, 0, 0, 0, loc)
+		midAppointment := []models.Appointment{
+			{StartTime: apMid, EndTime: apMidEnd, Status: models.AppointmentStatusScheduled},
+		}
+
+		repo := &mockRepo{
+			shop:         shop,
+			product:      product60min,
+			workingHours: wh9to18,
+			appointments: midAppointment,
+		}
+		uc := NewGetAvailability(repo)
+
+		slots, err := uc.Execute(ctx, input(baseDate, 1))
+		if err != nil {
+			t.Fatalf("inesperado erro: %v", err)
+		}
+
+		// Slot 10:00-11:00 deve estar bloqueado (10:30-11:00 conflita com o slot)
+		for _, s := range slots {
+			if s.Start == "10:00" {
+				t.Error("slot 10:00 não deve aparecer — appointment 10:30-11:00 conflita")
+			}
+		}
+	})
+
+	t.Run("dois appointments contíguos com tolerância: apIdx loop verifica ambos", func(t *testing.T) {
+		// Com tolerância de 15min, pode existir A(09:50-10:05) e B(10:00-11:00).
+		// O apIdx original verificava apenas appointments[apIdx] e podia perder B.
+		shopTol := &models.Barbershop{
+			ID: 1, Timezone: "America/Sao_Paulo",
+			MinAdvanceMinutes: 0, ScheduleToleranceMinutes: 15,
+		}
+		apA := time.Date(2030, 1, 7, 9, 50, 0, 0, loc)
+		apAEnd := time.Date(2030, 1, 7, 10, 5, 0, 0, loc)
+		apB := time.Date(2030, 1, 7, 10, 0, 0, 0, loc)
+		apBEnd := time.Date(2030, 1, 7, 11, 0, 0, 0, loc)
+		twoAppointments := []models.Appointment{
+			{StartTime: apA, EndTime: apAEnd, Status: models.AppointmentStatusScheduled},
+			{StartTime: apB, EndTime: apBEnd, Status: models.AppointmentStatusScheduled},
+		}
+
+		repo := &mockRepo{
+			shop:         shopTol,
+			product:      product60min,
+			workingHours: wh9to18,
+			appointments: twoAppointments,
+		}
+		uc := NewGetAvailability(repo)
+
+		slots, err := uc.Execute(ctx, input(baseDate, 1))
+		if err != nil {
+			t.Fatalf("inesperado erro: %v", err)
+		}
+
+		// Slot 10:00-11:00 (effectiveStart=10:15, effectiveEnd=10:45):
+		// A(09:50-10:05): 10:05 ≤ effectiveStart(10:15) → não conflita mas não avança apIdx
+		//   pois A.EndTime(10:05) > slotStart(10:00)
+		// B(10:00-11:00): deve ser verificado e detectado como conflito
+		for _, s := range slots {
+			if s.Start == "10:00" {
+				t.Error("slot 10:00 não deve aparecer — B(10:00-11:00) conflita mesmo com A não conflitando")
+			}
+		}
+	})
 }

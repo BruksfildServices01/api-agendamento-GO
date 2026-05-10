@@ -102,21 +102,36 @@ func (uc *CreateTransparentPayment) Execute(
 	}
 
 	// ==================================================
-	// 3) Idempotência: já existe um pagamento MP criado
+	// 3) Idempotência: já existe um pagamento criado por qualquer provider
 	// ==================================================
-	if payment.TxID != nil && strings.HasPrefix(*payment.TxID, mpPayPrefix) {
-		mpPaymentID, _ := strconv.ParseInt(strings.TrimPrefix(*payment.TxID, mpPayPrefix), 10, 64)
+	// Detecta pagamento já processado por dois caminhos:
+	//   a) provider_payment_id preenchido — qualquer provider (MP novo, PagBank, etc.)
+	//   b) TxID com prefixo "mp_pay:" — legado MP para payments antigos sem provider_payment_id
+	// Isso evita dupla cobrança em retries, timeouts ou duplo clique no mobile.
+	alreadyProcessed := (payment.ProviderPaymentID != nil && *payment.ProviderPaymentID != "") ||
+		(payment.TxID != nil && strings.HasPrefix(*payment.TxID, mpPayPrefix))
+
+	if alreadyProcessed {
 		qrCode := ""
 		if payment.QRCode != nil {
 			qrCode = *payment.QRCode
+		}
+		providerPaymentID := ""
+		if payment.ProviderPaymentID != nil {
+			providerPaymentID = *payment.ProviderPaymentID
+		}
+		var mpPaymentID int64
+		if payment.TxID != nil && strings.HasPrefix(*payment.TxID, mpPayPrefix) {
+			mpPaymentID, _ = strconv.ParseInt(strings.TrimPrefix(*payment.TxID, mpPayPrefix), 10, 64)
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, nil, err
 		}
 		return payment, &domain.TransparentPaymentResult{
-			MPPaymentID:  mpPaymentID,
-			Status:       string(payment.Status),
-			QRCode:       qrCode,
+			ProviderPaymentID: providerPaymentID,
+			MPPaymentID:       mpPaymentID,
+			Status:            string(payment.Status),
+			QRCode:            qrCode,
 		}, nil
 	}
 

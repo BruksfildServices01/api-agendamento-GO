@@ -21,6 +21,7 @@ import (
 	gcal "github.com/BruksfildServices01/barber-scheduler/internal/integration/calendar"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
+	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 )
 
 // GoogleOAuthHandler implementa o fluxo OAuth do Google Calendar.
@@ -30,9 +31,10 @@ type GoogleOAuthHandler struct {
 	oauthCfg  gcal.OAuthConfig
 	appURL    string
 	jwtSecret string
+	cipher    *crypt.Cipher // nil em dev sem PAYMENT_CREDENTIALS_ENCRYPTION_KEY
 }
 
-func NewGoogleOAuthHandler(db *gorm.DB, cfg *config.Config) *GoogleOAuthHandler {
+func NewGoogleOAuthHandler(db *gorm.DB, cfg *config.Config, cipher *crypt.Cipher) *GoogleOAuthHandler {
 	return &GoogleOAuthHandler{
 		db: db,
 		oauthCfg: gcal.OAuthConfig{
@@ -42,6 +44,7 @@ func NewGoogleOAuthHandler(db *gorm.DB, cfg *config.Config) *GoogleOAuthHandler 
 		},
 		appURL:    cfg.AppURL,
 		jwtSecret: cfg.JWTSecret,
+		cipher:    cipher,
 	}
 }
 
@@ -196,16 +199,27 @@ func (h *GoogleOAuthHandler) saveToken(
 	barbershopID uint,
 	token *gcal.TokenResult,
 ) error {
+	// Criptografa access_token e refresh_token antes de persistir.
+	// Se cipher for nil (dev sem chave configurada), salva em texto puro.
+	encAccess, err := gcal.EncryptField(h.cipher, token.AccessToken)
+	if err != nil {
+		return fmt.Errorf("encrypt access_token: %w", err)
+	}
+	encRefresh, err := gcal.EncryptField(h.cipher, token.RefreshToken)
+	if err != nil {
+		return fmt.Errorf("encrypt refresh_token: %w", err)
+	}
+
 	record := models.BarberGoogleToken{
 		UserID:       userID,
 		BarbershopID: barbershopID,
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
+		AccessToken:  encAccess,
+		RefreshToken: encRefresh,
 		TokenExpiry:  token.Expiry,
 	}
 
 	var existing models.BarberGoogleToken
-	err := h.db.WithContext(ctx).Where("user_id = ?", userID).First(&existing).Error
+	err = h.db.WithContext(ctx).Where("user_id = ?", userID).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return h.db.WithContext(ctx).Create(&record).Error
 	}
@@ -213,8 +227,8 @@ func (h *GoogleOAuthHandler) saveToken(
 		return err
 	}
 
-	existing.AccessToken  = token.AccessToken
-	existing.RefreshToken = token.RefreshToken
+	existing.AccessToken  = encAccess
+	existing.RefreshToken = encRefresh
 	existing.TokenExpiry  = token.Expiry
 	return h.db.WithContext(ctx).Save(&existing).Error
 }
@@ -222,7 +236,8 @@ func (h *GoogleOAuthHandler) saveToken(
 // GetValidToken retorna um access_token válido para o usuário,
 // renovando via refresh_token se necessário.
 // Retorna ("", nil) se o usuário não tiver Google Calendar conectado.
-func GetValidToken(ctx context.Context, db *gorm.DB, cfg gcal.OAuthConfig, userID uint) (string, error) {
+// cipher é usado para descriptografar os tokens; nil = sem criptografia (dev).
+func GetValidToken(ctx context.Context, db *gorm.DB, cfg gcal.OAuthConfig, cipher *crypt.Cipher, userID uint) (string, error) {
 	var token models.BarberGoogleToken
 	err := db.WithContext(ctx).Where("user_id = ?", userID).First(&token).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -232,22 +247,7 @@ func GetValidToken(ctx context.Context, db *gorm.DB, cfg gcal.OAuthConfig, userI
 		return "", fmt.Errorf("google token load: %w", err)
 	}
 
-	// Token ainda válido (com margem de 5 minutos)
-	if time.Now().UTC().Before(token.TokenExpiry.Add(-5 * time.Minute)) {
-		return token.AccessToken, nil
-	}
-
-	// Renova o token
-	refreshed, err := gcal.RefreshAccessToken(ctx, cfg, token.RefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("google token refresh: %w", err)
-	}
-
-	token.AccessToken = refreshed.AccessToken
-	token.TokenExpiry = refreshed.Expiry
-	if err := db.WithContext(ctx).Save(&token).Error; err != nil {
-		log.Printf("[GOOGLE] failed to save refreshed token for user %d: %v", userID, err)
-	}
-
-	return token.AccessToken, nil
+	// Delega para ensureValidToken do pacote calendar que cuida de
+	// descriptografia, backward compat com tokens antigos e refresh.
+	return gcal.EnsureValidTokenPublic(ctx, db, cfg, cipher, &token)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	gcal "github.com/BruksfildServices01/barber-scheduler/internal/integration/calendar"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
+	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httpresp"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/middleware"
 	"github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
@@ -24,14 +25,15 @@ import (
 ////////////////////////////////////////////////////////
 
 type AppointmentHandler struct {
-	createUC    *appointment.CreatePrivateAppointment
-	completeUC  *appointment.CompleteAppointment
-	cancelUC    *appointment.CancelAppointment
-	listByDate  *appointment.ListAppointmentsByDate
-	listByMonth *appointment.ListAppointmentsByMonth
-	noShow      *appointment.MarkAppointmentNoShow
-	db          *gorm.DB
-	googleCfg   gcal.OAuthConfig
+	createUC      *appointment.CreatePrivateAppointment
+	completeUC    *appointment.CompleteAppointment
+	cancelUC      *appointment.CancelAppointment
+	listByDate    *appointment.ListAppointmentsByDate
+	listByMonth   *appointment.ListAppointmentsByMonth
+	noShow        *appointment.MarkAppointmentNoShow
+	db            *gorm.DB
+	googleCfg     gcal.OAuthConfig
+	googleCipher  *crypt.Cipher
 }
 
 type CompleteAppointmentItemRequest struct {
@@ -67,16 +69,18 @@ func NewAppointmentHandler(
 	listByMonth *appointment.ListAppointmentsByMonth,
 	db *gorm.DB,
 	googleCfg gcal.OAuthConfig,
+	googleCipher *crypt.Cipher,
 ) *AppointmentHandler {
 	return &AppointmentHandler{
-		createUC:    create,
-		completeUC:  complete,
-		cancelUC:    cancel,
-		noShow:      noShow,
-		listByDate:  listByDate,
-		listByMonth: listByMonth,
-		db:          db,
-		googleCfg:   googleCfg,
+		createUC:     create,
+		completeUC:   complete,
+		cancelUC:     cancel,
+		noShow:       noShow,
+		listByDate:   listByDate,
+		listByMonth:  listByMonth,
+		db:           db,
+		googleCfg:    googleCfg,
+		googleCipher: googleCipher,
 	}
 }
 
@@ -133,7 +137,7 @@ func (h *AppointmentHandler) Create(c *gin.Context) {
 
 	// Sincroniza com Google Calendar do barbeiro de forma assíncrona (best-effort).
 	if h.db != nil {
-		gcal.SyncAppointmentToGoogle(h.db, h.googleCfg, barberID, barbershopID, ap)
+		gcal.SyncAppointmentToGoogle(h.db, h.googleCfg, h.googleCipher, barberID, barbershopID, ap)
 	}
 
 	c.JSON(http.StatusCreated, ap)

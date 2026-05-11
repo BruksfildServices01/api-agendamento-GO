@@ -20,7 +20,7 @@ CREATE TYPE appointment_status AS ENUM (
 );
 
 CREATE TYPE appointment_created_by AS ENUM (
-  'client',
+  'client', 
   'barber'
 );
 

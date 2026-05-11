@@ -307,6 +307,20 @@ func RegisterRoutes(
 	rescheduleViaTicketUC := ucTicket.NewRescheduleViaTicket(db, ticketRepo, apptNotifier, updateClientMetricsUC, auditDispatcher, cfg.AppURL)
 
 	// ======================================================
+	// PAYMENT CIPHER (AES-256 para credenciais de providers e tokens Google)
+	// Inicializado aqui para ser usado tanto em payment providers quanto no Google Calendar.
+	// ======================================================
+	var paymentCipher *crypt.Cipher
+	if cfg.PaymentCredentialsEncryptionKey != "" {
+		c, err := crypt.NewCipher(cfg.PaymentCredentialsEncryptionKey)
+		if err != nil {
+			log.Fatalf("[PAYMENT] chave de criptografia inválida: %v", err)
+		}
+		paymentCipher = c
+		log.Println("[PAYMENT] cipher inicializado para credentials_encrypted e Google tokens")
+	}
+
+	// ======================================================
 	// GOOGLE CALENDAR CONFIG
 	// ======================================================
 	googleCalCfg := gcal.OAuthConfig{
@@ -329,6 +343,7 @@ func RegisterRoutes(
 		cfg.AppURL,
 		getPublicServiceSuggestionUC,
 		googleCalCfg,
+		paymentCipher,
 	)
 
 	// ======================================================
@@ -492,6 +507,7 @@ func RegisterRoutes(
 		listByMonthUC,
 		db,
 		googleCalCfg,
+		paymentCipher,
 	)
 
 	internalAppointmentHandler := handlers.NewInternalAppointmentHandler(
@@ -522,16 +538,6 @@ func RegisterRoutes(
 		createPaymentForAppointmentUC,
 		createMPPreferenceUC,
 	)
-
-	var paymentCipher *crypt.Cipher
-	if cfg.PaymentCredentialsEncryptionKey != "" {
-		c, err := crypt.NewCipher(cfg.PaymentCredentialsEncryptionKey)
-		if err != nil {
-			log.Fatalf("[PAYMENT] chave de criptografia inválida: %v", err)
-		}
-		paymentCipher = c
-		log.Println("[PAYMENT] cipher inicializado para credentials_encrypted")
-	}
 
 	providerRegistry := paymentinfra.NewProviderRegistry(db, paymentCipher, cfg.PagBankSandbox)
 
@@ -692,7 +698,7 @@ func RegisterRoutes(
 	api.POST("/webhooks/pagbank",                  pagbankWebhookHandler.Handle)
 
 	// Google Calendar OAuth
-	googleOAuthHandler := handlers.NewGoogleOAuthHandler(db, cfg)
+	googleOAuthHandler := handlers.NewGoogleOAuthHandler(db, cfg, paymentCipher)
 	secured.GET("/me/google/oauth/start",  googleOAuthHandler.Start)
 	secured.GET("/me/google/oauth/status", googleOAuthHandler.Status)
 	secured.DELETE("/me/google/oauth",     googleOAuthHandler.Disconnect)

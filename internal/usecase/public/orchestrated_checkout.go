@@ -13,6 +13,7 @@ import (
 	domainService "github.com/BruksfildServices01/barber-scheduler/internal/domain/service"
 	"github.com/BruksfildServices01/barber-scheduler/internal/dto"
 	gcal "github.com/BruksfildServices01/barber-scheduler/internal/integration/calendar"
+	"github.com/BruksfildServices01/barber-scheduler/internal/security/crypt"
 	"github.com/BruksfildServices01/barber-scheduler/internal/models"
 	ucAppointment   "github.com/BruksfildServices01/barber-scheduler/internal/usecase/appointment"
 	ucCart          "github.com/BruksfildServices01/barber-scheduler/internal/usecase/cart"
@@ -31,6 +32,7 @@ type OrchestratedCheckout struct {
 	apptNotifier        domainNotification.AppointmentNotifier
 	appURL              string
 	googleCfg           gcal.OAuthConfig
+	googleCipher        *crypt.Cipher
 }
 
 func NewOrchestratedCheckout(
@@ -44,6 +46,7 @@ func NewOrchestratedCheckout(
 	appURL string,
 	getSuggestionUC *ucSuggestion.GetPublicServiceSuggestion,
 	googleCfg gcal.OAuthConfig,
+	googleCipher *crypt.Cipher,
 ) *OrchestratedCheckout {
 	return &OrchestratedCheckout{
 		createAppointmentUC: createAppointmentUC,
@@ -56,6 +59,7 @@ func NewOrchestratedCheckout(
 		apptNotifier:        apptNotifier,
 		appURL:              appURL,
 		googleCfg:           googleCfg,
+		googleCipher:        googleCipher,
 	}
 }
 
@@ -102,7 +106,7 @@ func (uc *OrchestratedCheckout) Execute(
 	}
 
 	// Sincroniza com Google Calendar do barbeiro de forma assíncrona (best-effort).
-	gcal.SyncAppointmentToGoogle(uc.db, uc.googleCfg, barber.ID, barbershopID, appointment)
+	gcal.SyncAppointmentToGoogle(uc.db, uc.googleCfg, uc.googleCipher, barber.ID, barbershopID, appointment)
 
 	var ticketToken string
 	if uc.generateTicketUC != nil {

@@ -164,15 +164,77 @@ func (uc *CompleteAppointment) Execute(
 		// (ReservedSubscriptionCut = false) complete under normal charging
 		// and must not attempt retroactive subscription consumption.
 		//
-		// O repo é vinculado ao tx para que o consumo seja revertido junto
-		// com o restante da transação em caso de falha.
+		// O repo é vinculado ao tx para que o consumo/liberação seja revertido
+		// junto com o restante da transação em caso de falha.
 		if ap.ReservedSubscriptionCut && ap.ClientID != nil && actualServiceID != nil && uc.consumeCutUC != nil {
 			txSubRepo := uc.subscriptionRepo.WithTx(tx)
-			result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, true, txSubRepo)
-			if err != nil {
-				return err
+
+			// Detecta se o barbeiro trocou o serviço realizado em relação ao agendado.
+			// Quando há troca, precisamos revalidar se o novo serviço está coberto pela
+			// assinatura antes de consumir o corte reservado. Sem essa revalidação, um
+			// corte de assinatura poderia ser consumido para um serviço não coberto.
+			serviceChanged := input.ActualServiceID != nil &&
+				ap.BarberProductID != nil &&
+				*input.ActualServiceID != *ap.BarberProductID
+
+			if serviceChanged {
+				// Verifica se o novo serviço realizado está coberto pela assinatura ativa.
+				activeSub, err := txSubRepo.GetActiveSubscription(ctx, barbershopID, *ap.ClientID)
+				if err != nil {
+					return err
+				}
+
+				newServiceCovered := false
+				var activePlanID *uint
+				if activeSub != nil {
+					activePlanID = &activeSub.PlanID
+					allowedIDs, err := txSubRepo.ListAllowedServiceIDs(ctx, activeSub.PlanID)
+					if err != nil {
+						return err
+					}
+					for _, id := range allowedIDs {
+						if id == *actualServiceID {
+							newServiceCovered = true
+							break
+						}
+					}
+				}
+
+				if !newServiceCovered {
+					// Novo serviço não está coberto pelo plano.
+					// Libera a reserva para não prender o corte na assinatura.
+					if relErr := txSubRepo.ReleaseSubscriptionCut(ctx, barbershopID, *ap.ClientID); relErr != nil {
+						// Se a liberação falhar (assinatura já expirou, reserva zerada, etc.),
+						// apenas loga — não bloqueia o fechamento. O corte pode ter sido
+						// perdido por expiração, o que é aceitável.
+						log.Printf("[CompleteAppointment] release cut on service change failed client=%d: %v",
+							*ap.ClientID, relErr)
+					}
+
+					// Informa ao fluxo de cobrança que a assinatura não cobre este serviço.
+					status := string(ucSubscription.ConsumeCutStatusServiceNotAllowed)
+					consumeCutResult = &ucSubscription.ConsumeCutResult{
+						Status: ucSubscription.ConsumeCutStatusServiceNotAllowed,
+						PlanID: activePlanID,
+					}
+					_ = status // usado abaixo via consumeCutResult.Status
+				} else {
+					// Novo serviço ainda coberto: consome o corte reservado normalmente.
+					result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, true, txSubRepo)
+					if err != nil {
+						return err
+					}
+					consumeCutResult = result
+				}
+			} else {
+				// Sem troca de serviço (ou actual_service_id igual ao agendado):
+				// consome o corte reservado com a lógica original.
+				result, err := uc.consumeCutUC.Execute(ctx, barbershopID, *ap.ClientID, *actualServiceID, true, txSubRepo)
+				if err != nil {
+					return err
+				}
+				consumeCutResult = result
 			}
-			consumeCutResult = result
 		}
 
 		now := time.Now().UTC()

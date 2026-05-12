@@ -185,27 +185,36 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 	}
 
 	type itemDTO struct {
-		ID           uint   `json:"id"`
-		ClientID     uint   `json:"client_id"`
-		ClientName   string `json:"client_name"`
-		ClientPhone  string `json:"client_phone"`
-		PlanName     string `json:"plan_name"`
-		CutsUsed     int    `json:"cuts_used"`
-		CutsIncluded int    `json:"cuts_included"`
-		PeriodEnd    string `json:"period_end"`
+		ID             uint   `json:"id"`
+		ClientID       uint   `json:"client_id"`
+		ClientName     string `json:"client_name"`
+		ClientPhone    string `json:"client_phone"`
+		PlanName       string `json:"plan_name"`
+		CutsUsed       int    `json:"cuts_used"`
+		CutsReserved   int    `json:"cuts_reserved"`
+		CutsIncluded   int    `json:"cuts_included"`
+		// cuts_available: max(0, cuts_included - cuts_used - cuts_reserved)
+		CutsAvailable  int    `json:"cuts_available"`
+		PeriodEnd      string `json:"period_end"`
 	}
 
 	dtos := make([]itemDTO, len(items))
 	for i, it := range items {
+		cutsAvailable := it.CutsIncluded - it.CutsUsed - it.CutsReserved
+		if cutsAvailable < 0 {
+			cutsAvailable = 0
+		}
 		dtos[i] = itemDTO{
-			ID:           it.ID,
-			ClientID:     it.ClientID,
-			ClientName:   it.ClientName,
-			ClientPhone:  it.ClientPhone,
-			PlanName:     it.PlanName,
-			CutsUsed:     it.CutsUsed,
-			CutsIncluded: it.CutsIncluded,
-			PeriodEnd:    it.CurrentPeriodEnd.Format("02/01/2006"),
+			ID:            it.ID,
+			ClientID:      it.ClientID,
+			ClientName:    it.ClientName,
+			ClientPhone:   it.ClientPhone,
+			PlanName:      it.PlanName,
+			CutsUsed:      it.CutsUsed,
+			CutsReserved:  it.CutsReserved,
+			CutsIncluded:  it.CutsIncluded,
+			CutsAvailable: cutsAvailable,
+			PeriodEnd:     it.CurrentPeriodEnd.Format("02/01/2006"),
 		}
 	}
 

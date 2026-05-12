@@ -47,7 +47,7 @@ func (uc *CreatePlan) Execute(
 		return nil, ErrInvalidPlanDuration
 	}
 
-	if input.CutsIncluded < 0 {
+	if input.CutsIncluded <= 0 {
 		return nil, ErrInvalidCutsIncluded
 	}
 

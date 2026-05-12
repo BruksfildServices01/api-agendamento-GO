@@ -409,7 +409,7 @@ CREATE TABLE plans (
   name                VARCHAR(100) NOT NULL,
   monthly_price_cents BIGINT    NOT NULL CHECK (monthly_price_cents >= 0),
   duration_days       INTEGER   NOT NULL CHECK (duration_days > 0),
-  cuts_included       INTEGER   NOT NULL CHECK (cuts_included >= 0),
+  cuts_included       INTEGER   NOT NULL CHECK (cuts_included > 0),
   discount_percent    INTEGER   NOT NULL CHECK (discount_percent BETWEEN 0 AND 100),
   active              BOOLEAN   NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),

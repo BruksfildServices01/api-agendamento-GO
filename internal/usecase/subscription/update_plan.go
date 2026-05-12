@@ -42,7 +42,7 @@ func (uc *UpdatePlan) Execute(ctx context.Context, input UpdatePlanInput) error 
 	if input.DurationDays <= 0 {
 		return ErrInvalidPlanDuration
 	}
-	if input.CutsIncluded < 0 {
+	if input.CutsIncluded <= 0 {
 		return ErrInvalidCutsIncluded
 	}
 	if input.DiscountPercent < 0 || input.DiscountPercent > 100 {

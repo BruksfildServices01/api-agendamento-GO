@@ -1,0 +1,45 @@
+internal/query/subscription/query.go
+  s_f944db7611507e::t_b87fa165831311 18,41,58-59,87
+internal/usecase/subscription/plan_validation_test.go
+  s_f944db7611507e::t_fdb8843946a0d3 13,43,45,49,51-52,70-75,77-79,86,88,92,94-95,114-122
+  s_f944db7611507e::t_dc992156fc2f13 1-11,41-42,46-48,50,55-68,80-85,89-91,93,98-112,123-126
+  s_f944db7611507e::t_bdfda4739f1eef 12,14-40,44,53-54,69,76,87,96-97,113
+internal/usecase/subscription/update_plan.go
+  s_f944db7611507e::t_e1a14dcb26d617 45
+internal/usecase/appointment/complete_appointment_test.go
+  s_f944db7611507e::t_9177a081d04c6d 238-252
+  s_f944db7611507e::t_390913b730648d 285-289,298-302,304,311-314
+  s_f944db7611507e::t_df414ee6bf29a5 100
+  s_f944db7611507e::t_6c61ede8ef494f 362,365,385-386,415-417,437-439,457
+  s_f944db7611507e::t_cd3d1ad43518ef 1-15,17-20,22-99,101-237,253-261,266-273,275-284,290,292-295,297,303,305-310,315-361,363-364,366-384,387-414,418-436,440-456,458-554
+  s_f944db7611507e::t_9a15ca12dee1d5 291,296
+  s_f944db7611507e::t_6661944121132b 16
+  s_f944db7611507e::t_8e8fe0b8ae9668 21
+  s_f944db7611507e::t_472dd83b7374d9 264
+  s_f944db7611507e::t_5e881a617d1ff0 262-263,265,274
+internal/migrations/schema.sql
+  s_f944db7611507e::t_0890ba00deed3a 412
+internal/usecase/appointment/complete.go
+  s_f944db7611507e::t_1da95914983db8 167-168,171-236
+internal/http/handlers/subscription_handler.go
+  s_f944db7611507e::t_641babbaebf7f7 203-205
+  s_f944db7611507e::t_18a1cf5ed28d6a 188-198,206,208-217
+internal/usecase/subscription/create_plan.go
+  s_f944db7611507e::t_e1a14dcb26d617 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.6",
+  "base_commit_sha": "1113ab588b6e52e25a1096646d660e848a19e94d",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

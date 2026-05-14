@@ -260,21 +260,39 @@ func (q *Query) loadRevenue(ctx context.Context, barbershopID uint, start, end t
 		return RevenueDTO{}, err
 	}
 
+	// Mensalidades de assinatura pagas no período.
+	var subscriptionPaymentRevenue int64
+	err = q.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(p.amount), 0)
+		FROM payments p
+		WHERE p.barbershop_id = ?
+		  AND p.subscription_id IS NOT NULL
+		  AND p.status = 'paid'
+		  AND p.paid_at >= ?
+		  AND p.paid_at < ?
+	`, barbershopID, start, end).Scan(&subscriptionPaymentRevenue).Error
+	if err != nil {
+		return RevenueDTO{}, err
+	}
+
 	servicesCents := serviceRevenue.Total - serviceRevenue.SubscriptionPart
+	// Total real: serviços avulsos + produtos + mensalidades pagas.
+	realTotal := servicesCents + productRevenue.Total + subscriptionPaymentRevenue
 
 	var avgTicket int64
 	if serviceRevenue.ClosuresCount > 0 {
-		avgTicket = (serviceRevenue.Total + productRevenue.Total) / serviceRevenue.ClosuresCount
+		avgTicket = realTotal / serviceRevenue.ClosuresCount
 	}
 
 	return RevenueDTO{
-		TotalCents:              serviceRevenue.Total + productRevenue.Total,
-		ServicesCents:           servicesCents,
-		ProductsCents:           productRevenue.Total,
-		ProductsSuggestionCents: suggestionRevenue.Total,
-		ProductsStandaloneCents: productRevenue.Total - suggestionRevenue.Total,
-		SubscriptionsCents:      serviceRevenue.SubscriptionPart,
-		AvgTicketCents:          avgTicket,
+		TotalCents:                      realTotal,
+		ServicesCents:                   servicesCents,
+		ProductsCents:                   productRevenue.Total,
+		ProductsSuggestionCents:         suggestionRevenue.Total,
+		ProductsStandaloneCents:         productRevenue.Total - suggestionRevenue.Total,
+		SubscriptionPaymentRevenueCents: subscriptionPaymentRevenue,
+		SubscriptionsCents:              serviceRevenue.SubscriptionPart,
+		AvgTicketCents:                  avgTicket,
 	}, nil
 }
 

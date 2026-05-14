@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/BruksfildServices01/barber-scheduler/internal/apperr"
 	"github.com/BruksfildServices01/barber-scheduler/internal/http/httperr"
@@ -320,15 +322,36 @@ func (h *PublicSubscriptionHandler) activateSubscription(ctx context.Context, su
 	periodEnd := periodStart.AddDate(0, 0, plan.DurationDays)
 
 	txErr := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.Subscription{}).
+		// Adquire lock de linha antes de ativar para serializar chamadas
+		// concorrentes (webhook + polling ou dois polling simultâneos).
+		// Se a subscription não está mais pending_payment, já foi ativada — no-op.
+		var current models.Subscription
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND status = ?", sub.ID, "pending_payment").
-			Updates(map[string]any{
-				"status":                  "active",
-				"current_period_start":    periodStart,
-				"current_period_end":      periodEnd,
-				"cuts_used_in_period":     0,
-				"cuts_reserved_in_period": 0,
-			}).Error; err != nil {
+			First(&current).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			// Subscription não encontrada como pending_payment.
+			// Verifica o status real para decidir entre idempotência legítima e erro.
+			var actual models.Subscription
+			if err2 := tx.Where("id = ?", sub.ID).First(&actual).Error; err2 != nil {
+				if errors.Is(err2, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("subscription %d not found", sub.ID)
+				}
+				return err2
+			}
+			return resolveNonPendingActivation(sub.ID, actual.Status)
+		}
+
+		if err := tx.Model(&current).Updates(map[string]any{
+			"status":                  "active",
+			"current_period_start":    periodStart,
+			"current_period_end":      periodEnd,
+			"cuts_used_in_period":     0,
+			"cuts_reserved_in_period": 0,
+		}).Error; err != nil {
 			return err
 		}
 		paidAt := now
@@ -342,6 +365,18 @@ func (h *PublicSubscriptionHandler) activateSubscription(ctx context.Context, su
 	}
 
 	sub.Status = "active"
+}
+
+// resolveNonPendingActivation decide o que fazer quando uma subscription não está
+// mais em pending_payment no momento da ativação.
+// Retorna nil apenas para 'active' (idempotência legítima: já foi ativada).
+// Retorna erro para qualquer outro status (expired, cancelled, etc.) para que
+// o caller não trate estados terminais como sucesso silencioso.
+func resolveNonPendingActivation(subID uint, status string) error {
+	if status == "active" {
+		return nil
+	}
+	return fmt.Errorf("subscription %d cannot be activated: current status is %q", subID, status)
 }
 
 // ──────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 # Configuração / segredos locais
 .env
+.env.staging
 
 # Build artefacts
 bin/

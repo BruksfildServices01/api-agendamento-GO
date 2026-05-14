@@ -121,12 +121,15 @@ func (q *Query) loadRevenue(ctx context.Context, barbershopID uint, start, end, 
 
 	loadPeriod := func(pStart, pEnd time.Time) (revenueRow, error) {
 		var closureRes struct {
-			ServicesCents int64 `gorm:"column:services_cents"`
-			ClosuresCount int   `gorm:"column:closures_count"`
+			ServicesCents    int64 `gorm:"column:services_cents"`
+			SubscriptionPart int64 `gorm:"column:subscription_part"`
+			ClosuresCount    int   `gorm:"column:closures_count"`
 		}
 		err := q.db.WithContext(ctx).Raw(`
 			SELECT
 				COALESCE(SUM(COALESCE(ac.final_amount_cents, ac.reference_amount_cents)), 0) AS services_cents,
+				COALESCE(SUM(CASE WHEN ac.subscription_covered
+				     THEN COALESCE(ac.final_amount_cents, ac.reference_amount_cents) ELSE 0 END), 0) AS subscription_part,
 				COUNT(*) AS closures_count
 			FROM appointment_closures ac
 			JOIN appointments a ON a.id = ac.appointment_id
@@ -153,8 +156,26 @@ func (q *Query) loadRevenue(ctx context.Context, barbershopID uint, start, end, 
 			return revenueRow{}, err
 		}
 
+		// Mensalidades de assinatura pagas no período (filtradas por paid_at).
+		var subPaymentRevenue int64
+		err = q.db.WithContext(ctx).Raw(`
+			SELECT COALESCE(SUM(p.amount), 0)
+			FROM payments p
+			WHERE p.barbershop_id = ?
+			  AND p.subscription_id IS NOT NULL
+			  AND p.status = 'paid'
+			  AND p.paid_at >= ?
+			  AND p.paid_at < ?
+		`, barbershopID, pStart, pEnd).Scan(&subPaymentRevenue).Error
+		if err != nil {
+			return revenueRow{}, err
+		}
+
+		// serviceNet: exclui produção coberta por assinatura (não é caixa do período).
+		serviceNet := closureRes.ServicesCents - closureRes.SubscriptionPart
+
 		return revenueRow{
-			ServicesCents: closureRes.ServicesCents,
+			ServicesCents: serviceNet + subPaymentRevenue,
 			ClosuresCount: closureRes.ClosuresCount,
 			OrdersCents:   orderRes.OrdersCents,
 		}, nil
@@ -286,99 +307,187 @@ func (q *Query) loadGrowth(ctx context.Context, barbershopID uint, start, end ti
 	}, nil
 }
 
-func (q *Query) loadTrend(ctx context.Context, barbershopID uint, start, end time.Time, loc *time.Location, period PeriodType) ([]TrendPointDTO, error) {
-	tzName := loc.String()
+// trendBucket é o resultado agregado por slot temporal (DOW ou week_num).
+type trendBucket struct {
+	Count        int
+	RevenueCents int64
+}
 
-	if period == PeriodWeek {
-		type trendRow struct {
-			DOW          int   `gorm:"column:dow"`
-			Count        int   `gorm:"column:count"`
-			RevenueCents int64 `gorm:"column:revenue_cents"`
-		}
+// loadTrendBuckets calcula, por bucket temporal, a receita real do período:
+//   - serviços pagos avulsos (closures WHERE NOT subscription_covered)
+//   - produtos vendidos (orders)
+//   - mensalidades de assinatura pagas (payments.paid_at)
+//
+// bucketExpr é a expressão SQL de extração do bucket (DOW ou WEEK).
+// Retorna um map[bucket_int]trendBucket.
+func (q *Query) loadTrendBuckets(
+	ctx context.Context,
+	barbershopID uint,
+	start, end time.Time,
+	tzName string,
+	bucketExpr string,
+) (map[int]trendBucket, error) {
+	result := make(map[int]trendBucket)
 
-		var rows []trendRow
-		err := q.db.WithContext(ctx).Raw(`
-			SELECT
-				EXTRACT(DOW FROM a.start_time AT TIME ZONE ?) AS dow,
-				COUNT(a.id) AS count,
-				COALESCE(SUM(COALESCE(ac.final_amount_cents, ac.reference_amount_cents)), 0) AS revenue_cents
-			FROM appointments a
-			LEFT JOIN appointment_closures ac ON ac.appointment_id = a.id
-			WHERE a.barbershop_id = ?
-			  AND a.start_time >= ?
-			  AND a.start_time < ?
-			GROUP BY dow
-			ORDER BY dow
-		`, tzName, barbershopID, start, end).Scan(&rows).Error
-		if err != nil {
-			return nil, err
-		}
-
-		// DOW: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
-		// Week order Mon-Sun: 1,2,3,4,5,6,0
-		dowLabels := map[int]string{
-			1: "Seg",
-			2: "Ter",
-			3: "Qua",
-			4: "Qui",
-			5: "Sex",
-			6: "Sáb",
-			0: "Dom",
-		}
-		weekOrder := []int{1, 2, 3, 4, 5, 6, 0}
-
-		// Build lookup map
-		byDOW := make(map[int]trendRow)
-		for _, r := range rows {
-			byDOW[r.DOW] = r
-		}
-
-		trend := make([]TrendPointDTO, 0, 7)
-		for _, dow := range weekOrder {
-			r := byDOW[dow]
-			trend = append(trend, TrendPointDTO{
-				Label:        dowLabels[dow],
-				Count:        r.Count,
-				RevenueCents: r.RevenueCents,
-			})
-		}
-		return trend, nil
+	// 1. Serviços net (exclui produção coberta por assinatura) + contagem de appointments.
+	type serviceRow struct {
+		Bucket       int   `gorm:"column:bucket"`
+		Count        int   `gorm:"column:count"`
+		RevenueCents int64 `gorm:"column:revenue_cents"`
 	}
-
-	// Month period: group by week number
-	type weekRow struct {
-		WeekNum      float64 `gorm:"column:week_num"`
-		Count        int     `gorm:"column:count"`
-		RevenueCents int64   `gorm:"column:revenue_cents"`
-	}
-
-	var rows []weekRow
+	var serviceRows []serviceRow
 	err := q.db.WithContext(ctx).Raw(`
 		SELECT
-			EXTRACT(WEEK FROM a.start_time AT TIME ZONE ?) AS week_num,
+			EXTRACT(`+bucketExpr+` FROM a.start_time AT TIME ZONE ?) AS bucket,
 			COUNT(a.id) AS count,
-			COALESCE(SUM(COALESCE(ac.final_amount_cents, ac.reference_amount_cents)), 0) AS revenue_cents
+			COALESCE(SUM(
+				CASE WHEN ac.id IS NOT NULL AND NOT ac.subscription_covered
+				     THEN COALESCE(ac.final_amount_cents, ac.reference_amount_cents)
+				     ELSE 0 END
+			), 0) AS revenue_cents
 		FROM appointments a
 		LEFT JOIN appointment_closures ac ON ac.appointment_id = a.id
 		WHERE a.barbershop_id = ?
 		  AND a.start_time >= ?
 		  AND a.start_time < ?
-		GROUP BY week_num
-		ORDER BY week_num
-	`, tzName, barbershopID, start, end).Scan(&rows).Error
+		GROUP BY bucket
+		ORDER BY bucket
+	`, tzName, barbershopID, start, end).Scan(&serviceRows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range serviceRows {
+		b := result[r.Bucket]
+		b.Count += r.Count
+		b.RevenueCents += r.RevenueCents
+		result[r.Bucket] = b
+	}
+
+	// 2. Produtos vendidos (orders paid ou vinculados a closure).
+	type orderRow struct {
+		Bucket       int   `gorm:"column:bucket"`
+		RevenueCents int64 `gorm:"column:revenue_cents"`
+	}
+	var orderRows []orderRow
+	err = q.db.WithContext(ctx).Raw(`
+		SELECT
+			EXTRACT(`+bucketExpr+` FROM o.created_at AT TIME ZONE ?) AS bucket,
+			COALESCE(SUM(o.total_amount), 0) AS revenue_cents
+		FROM orders o
+		WHERE o.barbershop_id = ?
+		  AND o.created_at >= ?
+		  AND o.created_at < ?
+		  AND (
+		      o.status = 'paid'
+		      OR EXISTS (
+		          SELECT 1 FROM appointment_closures ac
+		          WHERE ac.additional_order_id = o.id
+		      )
+		  )
+		GROUP BY bucket
+	`, tzName, barbershopID, start, end).Scan(&orderRows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range orderRows {
+		b := result[r.Bucket]
+		b.RevenueCents += r.RevenueCents
+		result[r.Bucket] = b
+	}
+
+	// 3. Mensalidades de assinatura pagas, agrupadas por paid_at.
+	type subPayRow struct {
+		Bucket       int   `gorm:"column:bucket"`
+		RevenueCents int64 `gorm:"column:revenue_cents"`
+	}
+	var subPayRows []subPayRow
+	err = q.db.WithContext(ctx).Raw(`
+		SELECT
+			EXTRACT(`+bucketExpr+` FROM p.paid_at AT TIME ZONE ?) AS bucket,
+			COALESCE(SUM(p.amount), 0) AS revenue_cents
+		FROM payments p
+		WHERE p.barbershop_id = ?
+		  AND p.subscription_id IS NOT NULL
+		  AND p.status = 'paid'
+		  AND p.paid_at >= ?
+		  AND p.paid_at < ?
+		GROUP BY bucket
+	`, tzName, barbershopID, start, end).Scan(&subPayRows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range subPayRows {
+		b := result[r.Bucket]
+		b.RevenueCents += r.RevenueCents
+		result[r.Bucket] = b
+	}
+
+	return result, nil
+}
+
+func (q *Query) loadTrend(ctx context.Context, barbershopID uint, start, end time.Time, loc *time.Location, period PeriodType) ([]TrendPointDTO, error) {
+	tzName := loc.String()
+
+	if period == PeriodWeek {
+		buckets, err := q.loadTrendBuckets(ctx, barbershopID, start, end, tzName, "DOW")
+		if err != nil {
+			return nil, err
+		}
+
+		dowLabels := map[int]string{1: "Seg", 2: "Ter", 3: "Qua", 4: "Qui", 5: "Sex", 6: "Sáb", 0: "Dom"}
+		weekOrder := []int{1, 2, 3, 4, 5, 6, 0}
+
+		trend := make([]TrendPointDTO, 0, 7)
+		for _, dow := range weekOrder {
+			b := buckets[dow]
+			trend = append(trend, TrendPointDTO{
+				Label:        dowLabels[dow],
+				Count:        b.Count,
+				RevenueCents: b.RevenueCents,
+			})
+		}
+		return trend, nil
+	}
+
+	// Month period: gera todos os buckets/semanas do período sem depender de appointments.
+	// Itera dia a dia no timezone da barbearia e coleta os ISO weeks únicos em ordem.
+	// Isso garante que semanas com apenas produtos ou mensalidades (sem appointments)
+	// apareçam no trend com revenue_cents > 0 e revenue_cents = 0 para semanas sem movimento.
+	weekNums := weeksInRange(start, end, loc)
+
+	buckets, err := q.loadTrendBuckets(ctx, barbershopID, start, end, tzName, "WEEK")
 	if err != nil {
 		return nil, err
 	}
 
-	trend := make([]TrendPointDTO, 0, len(rows))
-	for i, r := range rows {
+	trend := make([]TrendPointDTO, 0, len(weekNums))
+	for i, wk := range weekNums {
+		b := buckets[wk]
 		trend = append(trend, TrendPointDTO{
 			Label:        fmt.Sprintf("Sem %d", i+1),
-			Count:        r.Count,
-			RevenueCents: r.RevenueCents,
+			Count:        b.Count,
+			RevenueCents: b.RevenueCents,
 		})
 	}
 	return trend, nil
+}
+
+// weeksInRange enumera os números de semana ISO (1–53) cobertos pelo período [start, end)
+// no timezone loc, em ordem cronológica. Não depende de dados no banco.
+func weeksInRange(start, end time.Time, loc *time.Location) []int {
+	var weekNums []int
+	seen := make(map[int]bool)
+	day := start.In(loc)
+	endLocal := end.In(loc)
+	for day.Before(endLocal) {
+		_, week := day.ISOWeek()
+		if !seen[week] {
+			seen[week] = true
+			weekNums = append(weekNums, week)
+		}
+		day = day.AddDate(0, 0, 1)
+	}
+	return weekNums
 }
 
 // ----------------------------------------------------------------

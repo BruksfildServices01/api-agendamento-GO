@@ -1,0 +1,85 @@
+internal/repository/cancel_subscription_test.go
+  s_f944db7611507e::t_beba0696c1de2c 1-368
+internal/usecase/subscription/cancel_subscription_test.go
+  s_f944db7611507e::t_5567474d174795 1-147
+internal/repository/subscription_gorm.go
+  s_f944db7611507e::t_6c716827b2765c 11
+  s_f944db7611507e::t_31f7711d7cbd35 500-504
+  s_f944db7611507e::t_db305f1e6634dc 291,295-296,298-305,307-313,315-328
+  s_f944db7611507e::t_41322209e850bc 652-655,663-675
+  s_f944db7611507e::t_7a904567b439dc 292-294,297
+  s_f944db7611507e::t_5799ad79861bc9 424-439,443,445
+  s_f944db7611507e::t_b33152a47da26b 903-948
+internal/usecase/subscription/consume_cut_orphan_test.go
+  s_f944db7611507e::t_022092e77dd492 1-268
+internal/usecase/subscription/activate_subscription_idempotency_test.go
+  s_f944db7611507e::t_5b914ac53fdd49 148
+  s_f944db7611507e::t_b508295bbc615e 1-147,149-183
+internal/usecase/subscription/consume_cut.go
+  s_f944db7611507e::t_52741d28c987b1 151-160
+internal/repository/activate_subscription_status_test.go
+  s_f944db7611507e::t_05a72a8843afb6 1-159
+internal/query/financial/query.go
+  s_f944db7611507e::t_d9eeab2cc2103e 184-199,203-213
+internal/query/financial/financial_subscription_test.go
+  s_f944db7611507e::t_5c33176e04cfd1 1-166
+internal/repository/activate_subscription_test.go
+  s_f944db7611507e::t_944fcc3ac0e6a7 1-183
+internal/usecase/subscription/update_plan_protection_test.go
+  s_f944db7611507e::t_0d5b7dc55c02ca 1-290
+internal/query/dashboard/query.go
+  s_f944db7611507e::t_8bfcb45e155a88 263-277,279-280,284,288-295
+internal/repository/expire_subscriptions_test.go
+  s_f944db7611507e::t_6e1c497c4c804d 10-12,20-21,26-28,35-37,41-43,47-48,51,61-64,69-76,81-178,180,183-185,188-191,193-211,213,217-219,224-268,272-274
+  s_f944db7611507e::t_e86d2282d50692 1-9,13-19,22-25,29-34,38-40,44-46,49-50,52-60,65-68,77-80,179,181-182,186-187,192,212,214-216,220-223,269-271,275
+internal/usecase/subscription/reserve_cut_atomic_test.go
+  s_f944db7611507e::t_cfa1f9dd6480a9 1-180
+internal/usecase/subscription/update_plan.go
+  s_f944db7611507e::t_fa23689854a280 118-135
+  s_f944db7611507e::t_a6a2f830834650 10-51
+internal/query/impact/query.go
+  s_f944db7611507e::t_596ee81dcc6372 310-427,432,437,442,445-446,458,468-469
+  s_f944db7611507e::t_481ba7292e8361 452-456,463-465,475-490
+  s_f944db7611507e::t_ed71a24c6e6d43 124-126,131-132,159-176,178
+internal/query/impact/trend_test.go
+  s_f944db7611507e::t_88e335dc89d6bb 1-2,4,7,9-24,80-102,107-119,121-129,133-144,172,179,195-199,201-204
+  s_f944db7611507e::t_027f15ef2af6a5 3,5-6,8,25-79,103-106,120,130-132,145-171,173-178,180-194,200
+.gitignore
+  s_f944db7611507e::t_7579c7dd49261e 3
+internal/http/handlers/activate_subscription_logic_test.go
+  s_f944db7611507e::t_4800f6192e6968 1-41
+internal/usecase/subscription/set_plan_active.go
+  s_f944db7611507e::t_b1c8faa0371fe2 25-39
+internal/http/handlers/plan_handler.go
+  s_f944db7611507e::t_4caa89529d0092 143-145
+  s_f944db7611507e::t_c28fa54569a6f2 179-181
+internal/query/financial/dto.go
+  s_f944db7611507e::t_6c6f1d2961c141 13-27
+internal/http/handlers/public_subscription_handler.go
+  s_f944db7611507e::t_d608a54c279dfa 15
+  s_f944db7611507e::t_4841822619fc80 6
+  s_f944db7611507e::t_48f05af0aee78b 333-334,336-344
+  s_f944db7611507e::t_bd598c86a1a868 370-381
+  s_f944db7611507e::t_28e08ee15e21b6 345
+  s_f944db7611507e::t_1b81d984b500c6 325-330,332,335,346-354
+internal/query/dashboard/dto.go
+  s_f944db7611507e::t_0dcd1fad570840 29-41
+internal/usecase/subscription/expire_subscriptions_test.go
+  s_f944db7611507e::t_9e84cc33fe938f 1-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "bd8726324134660fb457fc7b3189c4842328d001",
+  "prompts": {},
+  "sessions": {
+    "s_f944db7611507e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b3cbfdf-2d58-43d1-8193-d13f5bd76439",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "lubezerra_meli <lucas.bezerra@mercadolivre.com>"
+    }
+  }
+}

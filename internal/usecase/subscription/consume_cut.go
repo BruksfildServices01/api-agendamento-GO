@@ -148,6 +148,16 @@ func (uc *ConsumeCut) Execute(
 	if consumeErr != nil {
 		switch {
 		case errors.Is(consumeErr, domain.ErrActiveSubscriptionNotFound):
+			if hadReservation {
+				// A reserva ficou órfã: a assinatura foi cancelada ou expirou após o
+				// booking. Tenta liberar o contador de reserva (best-effort — se a
+				// assinatura não tem mais período ativo, ReleaseSubscriptionCut é no-op).
+				_ = repo.ReleaseSubscriptionCut(ctx, barbershopID, clientID)
+				// Retorna ExpiredPeriod para que complete.go exija confirmação de
+				// cobrança normal, sinalizando ao barbeiro que o plano não está mais ativo.
+				result.Status = ConsumeCutStatusExpiredPeriod
+				return result, nil
+			}
 			result.Status = ConsumeCutStatusNoActiveSubscription
 			return result, nil
 		case errors.Is(consumeErr, domain.ErrCutsLimitExceeded):

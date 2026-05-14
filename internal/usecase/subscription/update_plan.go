@@ -7,6 +7,48 @@ import (
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
 )
 
+// slicesEqualUint compara dois slices de uint como conjuntos (ordem não importa).
+func slicesEqualUint(a, b []uint) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[uint]struct{}, len(a))
+	for _, v := range a {
+		set[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, ok := set[v]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// hasCommercialChange retorna true se o input altera qualquer campo que afeta
+// a regra comercial do plano (preço, duração, cortes, cobertura de serviços).
+// Campos seguros (como name) não disparam este check.
+func hasCommercialChange(current *domain.Plan, input UpdatePlanInput) bool {
+	if current.MonthlyPriceCents != input.MonthlyPriceCents {
+		return true
+	}
+	if current.DurationDays != input.DurationDays {
+		return true
+	}
+	if current.CutsIncluded != input.CutsIncluded {
+		return true
+	}
+	if current.DiscountPercent != input.DiscountPercent {
+		return true
+	}
+	if !slicesEqualUint(current.ServiceIDs, input.ServiceIDs) {
+		return true
+	}
+	if !slicesEqualUint(current.CategoryIDs, input.CategoryIDs) {
+		return true
+	}
+	return false
+}
+
 var ErrPlanUpdateNotFound = errors.New("plan_not_found")
 
 type UpdatePlanInput struct {
@@ -70,6 +112,24 @@ func (uc *UpdatePlan) Execute(ctx context.Context, input UpdatePlanInput) error 
 		}
 		if count != int64(len(input.CategoryIDs)) {
 			return ErrInvalidServiceIDs
+		}
+	}
+
+	// Protege assinantes ativos contra alterações comerciais perigosas.
+	// Se há assinantes com status='active', bloqueia qualquer mudança em
+	// preço, duração, cortes, cobertura de serviços ou desconto.
+	// Apenas campos seguros (nome) são permitidos nesses casos.
+	activeCount, err := uc.repo.CountActiveSubscribersByPlan(ctx, input.PlanID)
+	if err != nil {
+		return err
+	}
+	if activeCount > 0 {
+		current, err := uc.repo.GetPlanByID(ctx, input.BarbershopID, input.PlanID)
+		if err != nil {
+			return err
+		}
+		if current != nil && hasCommercialChange(current, input) {
+			return ErrPlanHasActiveSubscriptions
 		}
 	}
 

@@ -10,14 +10,21 @@ const (
 
 // RealizedDTO is revenue already confirmed in the period.
 type RealizedDTO struct {
-	TotalCents                  int64 `json:"total_cents"`
-	ServicesCents               int64 `json:"services_cents"`               // from appointment_closures (net of subscription)
-	ProductsCents               int64 `json:"products_cents"`               // total from paid orders
-	ProductsSuggestionCents     int64 `json:"products_suggestion_cents"`    // orders linked via closure.additional_order_id
-	ProductsStandaloneCents     int64 `json:"products_standalone_cents"`    // orders not linked to any closure
-	SubscriptionsCents          int64 `json:"subscriptions_cents"`          // closures covered by subscription plan
-	ClosuresCount               int   `json:"closures_count"`
-	PaidOrdersCount             int   `json:"paid_orders_count"`
+	// Dinheiro recebido: serviços pagos avulsos + produtos + mensalidades de assinatura.
+	TotalCents                      int64 `json:"total_cents"`
+	// Serviços pagos sem cobertura de assinatura (net).
+	ServicesCents                   int64 `json:"services_cents"`
+	// Total de produtos pagos.
+	ProductsCents                   int64 `json:"products_cents"`
+	ProductsSuggestionCents         int64 `json:"products_suggestion_cents"`
+	ProductsStandaloneCents         int64 `json:"products_standalone_cents"`
+	// Mensalidades de assinatura pagas no período (payments.subscription_id IS NOT NULL AND status='paid').
+	SubscriptionPaymentRevenueCents int64 `json:"subscription_payment_revenue_cents"`
+	// Produção operacional coberta por assinatura — valor dos atendimentos cobertos.
+	// Informativo: NÃO representa dinheiro recebido no período, apenas produção realizada via plano.
+	SubscriptionsCents              int64 `json:"subscriptions_cents"`
+	ClosuresCount                   int   `json:"closures_count"`
+	PaidOrdersCount                 int   `json:"paid_orders_count"`
 }
 
 // ExpectationDTO aggregates future scheduled appointments.

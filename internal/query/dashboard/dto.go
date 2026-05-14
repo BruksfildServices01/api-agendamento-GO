@@ -26,13 +26,19 @@ type ProductionDTO struct {
 
 // RevenueDTO breaks down revenue by origin.
 type RevenueDTO struct {
-	TotalCents              int64 `json:"total_cents"`
-	ServicesCents           int64 `json:"services_cents"`
-	ProductsCents           int64 `json:"products_cents"`
-	ProductsSuggestionCents int64 `json:"products_suggestion_cents"`
-	ProductsStandaloneCents int64 `json:"products_standalone_cents"`
-	SubscriptionsCents      int64 `json:"subscriptions_cents"`
-	AvgTicketCents          int64 `json:"avg_ticket_cents"` // avg per completed appointment
+	// Dinheiro real recebido: serviços avulsos + produtos + mensalidades.
+	TotalCents                      int64 `json:"total_cents"`
+	// Serviços pagos sem cobertura de assinatura (net).
+	ServicesCents                   int64 `json:"services_cents"`
+	// Produtos pagos.
+	ProductsCents                   int64 `json:"products_cents"`
+	ProductsSuggestionCents         int64 `json:"products_suggestion_cents"`
+	ProductsStandaloneCents         int64 `json:"products_standalone_cents"`
+	// Mensalidades de assinatura pagas no período (payments.subscription_id IS NOT NULL AND status='paid').
+	SubscriptionPaymentRevenueCents int64 `json:"subscription_payment_revenue_cents"`
+	// Produção operacional coberta por assinatura — informativo, fora do total.
+	SubscriptionsCents              int64 `json:"subscriptions_cents"`
+	AvgTicketCents                  int64 `json:"avg_ticket_cents"`
 }
 
 // ClientsDTO shows new vs. returning clients in the period.

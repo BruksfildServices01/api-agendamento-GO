@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"golang.org/x/sync/singleflight"
 
 	domain "github.com/BruksfildServices01/barber-scheduler/internal/domain/subscription"
@@ -287,25 +288,44 @@ func (r *SubscriptionGormRepository) CancelSubscription(
 	ctx context.Context,
 	barbershopID, clientID uint,
 ) error {
-	res := r.db.WithContext(ctx).
-		Model(&models.Subscription{}).
-		Where(
-			"barbershop_id = ? AND client_id = ? AND status = ?",
-			barbershopID,
-			clientID,
-			"active",
-		).
-		Update("status", string(domain.StatusCancelled))
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Localiza e bloqueia a assinatura ativa com FOR UPDATE.
+		// SELECT ... FOR UPDATE adquire lock de linha antes das alterações,
+		// impedindo que duas transações simultâneas cancelem a mesma assinatura.
+		var sub models.Subscription
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("barbershop_id = ? AND client_id = ? AND status = ?",
+				barbershopID, clientID, "active").
+			First(&sub).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domain.ErrActiveSubscriptionNotFound
+			}
+			return err
+		}
 
-	if res.Error != nil {
-		return res.Error
-	}
+		// 2. Cancela a assinatura e zera cortes reservados.
+		if err := tx.Model(&sub).Updates(map[string]any{
+			"status":                  string(domain.StatusCancelled),
+			"cuts_reserved_in_period": 0,
+		}).Error; err != nil {
+			return err
+		}
 
-	if res.RowsAffected == 0 {
-		return domain.ErrActiveSubscriptionNotFound
-	}
-
-	return nil
+		// 3. Limpa reservas em agendamentos futuros vinculados a esta assinatura.
+		// Somente appointments ainda ativos (scheduled/awaiting_payment) e não iniciados.
+		// Usa not_covered_expired como aproximação: assinatura não está mais válida.
+		now := time.Now().UTC()
+		return tx.Model(&models.Appointment{}).
+			Where(
+				"subscription_id = ? AND reserved_subscription_cut = ? AND start_time > ? AND status IN ('scheduled','awaiting_payment')",
+				sub.ID, true, now,
+			).
+			Updates(map[string]any{
+				"reserved_subscription_cut": false,
+				"coverage_status":           string(models.CoverageStatusNotCoveredExpired),
+			}).Error
+	})
 }
 
 func (r *SubscriptionGormRepository) GetActiveSubscription(
@@ -401,19 +421,28 @@ func (r *SubscriptionGormRepository) ReserveSubscriptionCut(
 	clientID uint,
 ) error {
 	now := time.Now().UTC()
-	res := r.db.WithContext(ctx).
-		Model(&models.Subscription{}).
-		Where(
-			`barbershop_id = ? AND client_id = ? AND status = ?
-			 AND current_period_start <= ? AND current_period_end > ?`,
-			barbershopID, clientID, "active", now, now,
-		).
-		UpdateColumn("cuts_reserved_in_period", gorm.Expr("cuts_reserved_in_period + 1"))
+
+	// Reserva atômica: só incrementa se houver espaço no plano.
+	// A subquery dentro do WHERE elimina a race condition de stale-read:
+	// dois agendamentos simultâneos não podem ultrapassar cuts_included.
+	res := r.db.WithContext(ctx).Exec(`
+		UPDATE subscriptions
+		SET cuts_reserved_in_period = cuts_reserved_in_period + 1
+		WHERE barbershop_id = ?
+		  AND client_id = ?
+		  AND status = 'active'
+		  AND current_period_start <= ?
+		  AND current_period_end > ?
+		  AND cuts_used_in_period + cuts_reserved_in_period + 1
+		      <= (SELECT cuts_included FROM plans WHERE id = plan_id)
+	`, barbershopID, clientID, now, now)
+
 	if res.Error != nil {
 		return res.Error
 	}
+
 	if res.RowsAffected == 0 {
-		return domain.ErrActiveSubscriptionNotFound
+		return r.classifyZeroRows(ctx, barbershopID, clientID, false)
 	}
 	return nil
 }
@@ -468,12 +497,11 @@ func (r *SubscriptionGormRepository) ConsumeReservedCut(
 	}
 
 	if res.RowsAffected == 0 {
-		reason := r.classifyZeroRows(ctx, barbershopID, clientID, true)
-		if reason == domain.ErrCutsLimitExceeded {
-			return domain.ErrCutsLimitExceeded
-		}
-		// Período expirou entre booking e conclusão — tenta incremento direto.
-		return r.IncrementCutsUsed(ctx, barbershopID, clientID)
+		// Não há fallback para IncrementCutsUsed: se a reserva não pôde ser consumida,
+		// a assinatura está inativa/expirada ou o limite foi atingido. Em ambos os casos,
+		// consumir um corte novo seria semanticamente errado. O caller trata o retorno
+		// e decide entre cobrança normal (inativa) ou bloqueio (limite).
+		return r.classifyZeroRows(ctx, barbershopID, clientID, true)
 	}
 
 	return nil
@@ -621,10 +649,10 @@ func (r *SubscriptionGormRepository) ActivateSubscriptionByID(
 		Model(&models.Subscription{}).
 		Where("id = ? AND status = ?", id, string(domain.StatusPendingPayment)).
 		Updates(map[string]any{
-			"status":               string(domain.StatusActive),
-			"current_period_start": periodStart,
-			"current_period_end":   periodEnd,
-			"cuts_used_in_period":  0,
+			"status":                  string(domain.StatusActive),
+			"current_period_start":    periodStart,
+			"current_period_end":      periodEnd,
+			"cuts_used_in_period":     0,
 			"cuts_reserved_in_period": 0,
 		})
 
@@ -632,6 +660,19 @@ func (r *SubscriptionGormRepository) ActivateSubscriptionByID(
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
+		// 0 rows: a subscription pode já ter sido ativada por webhook ou call
+		// concorrente entre o momento em que o gateway aprovou e esta chamada.
+		// Verifica se já está active — se sim, resultado desejado, retorna nil.
+		var count int64
+		if err := r.db.WithContext(ctx).
+			Model(&models.Subscription{}).
+			Where("id = ? AND status = ?", id, string(domain.StatusActive)).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil // já ativa — idempotente
+		}
 		return domain.ErrActiveSubscriptionNotFound
 	}
 	return nil
@@ -859,29 +900,50 @@ func (r *SubscriptionGormRepository) CountCategoriesByIDs(
 }
 
 func (r *SubscriptionGormRepository) ExpireSubscriptions(ctx context.Context) (int64, error) {
-	// Expira subscriptions ativas cujo período terminou.
-	r1 := r.db.WithContext(ctx).Exec(
-		`UPDATE subscriptions
-		 SET status = 'expired', cuts_reserved_in_period = 0
-		 WHERE status = 'active' AND current_period_end < NOW()`,
-	)
-	if r1.Error != nil {
-		return 0, r1.Error
-	}
+	var total int64
 
-	// Expira subscriptions travadas em pending_payment por mais de 24h.
-	// Ocorre quando o cartão é rejeitado ou o gateway falha após criar a subscription.
-	// Sem essa limpeza, o cliente ficaria permanentemente bloqueado de comprar nova assinatura
-	// pela constraint uq_subscriptions_one_pending_per_client_shop.
-	r2 := r.db.WithContext(ctx).Exec(
-		`UPDATE subscriptions
-		 SET status = 'expired'
-		 WHERE status = 'pending_payment'
-		   AND created_at < NOW() - INTERVAL '24 hours'`,
-	)
-	if r2.Error != nil {
-		return r1.RowsAffected, r2.Error
-	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Expira subscriptions ativas cujo período terminou.
+		r1 := tx.Exec(
+			`UPDATE subscriptions
+			 SET status = 'expired', cuts_reserved_in_period = 0
+			 WHERE status = 'active' AND current_period_end < NOW()`,
+		)
+		if r1.Error != nil {
+			return r1.Error
+		}
+		total = r1.RowsAffected
 
-	return r1.RowsAffected + r2.RowsAffected, nil
+		// 2. Expira subscriptions travadas em pending_payment por mais de 24h.
+		// Subscriptions pending_payment não têm appointments com reserved_subscription_cut,
+		// portanto não precisam de limpeza de appointments.
+		r2 := tx.Exec(
+			`UPDATE subscriptions
+			 SET status = 'expired'
+			 WHERE status = 'pending_payment'
+			   AND created_at < NOW() - INTERVAL '24 hours'`,
+		)
+		if r2.Error != nil {
+			return r2.Error
+		}
+		total += r2.RowsAffected
+
+		// 3. Limpa reservas em appointments futuros cujas subscriptions estão expiradas.
+		// A subquery vê as linhas atualizadas nos passos 1 e 2 (mesma transação).
+		// Também corrige inconsistências anteriores: qualquer assinatura expirada
+		// que ainda tenha appointments futuros com reserva ativa é limpa aqui.
+		return tx.Exec(`
+			UPDATE appointments
+			SET reserved_subscription_cut = false,
+			    coverage_status = 'not_covered_expired'
+			WHERE reserved_subscription_cut = true
+			  AND start_time > NOW()
+			  AND status IN ('scheduled', 'awaiting_payment')
+			  AND subscription_id IN (
+			      SELECT id FROM subscriptions WHERE status = 'expired'
+			  )
+		`).Error
+	})
+
+	return total, err
 }

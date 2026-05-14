@@ -140,6 +140,9 @@ func (h *PlanHandler) Update(c *gin.Context) {
 			httperr.BadRequest(c, "invalid_service_ids", "invalid_service_ids")
 		case errors.Is(err, subscription.ErrPlanUpdateNotFound):
 			httperr.NotFound(c, "plan_not_found", "plan_not_found")
+		case errors.Is(err, subscription.ErrPlanHasActiveSubscriptions):
+			httperr.Write(c, http.StatusConflict, "plan_has_active_subscribers",
+				"Este plano possui assinantes ativos. Para alterar preço, duração, cortes ou serviços cobertos, crie um novo plano.")
 		default:
 			httperr.Internal(c, "failed_to_update_plan", "failed_to_update_plan")
 		}
@@ -173,6 +176,9 @@ func (h *PlanHandler) SetActive(c *gin.Context) {
 			httperr.BadRequest(c, "invalid_input", "invalid_input")
 		case errors.Is(err, subscription.ErrSetPlanActiveNotFound):
 			httperr.NotFound(c, "plan_not_found", "plan_not_found")
+		case errors.Is(err, subscription.ErrPlanHasActiveSubscriptions):
+			httperr.Write(c, http.StatusConflict, "plan_has_active_subscribers",
+				"Este plano possui assinantes ativos. Aguarde o encerramento dos ciclos antes de desativá-lo.")
 		default:
 			httperr.Internal(c, "failed_to_update_plan", "failed_to_update_plan")
 		}

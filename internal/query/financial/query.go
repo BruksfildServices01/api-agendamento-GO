@@ -181,17 +181,36 @@ func (q *Query) loadRealized(ctx context.Context, barbershopID uint, start, end 
 		return RealizedDTO{}, err
 	}
 
+	// Mensalidades de assinatura pagas no período.
+	// Filtra por paid_at (momento real do recebimento) e status='paid'.
+	var subscriptionPaymentRevenue int64
+	err = q.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(p.amount), 0)
+		FROM payments p
+		WHERE p.barbershop_id = ?
+		  AND p.subscription_id IS NOT NULL
+		  AND p.status = 'paid'
+		  AND p.paid_at >= ?
+		  AND p.paid_at < ?
+	`, barbershopID, start, end).Scan(&subscriptionPaymentRevenue).Error
+	if err != nil {
+		return RealizedDTO{}, err
+	}
+
 	serviceNet := closureResult.ServicesCents - closureResult.SubscriptionsCents
 
 	return RealizedDTO{
-		TotalCents:              closureResult.ServicesCents + orderTotal.ProductsCents,
-		ServicesCents:           serviceNet,
-		ProductsCents:           orderTotal.ProductsCents,
-		ProductsSuggestionCents: suggestionOrdersCents,
-		ProductsStandaloneCents: orderTotal.ProductsCents - suggestionOrdersCents,
-		SubscriptionsCents:      closureResult.SubscriptionsCents,
-		ClosuresCount:           closureResult.Count,
-		PaidOrdersCount:         orderTotal.Count,
+		// Total = dinheiro efetivamente recebido: serviços avulsos + produtos + mensalidades.
+		// Produção coberta por assinatura (SubscriptionsCents) é informativa — não entra no total.
+		TotalCents:                      serviceNet + orderTotal.ProductsCents + subscriptionPaymentRevenue,
+		ServicesCents:                   serviceNet,
+		ProductsCents:                   orderTotal.ProductsCents,
+		ProductsSuggestionCents:         suggestionOrdersCents,
+		ProductsStandaloneCents:         orderTotal.ProductsCents - suggestionOrdersCents,
+		SubscriptionPaymentRevenueCents: subscriptionPaymentRevenue,
+		SubscriptionsCents:              closureResult.SubscriptionsCents,
+		ClosuresCount:                   closureResult.Count,
+		PaidOrdersCount:                 orderTotal.Count,
 	}, nil
 }
 
